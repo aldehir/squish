@@ -251,6 +251,9 @@ pub const TreeRow = struct {
 
 pub const Pane = struct {
     title: []const u16,
+    /// A word on a tag at the strip's right, after the title: the mode
+    /// the pane is in (copy mode). Empty for none.
+    badge: []const u16 = &.{},
     /// It gets the keys: its title is strong, and a dot marks it while
     /// `dot`.
     focused: bool,
@@ -285,6 +288,8 @@ pub const SearchView = struct {
     partial: bool = false,
     /// A needle with no match: the error color.
     none: bool = false,
+    /// In place of the count: which way copy mode's prompt searches.
+    hint: []const u16 = &.{},
 };
 
 pub const BrowserPane = struct {

@@ -401,9 +401,45 @@ matches and a pill with the count.
 - **The card covers the grid's top-right cells**; a row under the strip
   would resize the pty on every open. Scrolling to a match doesn't
   allow for it, so in a narrow pane a match can land under the card.
-- **Copy mode** (tmux's, with vi keys, and `/ ? n N` on this search)
-  is built on the `copy-mode` branch (worktree `slime-copymode`) and
-  not merged.
+
+## Copy mode
+
+tmux's copy mode with its vi keys runs in slime
+(`internal/vt/copymode.zig`): ctrl+shift+m (the `copy_mode` action)
+puts the focused pane in it. As tmux's, it shows a snapshot: a terminal
+of its own with a clone of the screen and its scrollback, which frames
+show while the program's output goes on into the pane unseen; a resize
+reflows it. The motions are tmux's (window-copy.c, grid-reader.c, checked
+against tmux 3.5a), its search too: `/` and `?` open the search card as a
+prompt that searches once on Enter, from the cursor, with tmux's smart
+case and wrapping, and `n N * #` go on. The frame carries copy mode's
+cursor and a flag the strip shows as a `COPY` tag, and its matches as
+the search's. init.lua rebinds its keys with
+`slime.bind("copy-mode:v", "begin-selection")`, tmux's names working.
+
+- **Regex search.** tmux treats a needle with `^$*+()?[].\` as a POSIX
+  extended regex; here every needle is literal (`foo.bar` still finds
+  foo.bar). Zig's std has no regex; it wants a small matcher.
+- **The position** (`[12/345]` at tmux's top right) isn't shown: the
+  frame carries neither the scrollback's length nor the viewport's
+  offset (Chrome: "Sidebar scrolling"). The count shows in the card.
+- **Refreshing the snapshot**: tmux 3.8's `r` (refresh-now, and the
+  automatic refresh it toggles) isn't here; leave and enter again.
+- **Kitty images** don't come along into the snapshot (Screen.clone
+  doesn't copy them).
+- **The prompt for a count** (tmux opens `(repeat) 3` for a digit) and
+  `:` (goto-line, which needs another prompt); digits count silently.
+- **Emacs keys** (`mode-keys emacs`, its incremental search), the mark
+  (`X`, `M-x`), tmux's `append-selection`, `copy-pipe` with a command,
+  `select-word`, the OSC 133 output commands, and `-N` counts on bound
+  actions. Keys with alt, and ctrl with a named key (`C-Up`), can't be
+  named in the table.
+- **Words split at tmux's `word-separators`**, fixed; it isn't an option,
+  and the mouse still uses `selection-word-chars`.
+- **A drag's end copies and leaves** in tmux (`MouseDragEnd1Pane`); here
+  it leaves the selection for the keys to go on with.
+- **Function bindings** (`slime.bind("copy-mode:x", fn)`) aren't taken:
+  the table is the daemon's terminal code, not the config's state.
 
 ## Browser panes
 

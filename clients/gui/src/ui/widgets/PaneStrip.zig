@@ -63,6 +63,9 @@ const search_pad = 10;
 const search_button = 24;
 const search_icon = 14;
 const search_count = 60;
+/// The badge after the title (`Tree.Pane.badge`).
+const badge_width = 42;
+const badge_height = 18;
 /// A drop highlight's corners.
 const drop_radius = 8;
 
@@ -230,6 +233,8 @@ fn paintSearch(ui: *const Ui, p: *Painter, node: *const Node) void {
         const s = std.fmt.bufPrint(&utf8, "{d} / {d}{s}", .{ sv.current, sv.matches, if (sv.partial) "+" else "" }) catch "";
         const n = std.unicode.utf8ToUtf16Le(&buf, s) catch 0;
         text = buf[0..n];
+    } else if (sv.hint.len > 0) {
+        text = sv.hint;
     }
     p.text(text, ui.fonts.get(.hint), r.count, if (sv.none) t.danger else t.text_muted);
 
@@ -270,7 +275,19 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
         p.dot(x + ui.px(3), strip.y + strip.h / 2, ui.px(3), ui.theme.accent);
         x += ui.px(14);
     }
-    const right = if (pane.buttons.len > pane.nav) pane.buttons[pane.nav].rect.x - ui.px(6) else strip.right() - ui.px(title_pad);
+    var right = if (pane.buttons.len > pane.nav) pane.buttons[pane.nav].rect.x - ui.px(6) else strip.right() - ui.px(title_pad);
+    // The badge, a tag in the accent, takes the title's right end.
+    if (pane.badge.len > 0) {
+        const bw = ui.px(badge_width);
+        const bh = ui.px(badge_height);
+        if (right - x > bw + ui.px(40)) {
+            const tag: Rect = .{ .x = right - bw, .y = strip.y + @round((strip.h - bh) / 2), .w = bw, .h = bh };
+            const a = ui.theme.accent;
+            p.fillRounded(tag, ui.px(4), .{ a[0], a[1], a[2], 0.18 });
+            p.text(pane.badge, ui.fonts.get(.hint), tag, a);
+            right = tag.x - ui.px(8);
+        }
+    }
     const r: Rect = .{ .x = x, .y = strip.y, .w = @max(0, right - x), .h = strip.h };
     if (pane.focused) {
         p.text(pane.title, ui.fonts.get(.body_strong), r, ui.theme.text_strong);

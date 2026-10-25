@@ -216,7 +216,8 @@ type Copied struct {
 type Notice struct {
 	Kind NoticeKind
 	// Text is the new title or pwd (as sent: OSC 7's is a file:// URI),
-	// or the clipboard's new text (empty to clear it).
+	// the clipboard's new text (empty to clear it), or for NoticeSearch
+	// the way to search, "down" or "up".
 	Text string
 	// Status is every program status record, oldest update first, for
 	// NoticeStatus.
@@ -231,6 +232,9 @@ const (
 	NoticeBell
 	NoticeClipboard
 	NoticeStatus
+	// NoticeSearch asks the viewer for a search needle: copy mode's / or
+	// ? was pressed in it.
+	NoticeSearch
 )
 
 func (*Hello) Type() Type      { return TypeHello }

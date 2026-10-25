@@ -28,6 +28,7 @@
 //!     search:   u8 direction (0 down, 1 up), the rest the utf8 needle
 //!               (empty: end the search)
 //!     search_step: u8 (0 next, 1 previous)
+//!     copy_mode: u8 (CopyMode: exit, enter, toggle)
 //!
 //! A win32 record is win32-input-mode's: u16 vk, u16 scan code, u16 char,
 //! u8 down, u32 control key state, u16 repeat. Mouse and wheel positions
@@ -48,6 +49,7 @@ pub const Kind = enum(u8) {
     cancel = 10,
     search = 11,
     search_step = 12,
+    copy_mode = 13,
 };
 
 /// A search event (search.zig): which way `next` goes, and what to
@@ -58,6 +60,9 @@ pub const Search = struct {
 };
 pub const SearchDirection = enum(u8) { down = 0, up = 1 };
 pub const SearchStep = enum(u8) { next = 0, previous = 1 };
+
+/// What a copy_mode event does to copy mode (copymode.zig).
+pub const CopyMode = enum(u8) { exit = 0, enter = 1, toggle = 2 };
 
 /// A wheel that scrolls a page a notch (SPI_GETWHEELSCROLLLINES).
 pub const lines_page = std.math.maxInt(u32);
@@ -172,6 +177,7 @@ pub fn Codec(comptime vt: type) type {
             cancel,
             search: Search,
             search_step: SearchStep,
+            copy_mode: CopyMode,
         };
 
         pub fn encode(w: *std.Io.Writer, ev: Event) std.Io.Writer.Error!void {
@@ -243,6 +249,7 @@ pub fn Codec(comptime vt: type) type {
                     try w.writeAll(s.needle);
                 },
                 .search_step => |step| try w.writeByte(@intFromEnum(step)),
+                .copy_mode => |how| try w.writeByte(@intFromEnum(how)),
             }
         }
 
@@ -347,6 +354,7 @@ pub fn Codec(comptime vt: type) type {
                     .needle = bytes[2..],
                 } },
                 .search_step => .{ .search_step = std.enums.fromInt(SearchStep, try r.takeByte()) orelse return error.BadEvent },
+                .copy_mode => .{ .copy_mode = std.enums.fromInt(CopyMode, try r.takeByte()) orelse return error.BadEvent },
             };
         }
 

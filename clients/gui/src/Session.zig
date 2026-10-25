@@ -106,8 +106,13 @@ program_status: ProgramStatus = .{},
 /// `program_status` changed since the window last looked. Set by the
 /// reader thread.
 status_changed: std.atomic.Value(bool) = .init(false),
+/// Copy mode asked this window for a search needle (its / or ?): 1 to
+/// search down, 2 up, until the window takes it. Set by the reader
+/// thread.
+search_prompt: std.atomic.Value(u8) = .init(0),
 /// The needle this window last searched the pane for: its pill shows
-/// it while that search is on (`search_needle_live`). UI thread only.
+/// it while that search is on (`search_needle_live`), and copy mode's
+/// prompt brings it back with Up. UI thread only.
 search_needle_buf: [64]u16 = undefined,
 search_needle_len: usize = 0,
 search_needle_live: bool = false,
@@ -682,6 +687,11 @@ fn daemonNotice(ctx: *anyopaque, n: Daemon.Notice) void {
             self.status_changed.store(true, .release);
             _ = win32.SetEvent(self.wake.output_event);
         },
+        // Copy mode's / or ?: the UI thread opens the card as its prompt.
+        .search => {
+            self.search_prompt.store(if (std.mem.eql(u8, n.text, "up")) 2 else 1, .release);
+            _ = win32.SetEvent(self.wake.output_event);
+        },
         // Nothing shows these yet.
         .pwd, .bell, _ => {},
     }
@@ -715,8 +725,9 @@ fn daemonUrl(ctx: *anyopaque, url: []const u8) void {
 fn daemonCopied(ctx: *anyopaque, tag: u32, text: []const u8) void {
     const self: *Session = @ptrCast(@alignCast(ctx));
     const t = self.term() orelse return;
-    // Nothing was selected by the time slime looked.
-    if (text.len == 0 or tag != @atomicLoad(u32, &t.copy_tag, .monotonic)) return;
+    // Nothing was selected by the time slime looked. Tag 0 is a copy
+    // nobody here asked for: copy mode's.
+    if (text.len == 0 or (tag != 0 and tag != @atomicLoad(u32, &t.copy_tag, .monotonic))) return;
     self.queueClipboard(text);
 }
 
@@ -1134,9 +1145,13 @@ pub fn copySelection(self: *Session) bool {
     return true;
 }
 
+/// Which way a search's next match lies.
+pub const SearchDirection = event.SearchDirection;
+
 /// Search the pane for `needle` (search.zig, in slime), `direction`
 /// being the way the next match lies; an empty needle ends the search.
-pub fn search(self: *Session, direction: event.SearchDirection, needle: []const u8) void {
+/// In copy mode, its search: from its cursor, that way.
+pub fn search(self: *Session, direction: SearchDirection, needle: []const u8) void {
     self.send(.{ .search = .{ .direction = direction, .needle = needle } });
 }
 
@@ -1222,6 +1237,22 @@ pub fn selectedRowText(self: *const Session, buf: []u16) ?[]const u16 {
     }
     const text = std.mem.trim(u16, buf[0..n], &.{ ' ', '\t' });
     return if (text.len == 0) null else text;
+}
+
+/// Put the pane in copy mode, or take it out (copymode.zig, in slime).
+/// Returns false for a browser pane.
+pub fn toggleCopyMode(self: *Session) bool {
+    if (self.content != .terminal) return false;
+    self.send(.{ .copy_mode = .toggle });
+    return true;
+}
+
+/// Whether the last frame showed the pane in copy mode.
+pub fn inCopyMode(self: *const Session) bool {
+    return switch (self.content) {
+        .terminal => |*t| t.screen.copy_mode,
+        .browser => false,
+    };
 }
 
 /// Send the clipboard's text, which slime brackets if the program asked

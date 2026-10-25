@@ -1122,8 +1122,12 @@ type ConfigDesc struct {
 	Path     string          `json:"path"`
 	Settings json.RawMessage `json:"settings"`
 	Keymap   []Binding       `json:"keymap"`
-	Actions  []ActionDesc    `json:"actions"`
-	Errors   []string        `json:"errors,omitempty"`
+	// CopyMode holds the bindings whose key starts with "copy-mode:",
+	// copy mode's own table, which the daemon applies to its terminals;
+	// the window ignores them.
+	CopyMode []Binding    `json:"copy_mode,omitempty"`
+	Actions  []ActionDesc `json:"actions"`
+	Errors   []string     `json:"errors,omitempty"`
 }
 
 // Binding is one slime.bind: Key as it was written (a chord such as

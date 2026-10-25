@@ -493,7 +493,7 @@ pub const Notice = struct {
     /// Every program status record, for `status`.
     status: StatusRecords,
 
-    pub const Kind = enum(u8) { title = 1, pwd = 2, bell = 3, clipboard = 4, status = 5, _ };
+    pub const Kind = enum(u8) { title = 1, pwd = 2, bell = 3, clipboard = 4, status = 5, search = 6, _ };
 };
 
 /// Program status records as a message carries them, oldest update

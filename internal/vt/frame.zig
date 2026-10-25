@@ -86,7 +86,10 @@ pub const Flags = packed struct(u8) {
     search: bool = false,
     /// The search hasn't finished with the history: the count grows.
     search_partial: bool = false,
-    _pad: u3 = 0,
+    /// The pane is in copy mode (copymode.zig): the cursor is copy
+    /// mode's, and the client marks the pane.
+    copy_mode: bool = false,
+    _pad: u2 = 0,
 };
 
 /// A highlighted range in a row: search's matches (tag 1), and the
@@ -330,6 +333,9 @@ pub fn Codec(comptime vt: type) type {
             /// The search, if one is on: its counts, and that it's
             /// still counting.
             search: ?struct { matches: u32, current: u32, partial: bool } = null,
+            /// A cursor to carry in place of the state's: copy mode's.
+            cursor: ?*const Cursor = null,
+            copy_mode: bool = false,
         }) std.Io.Writer.Error!void {
             const full = opts.full or state.dirty == .full;
             const flags: Flags = .{
@@ -338,6 +344,7 @@ pub fn Codec(comptime vt: type) type {
                 .motion = opts.motion,
                 .search = opts.search != null,
                 .search_partial = if (opts.search) |s| s.partial else false,
+                .copy_mode = opts.copy_mode,
             };
             try w.writeByte(@bitCast(flags));
             try w.writeInt(u16, state.cols, .little);
@@ -351,7 +358,7 @@ pub fn Codec(comptime vt: type) type {
             try writeRgb(w, colors.cursor orelse .{});
             if (flags.palette) for (colors.palette) |c| try writeRgb(w, c);
 
-            const cur = &state.cursor;
+            const cur = opts.cursor orelse &state.cursor;
             const bits: CursorBits = .{
                 .visible = cur.visible,
                 .blinking = cur.blinking,
@@ -500,6 +507,8 @@ pub fn Codec(comptime vt: type) type {
             search_partial: bool = false,
             matches: u32 = 0,
             current: u32 = 0,
+            /// The pane is in copy mode (Flags.copy_mode).
+            copy_mode: bool = false,
             /// The images placed in the viewport, as of the last frame.
             placements: std.ArrayList(Placement) = .empty,
             /// Images the frames applied dropped, for the owner of the
@@ -561,6 +570,7 @@ pub fn Codec(comptime vt: type) type {
                 self.motion = flags.motion;
                 self.search = flags.search;
                 self.search_partial = flags.search_partial;
+                self.copy_mode = flags.copy_mode;
 
                 self.colors.background = try readRgb(&r);
                 self.colors.foreground = try readRgb(&r);

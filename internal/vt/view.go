@@ -16,6 +16,7 @@ typedef struct {
 	bool copied;
 	bool changed;
 	bool autoscroll;
+	uint8_t search_prompt;
 } SlimeResult;
 
 extern uint64_t slime_vt_frame_layout(void);
@@ -30,6 +31,10 @@ typedef struct SlimeSource SlimeSource;
 extern SlimeSource* slime_vt_source_new(void);
 extern void slime_vt_source_free(SlimeSource* s, GhosttyTerminal t);
 extern bool slime_vt_source_search_pending(SlimeSource* s);
+extern bool slime_vt_source_copy_keys(SlimeSource* s, const uint8_t* ptr, size_t len,
+	const uint8_t** bad_ptr, size_t* bad_len);
+extern bool slime_vt_source_copy_mode(SlimeSource* s);
+extern uint16_t slime_vt_key_code(const uint8_t* ptr, size_t len);
 extern SlimeView* slime_vt_view_new(SlimeSource* source);
 extern void slime_vt_view_free(SlimeView* v, GhosttyTerminal t);
 extern void slime_vt_view_reset(SlimeView* v, GhosttyTerminal t);
@@ -155,7 +160,8 @@ func NewSource() (*Source, error) {
 }
 
 // Close frees the Source. Its Views must be closed. t is its terminal,
-// which must still be open: a search holds places in it, which stay
+// which must still be open: a search and copy mode hold places in it,
+// which stay
 // held if t is nil (for a terminal about to close).
 func (s *Source) Close(t *Terminal) {
 	if s.s != nil {
@@ -172,6 +178,54 @@ func (s *Source) Close(t *Terminal) {
 // history: another frame should follow for its count.
 func (s *Source) SearchPending() bool {
 	return bool(C.slime_vt_source_search_pending(s.s))
+}
+
+// SetCopyKeys sets copy mode's keys: the defaults with the lines of
+// table over them, "key\taction" each, an empty action unbinding the
+// key (copymode.zig). The first line that doesn't parse is returned,
+// "" if all did; the rest still apply.
+func (s *Source) SetCopyKeys(table string) (bad string, err error) {
+	buf := []byte(table)
+	var ptr *C.uint8_t
+	if len(buf) > 0 {
+		ptr = (*C.uint8_t)(unsafe.Pointer(&buf[0]))
+	}
+	var badPtr *C.uint8_t
+	var badLen C.size_t
+	if !C.slime_vt_source_copy_keys(s.s, ptr, C.size_t(len(buf)), &badPtr, &badLen) {
+		return "", errors.New("vt: out of memory")
+	}
+	if badLen > 0 {
+		bad = string(unsafe.Slice((*byte)(unsafe.Pointer(badPtr)), int(badLen)))
+	}
+	return bad, nil
+}
+
+// CheckCopyKeys parses a copy mode table as SetCopyKeys would and
+// returns its first line that doesn't, "" if all do.
+func CheckCopyKeys(table string) (bad string, err error) {
+	s, err := NewSource()
+	if err != nil {
+		return "", err
+	}
+	defer s.Close(nil)
+	return s.SetCopyKeys(table)
+}
+
+// CopyMode reports whether the terminal is in copy mode.
+func (s *Source) CopyMode() bool {
+	return bool(C.slime_vt_source_copy_mode(s.s))
+}
+
+// KeyCode is the number libghostty-vt gives the key called name
+// (ghostty's names: escape, arrow_up, page_down), 0 for none: for tests
+// that encode key events.
+func KeyCode(name string) uint16 {
+	b := []byte(name)
+	if len(b) == 0 {
+		return 0
+	}
+	return uint16(C.slime_vt_key_code((*C.uint8_t)(unsafe.Pointer(&b[0])), C.size_t(len(b))))
 }
 
 // View is one terminal as a client sees and drives it: frames of it to
@@ -287,6 +341,9 @@ type Result struct {
 	// Autoscroll: a selection drag sits past an edge. Call Autoscroll
 	// every AutoscrollInterval while it stays set.
 	Autoscroll bool
+	// SearchPrompt: copy mode asks the client for a search needle (its
+	// / or ?), 1 to search down, 2 up; 0 for nothing.
+	SearchPrompt uint8
 }
 
 // Event handles an event from the client (event.zig's encoding).
@@ -315,10 +372,11 @@ func (v *View) Autoscroll(t *Terminal) Result {
 
 func result(r *C.SlimeResult) Result {
 	out := Result{
-		Copied:     bool(r.copied),
-		CopyTag:    uint32(r.copy_tag),
-		Changed:    bool(r.changed),
-		Autoscroll: bool(r.autoscroll),
+		Copied:       bool(r.copied),
+		CopyTag:      uint32(r.copy_tag),
+		Changed:      bool(r.changed),
+		Autoscroll:   bool(r.autoscroll),
+		SearchPrompt: uint8(r.search_prompt),
 	}
 	if r.pty_len > 0 {
 		out.Pty = unsafe.Slice((*byte)(unsafe.Pointer(r.pty_ptr)), int(r.pty_len))

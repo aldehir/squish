@@ -10,6 +10,7 @@ import (
 	"github.com/aldehir/slime/internal/config"
 	"github.com/aldehir/slime/internal/lua"
 	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/slime/internal/vt"
 )
 
 // The config: init.lua (internal/config), evaluated when the server
@@ -43,11 +44,35 @@ func (s *Server) loadConfig() *rpc.ConfigDesc {
 	s.mu.Lock()
 	var old *config.Config
 	s.configErrors = errs
+	var copyKeys string
 	if cfg != nil {
 		old, s.config = s.config, cfg
+		// The panes' copy mode keys are the config's.
+		copyKeys = s.copyKeysLocked()
+		for _, p := range s.panes {
+			if pn, ok := p.(*Pane); ok {
+				pn.setCopyKeys(copyKeys)
+			}
+		}
 	}
 	desc := s.configDescLocked()
 	s.mu.Unlock()
+	if cfg != nil {
+		// Once here, not once per pane: each line that doesn't parse,
+		// checked on its own.
+		for _, line := range strings.Split(strings.TrimSuffix(copyKeys, "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			if bad, err := vt.CheckCopyKeys(line + "\n"); err != nil {
+				s.log.Error("checking copy mode keys", "err", err)
+				break
+			} else if bad != "" {
+				key, action, _ := strings.Cut(bad, "\t")
+				s.log.Warn("copy mode binding skipped", "key", config.CopyModePrefix+key, "action", action)
+			}
+		}
+	}
 	if old != nil {
 		go old.Close()
 	}
@@ -73,6 +98,15 @@ func (s *Server) currentConfig() *config.Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.config
+}
+
+// copyKeysLocked is the config's copy mode key table for a pane's
+// terminal (config.CopyKeys), "" for the defaults.
+func (s *Server) copyKeysLocked() string {
+	if s.config != nil {
+		return s.config.CopyKeys()
+	}
+	return ""
 }
 
 // shellCommand is what a pane runs when its spec names nothing: the

@@ -142,6 +142,35 @@ func TestSettingsAndBindings(t *testing.T) {
 	}
 }
 
+// TestCopyModeBindings: "copy-mode:" keys go to the daemon's table, not
+// the window's keymap, keeping a single character's case.
+func TestCopyModeBindings(t *testing.T) {
+	c := load(t, &fakeHost{}, map[string]string{"init.lua": `
+		slime.bind("copy-mode:G", "history_bottom")
+		slime.bind("Copy-Mode: Ctrl + V", "rectangle_toggle")
+		slime.bind("copy-mode:PageUp", "page_up")
+		slime.bind("copy-mode:v", "begin_selection")
+		slime.unbind("copy-mode:v")
+		slime.bind("ctrl+shift+m", "copy_mode")
+	`})
+	d := c.Desc()
+	want := []rpc.Binding{
+		{Key: "copy-mode:G", Action: "history_bottom"},
+		{Key: "copy-mode:ctrl+V", Action: "rectangle_toggle"},
+		{Key: "copy-mode:pageup", Action: "page_up"},
+		{Key: "copy-mode:v"},
+	}
+	if got, _ := json.Marshal(d.CopyMode); string(got) != string(mustJSON(want)) {
+		t.Errorf("copy mode bindings %s", got)
+	}
+	if got, _ := json.Marshal(d.Keymap); string(got) != `[{"key":"ctrl+shift+m","action":"copy_mode"}]` {
+		t.Errorf("keymap %s", got)
+	}
+	if keys := c.CopyKeys(); keys != "G\thistory_bottom\nctrl+V\trectangle_toggle\npageup\tpage_up\nv\t\n" {
+		t.Errorf("copy keys %q", keys)
+	}
+}
+
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
 	return b

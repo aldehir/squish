@@ -50,11 +50,14 @@ type Pane struct {
 	term *vt.Terminal
 	// The size the pty and terminal have: the smallest its viewers asked
 	// for, or the daemon's own while none has.
-	size   Size
-	modes  []mode
-	status programStatus
-	done   bool
-	fr     framing
+	size  Size
+	modes []mode
+	// Copy mode's keys from the config (config.CopyKeys), as the
+	// terminal's frame source has them.
+	copyKeys string
+	status   programStatus
+	done     bool
+	fr       framing
 	// What the terminal answered its program since the last take, for
 	// the child: written outside the lock (writeReplies).
 	replies []byte
@@ -162,6 +165,30 @@ func (p *Pane) emitEvents(events []paneEvent) {
 	defer p.srv.mu.Unlock()
 	for _, e := range events {
 		p.srv.emitLocked(e.name, e.params, nil)
+	}
+}
+
+// setCopyKeys gives the pane the config's copy mode keys (the server's
+// copyKeysLocked), which its frame source takes up.
+func (p *Pane) setCopyKeys(keys string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if keys == p.copyKeys && p.fr.source != nil {
+		return
+	}
+	p.copyKeys = keys
+	p.applyCopyKeysLocked()
+}
+
+// applyCopyKeysLocked hands copyKeys to the frame source, if there is
+// one yet. A line that doesn't parse is skipped (the server logged it
+// when the config loaded); the others apply.
+func (p *Pane) applyCopyKeysLocked() {
+	if p.fr.source == nil {
+		return
+	}
+	if _, err := p.fr.source.SetCopyKeys(p.copyKeys); err != nil {
+		p.srv.log.Error("setting copy mode keys", "pane", p.id, "err", err)
 	}
 }
 

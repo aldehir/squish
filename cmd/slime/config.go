@@ -111,10 +111,16 @@ func configCommand() *cobra.Command {
 				fmt.Printf("errors\n%s\n(the settings, bindings, and actions below are the last that loaded)\n", indent(strings.Join(d.Errors, "\n")))
 			}
 			fmt.Printf("settings\n%s\n", indent(prettyJSON(d.Settings)))
-			if len(d.Keymap) > 0 {
-				fmt.Println("keymap")
+			for _, section := range []struct {
+				name     string
+				bindings []rpc.Binding
+			}{{"keymap", d.Keymap}, {"copy mode", d.CopyMode}} {
+				if len(section.bindings) == 0 {
+					continue
+				}
+				fmt.Println(section.name)
 				w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-				for _, b := range d.Keymap {
+				for _, b := range section.bindings {
 					fmt.Fprintf(w, "  %s\t%s\n", b.Key, bindingString(b))
 				}
 				w.Flush()
@@ -145,7 +151,7 @@ func printConfig(d rpc.ConfigDesc, ok string) error {
 		fmt.Fprintln(os.Stderr, strings.Join(d.Errors, "\n"))
 		return errConfigFailed
 	}
-	fmt.Printf("%s: %s: %d bindings, %d actions\n", ok, d.Path, len(d.Keymap), len(d.Actions))
+	fmt.Printf("%s: %s: %d bindings, %d actions\n", ok, d.Path, len(d.Keymap)+len(d.CopyMode), len(d.Actions))
 	return nil
 }
 

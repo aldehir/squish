@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	glua "github.com/yuin/gopher-lua"
 
@@ -158,12 +159,37 @@ func (c *Config) describe() {
 	}
 	d := rpc.ConfigDesc{Path: c.path, Settings: settings, Keymap: []rpc.Binding{}, Actions: []rpc.ActionDesc{}}
 	for _, b := range c.bindings {
-		d.Keymap = append(d.Keymap, *b)
+		if strings.HasPrefix(b.Key, CopyModePrefix) {
+			d.CopyMode = append(d.CopyMode, *b)
+		} else {
+			d.Keymap = append(d.Keymap, *b)
+		}
 	}
 	for _, a := range c.actions {
 		d.Actions = append(d.Actions, a.desc)
 	}
 	c.desc = d
+}
+
+// CopyModePrefix marks a binding as copy mode's: slime.bind("copy-mode:v",
+// "begin_selection"). The key after it is the character the key types,
+// a name (escape, enter, up, pageup, ...), or "ctrl+" with one; the
+// action is one of copy mode's (internal/vt/copymode.zig), or a
+// function binding, which copy mode doesn't take.
+const CopyModePrefix = "copy-mode:"
+
+// CopyKeys is the copy mode table for a terminal (vt.Source.SetCopyKeys):
+// a "key\taction" line per copy-mode binding, in order, an unbind with
+// an empty action. "" when the file bound none.
+func (c *Config) CopyKeys() string {
+	var b strings.Builder
+	for _, bind := range c.bindings {
+		if !strings.HasPrefix(bind.Key, CopyModePrefix) {
+			continue
+		}
+		fmt.Fprintf(&b, "%s\t%s\n", strings.TrimPrefix(bind.Key, CopyModePrefix), bind.Action)
+	}
+	return b.String()
 }
 
 // Shell is settings.shell.command: what a pane runs when nothing says.
@@ -487,9 +513,28 @@ func (c *Config) setBinding(b *rpc.Binding) {
 }
 
 // normKey is a chord as the keymap spells it: lower case, no spaces, so
-// "Ctrl + Shift + D" and "ctrl+shift+d" are one key.
+// "Ctrl + Shift + D" and "ctrl+shift+d" are one key. A copy mode key
+// keeps the case of a single character, which is the key: "copy-mode:G"
+// is shift+g, and not "copy-mode:g".
 func normKey(key string) string {
-	return strings.ToLower(strings.Join(strings.Fields(key), ""))
+	key = strings.Join(strings.Fields(key), "")
+	if strings.HasPrefix(strings.ToLower(key), CopyModePrefix) {
+		tail := key[len(CopyModePrefix):]
+		if i := strings.LastIndexByte(tail, '+'); i >= 0 && i < len(tail)-1 {
+			return CopyModePrefix + strings.ToLower(tail[:i+1]) + lowerUnlessChar(tail[i+1:])
+		}
+		return CopyModePrefix + lowerUnlessChar(tail)
+	}
+	return strings.ToLower(key)
+}
+
+// lowerUnlessChar lowers a key's name, but not a single character,
+// whose case is the shift state.
+func lowerUnlessChar(s string) string {
+	if utf8.RuneCountInString(s) == 1 {
+		return s
+	}
+	return strings.ToLower(s)
 }
 
 // luaAction is slime.action{name, title, args, run}: an action by

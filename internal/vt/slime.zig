@@ -13,6 +13,7 @@ const vt = @import("root");
 const frame = @import("frame.zig");
 const event = @import("event.zig");
 const search = @import("search.zig");
+const copymode = @import("copymode.zig");
 
 const Terminal = vt.c_api.terminal.Terminal;
 const Frames = frame.Codec(vt);
@@ -106,13 +107,28 @@ const Source = struct {
     full_generation: u64 = 0,
     /// Search (search.zig): the terminal's, so every view shows it.
     search: search.State = .{},
+    /// Copy mode (copymode.zig): the terminal's, so every view shows it.
+    /// While it's on, frames show its snapshot in place of the terminal.
+    copy: copymode.State = .{},
+    /// Which terminal the state was built from: copy mode's epoch.
+    shown_epoch: u64 = 0,
 
-    /// Bring the state up to date with the terminal, marking the rows
-    /// that changed with a new generation.
-    fn update(self: *Source, term: *vt.Terminal) !void {
-        try self.state.update(alloc, term);
+    /// Bring the state up to date with the terminal (copy mode's
+    /// snapshot while it's on), marking the rows that changed with a new
+    /// generation.
+    fn update(self: *Source, live: *vt.Terminal) !void {
+        // A state built from one terminal is no use for another: copy
+        // mode came or went.
+        const epoch = self.copy.epoch();
+        if (epoch != self.shown_epoch) {
+            self.state.deinit(alloc);
+            self.state = .empty;
+            self.shown_epoch = epoch;
+        }
+        self.copy.fit(live);
+        try self.state.update(alloc, self.copy.terminal() orelse live);
         // Its highlights go in before the dirty rows are read.
-        self.search.refresh(term, &self.state);
+        if (self.copy.isOn()) self.copy.refresh(&self.state) else self.search.refresh(live, &self.state);
         self.generation += 1;
         const rows = @min(self.state.row_data.len, self.state.rows);
         var full = self.state.dirty == .full;
@@ -143,9 +159,40 @@ export fn slime_vt_source_new() ?*Source {
 export fn slime_vt_source_free(s: ?*Source, t: Terminal) void {
     const self = s orelse return;
     self.search.deinit(zigTerminal(t));
+    self.copy.deinit();
     self.state.deinit(alloc);
     self.gens.deinit(alloc);
     alloc.destroy(self);
+}
+
+/// Set copy mode's keys: the defaults with `text`'s lines over them, a
+/// "key<tab>action" each (copymode.Table.apply). The first line that
+/// doesn't parse comes back in `bad` (a slice of `text`; null for
+/// none). Returns false if out of memory.
+export fn slime_vt_source_copy_keys(s: ?*Source, ptr: [*]const u8, len: usize, bad_ptr: *?[*]const u8, bad_len: *usize) bool {
+    const self = s orelse return false;
+    bad_ptr.* = null;
+    bad_len.* = 0;
+    const bad = self.copy.table.apply(ptr[0..len]) catch return false;
+    if (bad) |line| {
+        bad_ptr.* = line.ptr;
+        bad_len.* = line.len;
+    }
+    return true;
+}
+
+/// Whether the terminal is in copy mode.
+export fn slime_vt_source_copy_mode(s: ?*Source) bool {
+    const self = s orelse return false;
+    return self.copy.isOn();
+}
+
+/// The number libghostty-vt's key enum gives the key called `name`
+/// (ghostty's names: escape, arrow_up, page_down), or 0 for none: for
+/// tests, which encode key events.
+export fn slime_vt_key_code(ptr: [*]const u8, len: usize) u16 {
+    const key = std.meta.stringToEnum(vt.input.Key, ptr[0..len]) orelse return 0;
+    return @intCast(@intFromEnum(key));
 }
 
 const View = struct {
@@ -181,6 +228,8 @@ const View = struct {
     double_click_ms: u32 = 500,
     word_boundary: std.ArrayList(u21) = .empty,
     gesture: vt.SelectionGesture = .init,
+    /// Which terminal the gesture holds a place in: copy mode's epoch.
+    gesture_epoch: u64 = 0,
     /// A left button drag is selecting text rather than being reported.
     selecting: bool = false,
     /// Where the selection drag last was, for autoscroll ticks, and
@@ -211,7 +260,25 @@ const Result = extern struct {
     /// A selection drag sits past an edge: tick slime_vt_view_autoscroll
     /// every autoscroll_ms while this stays set.
     autoscroll: bool = false,
+    /// Copy mode asks the client for a search needle (its / or ?): 1 to
+    /// search down, 2 up; 0 for nothing.
+    search_prompt: u8 = 0,
 };
+
+/// The terminal the view shows: copy mode's snapshot while it's on, else
+/// `live`. The mouse gesture holds a place in one; one left in a
+/// snapshot that's gone is dropped (its pin went with it), and one in
+/// `live` let go once the view shows a snapshot.
+fn shown(self: *View, live: *vt.Terminal) *vt.Terminal {
+    const cm = &self.source.copy;
+    const epoch = cm.epoch();
+    if (self.gesture_epoch != epoch) {
+        if (self.gesture_epoch == 0) self.gesture.reset(live) else self.gesture = .init;
+        self.selecting = false;
+        self.gesture_epoch = epoch;
+    }
+    return cm.terminal() orelse live;
+}
 
 /// Whether a search is still working through the history: another frame
 /// should follow for its count.
@@ -235,7 +302,15 @@ const default_word_boundary = [_]u21{ ' ', '\t', '\'', '"', '│', '`', '|', ':'
 
 export fn slime_vt_view_free(v: ?*View, t: Terminal) void {
     const self = v orelse return;
-    if (zigTerminal(t)) |term| self.gesture.deinit(term);
+    if (zigTerminal(t)) |term| {
+        // The gesture's pin is in the terminal it's in, if that's still
+        // there.
+        if (self.gesture_epoch == 0) {
+            self.gesture.deinit(term);
+        } else if (self.gesture_epoch == self.source.copy.epoch()) {
+            self.gesture.deinit(self.source.copy.terminal().?);
+        }
+    }
     self.frame.deinit();
     self.out.deinit();
     self.copied.deinit();
@@ -252,7 +327,7 @@ export fn slime_vt_view_free(v: ?*View, t: Terminal) void {
 export fn slime_vt_view_reset(v: ?*View, t: Terminal) void {
     const self = v orelse return;
     const term = zigTerminal(t) orelse return;
-    self.gesture.reset(term);
+    self.gesture.reset(shown(self, term));
     self.selecting = false;
     self.drag = .{};
     self.mouse_cell = null;
@@ -287,6 +362,8 @@ export fn slime_vt_terminal_defaults(t: Terminal, fresh: bool) void {
 export fn slime_vt_view_hold(v: ?*View, t: Terminal) u8 {
     const self = v orelse return 0;
     const term = zigTerminal(t) orelse return 0;
+    // Copy mode's snapshot waits on nothing the program does.
+    if (self.source.copy.isOn()) return 0;
     if (term.modes.get(.synchronized_output)) return 1;
     if (!term.modes.get(.cursor_visible) and self.cursor_shown) return 2;
     return 0;
@@ -321,26 +398,67 @@ export fn slime_vt_view_frame(
     self.changed.resize(alloc, src.gens.items.len) catch return false;
     for (src.gens.items, self.changed.items) |g, *c| c.* = g > self.generation;
     if (full) self.images.reset();
-    self.images.gather(alloc, term) catch return false;
+    self.images.gather(alloc, src.copy.terminal() orelse term) catch return false;
     const palette = src.state.colors.palette;
     const palette_changed = if (self.palette) |p| !std.mem.eql(vt.color.RGB, &p, &palette) else true;
+    // In copy mode the frame's cursor is copy mode's: a steady block
+    // where the keys have it, in place of the program's. Its matches are
+    // the search the frame counts, and the mouse is its own.
+    const copying = src.copy.isOn();
+    const copy_cursor: ?vt.RenderState.Cursor = if (copying) copyCursor(src) else null;
+    const Found = struct { matches: u32, current: u32, partial: bool };
+    const found: ?Found = if (copying)
+        (if (src.copy.searchInfo()) |s| .{ .matches = s.matches, .current = s.current, .partial = false } else null)
+    else if (src.search.isOn())
+        .{ .matches = src.search.total, .current = src.search.current, .partial = src.search.partial }
+    else
+        null;
     self.frame.clearRetainingCapacity();
     Frames.encode(&self.frame.writer, &src.state, .{
         .full = whole,
         .changed = self.changed.items,
         .palette = palette_changed,
-        .motion = term.flags.mouse_event == .any,
+        .motion = !copying and term.flags.mouse_event == .any,
         .mouse_shape = std.math.cast(u8, @intFromEnum(term.mouse_shape)) orelse 0,
         .images = &self.images,
-        .search = if (src.search.isOn()) .{ .matches = src.search.total, .current = src.search.current, .partial = src.search.partial } else null,
+        .search = if (found) |f| .{ .matches = f.matches, .current = f.current, .partial = f.partial } else null,
+        .cursor = if (copy_cursor) |*c| c else null,
+        .copy_mode = copying,
     }) catch return false;
     self.generation = src.generation;
-    self.cursor_shown = src.state.cursor.visible;
+    self.cursor_shown = (copy_cursor orelse src.state.cursor).visible;
     self.palette = palette;
     const bytes = self.frame.written();
     out_ptr.* = bytes.ptr;
     out_len.* = bytes.len;
     return true;
+}
+
+/// Copy mode's cursor as the frame carries it: a visible, steady block on
+/// its cell, with the cell's content and style from the render state (the
+/// client colors the text under a block cursor by them); out of the
+/// viewport, hidden.
+fn copyCursor(src: *Source) vt.RenderState.Cursor {
+    var cur = src.state.cursor;
+    cur.visible = true;
+    cur.blinking = false;
+    cur.password_input = false;
+    cur.visual_style = .block;
+    cur.viewport = null;
+    cur.cell = .{};
+    cur.style = .{};
+    const at = src.copy.cursorCell() orelse return cur;
+    const rows = src.state.row_data.slice();
+    const y: usize = at.y;
+    if (y < rows.len and y < src.state.rows and at.x < src.state.cols) {
+        const cells = rows.items(.cells)[y].slice();
+        if (at.x < cells.len) {
+            cur.cell = cells.items(.raw)[at.x];
+            cur.style = cells.items(.style)[at.x];
+        }
+    }
+    cur.viewport = .{ .x = at.x, .y = @intCast(at.y), .wide_tail = cur.cell.wide == .spacer_tail };
+    return cur;
 }
 
 /// An image the client needs before the last frame (view.go's Image).
@@ -365,7 +483,7 @@ export fn slime_vt_view_image(v: ?*View, t: Terminal, i: usize, out: *Image) u8 
     if (i >= self.images.pending.items.len) return 0;
     if (self.image_rgba) |rgba| alloc.free(rgba);
     self.image_rgba = null;
-    const px = (self.images.pixels(alloc, term, i) catch null) orelse return 2;
+    const px = (self.images.pixels(alloc, self.source.copy.terminal() orelse term, i) catch null) orelse return 2;
     self.image_rgba = px.rgba;
     out.* = .{
         .id = px.id,
@@ -405,7 +523,7 @@ export fn slime_vt_view_event(
 /// and extend the selection there.
 export fn slime_vt_view_autoscroll(v: ?*View, t: Terminal, result: *Result) bool {
     const self = v orelse return false;
-    const term = zigTerminal(t) orelse return false;
+    const term = shown(self, zigTerminal(t) orelse return false);
     result.* = .{};
     self.out.clearRetainingCapacity();
     self.copied.clearRetainingCapacity();
@@ -420,6 +538,10 @@ export fn slime_vt_view_autoscroll(v: ?*View, t: Terminal, result: *Result) bool
     // A reset gesture (the screen switched) leaves the selection alone.
     if (self.gesture.left_click_count != 0) {
         term.screens.active.select(sel) catch return false;
+        if (self.source.copy.active()) |mode| {
+            const pin = term.screens.active.pages.pin(.{ .viewport = cellAt(self, term, self.drag.x, self.drag.y) });
+            if (pin) |p| mode.syncSelection(p) catch return false;
+        }
         result.changed = true;
     }
     finish(self, result);
@@ -442,23 +564,39 @@ fn finish(self: *View, result: *Result) void {
 
 const Error = std.Io.Writer.Error || std.mem.Allocator.Error || error{ SelectionFailed, EncodeFailed };
 
-fn handle(self: *View, t: *vt.Terminal, win32_input: bool, ev: Events.Event, result: *Result) Error!void {
+fn handle(self: *View, live: *vt.Terminal, win32_input: bool, ev: Events.Event, result: *Result) Error!void {
     const w = &self.out.writer;
+    const cm = &self.source.copy;
+    // What the mouse and a copy act on: copy mode's snapshot while it's
+    // on. Keys and the program's settings are the pane's own terminal's.
+    const t = shown(self, live);
     switch (ev) {
         .key => |k| {
             const e = k.event;
+            // Copy mode takes every key, bound or not.
+            if (cm.isOn()) return copyModeKey(self, live, e, result);
             if (win32_input) {
                 for (k.win32) |rec| try rec.encode(w);
-                if (e.action != .release and !e.key.modifier()) typed(t, result);
+                if (e.action != .release and !e.key.modifier()) typed(live, result);
                 return;
             }
-            const opts: vt.input.KeyEncodeOptions = .fromTerminal(t);
+            const opts: vt.input.KeyEncodeOptions = .fromTerminal(live);
             if (!try legacyCtrl(w, e, opts)) {
                 vt.input.encodeKey(w, e, opts) catch return error.EncodeFailed;
             }
-            if (self.out.written().len > 0 and e.action != .release and !e.key.modifier()) typed(t, result);
+            if (self.out.written().len > 0 and e.action != .release and !e.key.modifier()) typed(live, result);
         },
         .text => |text| {
+            // Text typed in copy mode is keys, a character each, as in
+            // tmux: an IME's commit, or a WM_CHAR posted by a test.
+            if (cm.isOn()) {
+                var it = std.unicode.Utf8View.initUnchecked(text).iterator();
+                while (it.nextCodepointSlice()) |cp| {
+                    try copyModeKey(self, live, .{ .utf8 = cp }, result);
+                    if (!cm.isOn() or result.search_prompt != 0) break;
+                }
+                return;
+            }
             if (win32_input) {
                 // A press and release of no key per UTF-16 unit, carrying
                 // the text, as WM_CHAR delivered it.
@@ -473,18 +611,19 @@ fn handle(self: *View, t: *vt.Terminal, win32_input: bool, ev: Events.Event, res
             } else {
                 try w.writeAll(text);
             }
-            typed(t, result);
+            typed(live, result);
         },
         .paste => |text| {
-            const opts: vt.input.PasteOptions = .fromTerminal(t);
+            if (cm.isOn()) return;
+            const opts: vt.input.PasteOptions = .fromTerminal(live);
             // The encoder replaces control bytes in place.
             const copy = try alloc.dupe(u8, text);
             defer alloc.free(copy);
             for (vt.input.encodePaste(copy, opts)) |part| try w.writeAll(part);
-            typed(t, result);
+            typed(live, result);
         },
         .focus => |gained| {
-            if (!t.modes.get(.focus_event)) return;
+            if (!live.modes.get(.focus_event)) return;
             vt.input.encodeFocus(w, if (gained) .gained else .lost) catch return error.EncodeFailed;
         },
         .mouse => |m| try mouse(self, t, m, result),
@@ -504,24 +643,62 @@ fn handle(self: *View, t: *vt.Terminal, win32_input: bool, ev: Events.Event, res
             self.word_boundary.clearRetainingCapacity();
             try self.word_boundary.appendSlice(alloc, s.word_boundary);
             // Keeping what the program changed (OSC 4/10/11/12).
-            const colors = &t.colors;
+            const colors = &live.colors;
             colors.background.default = s.colors.background;
             colors.foreground.default = s.colors.foreground;
             colors.cursor.default = s.colors.cursor;
-            try colors.palette.changeDefault(t.gpa(), s.colors.palette);
+            try colors.palette.changeDefault(live.gpa(), s.colors.palette);
             result.changed = true;
         },
         .cancel => if (self.selecting) endSelection(self, t, null),
+        // In copy mode, the needle its / or ? asked for, and its n and N;
+        // else the pane's own search.
         .search => |s| {
-            const direction: search.Direction = @enumFromInt(@intFromEnum(s.direction));
-            self.source.search.start(t, s.needle, direction) catch return error.SelectionFailed;
+            if (cm.isOn()) {
+                cm.searchNeedle(s.needle, @enumFromInt(@intFromEnum(s.direction))) catch return error.SelectionFailed;
+            } else {
+                const direction: search.Direction = @enumFromInt(@intFromEnum(s.direction));
+                self.source.search.start(live, s.needle, direction) catch return error.SelectionFailed;
+            }
             result.changed = true;
         },
         .search_step => |step| {
-            self.source.search.step(t, @enumFromInt(@intFromEnum(step))) catch return error.SelectionFailed;
+            if (cm.isOn()) {
+                cm.searchStep(step == .previous) catch return error.SelectionFailed;
+            } else {
+                self.source.search.step(live, @enumFromInt(@intFromEnum(step))) catch return error.SelectionFailed;
+            }
+            result.changed = true;
+        },
+        .copy_mode => |how| {
+            const on = cm.isOn();
+            switch (how) {
+                .enter => if (!on) try enterCopyMode(self, live),
+                .exit => cm.exit(live),
+                .toggle => if (on) cm.exit(live) else try enterCopyMode(self, live),
+            }
             result.changed = true;
         },
     }
+}
+
+/// Copy mode in place of the pane's search, which it has its own of.
+fn enterCopyMode(self: *View, live: *vt.Terminal) Error!void {
+    self.source.search.end(live);
+    self.source.copy.enter(live) catch return error.SelectionFailed;
+}
+
+/// A key press in copy mode (copymode.zig): what it did goes in `result`,
+/// a copy as one nobody asked for (tag 0), which the client takes as
+/// such, and / or ? as a request for a needle.
+fn copyModeKey(self: *View, live: *vt.Terminal, e: vt.input.KeyEvent, result: *Result) Error!void {
+    const out = self.source.copy.key(live, e, &self.copied.writer) catch return error.SelectionFailed;
+    if (out.changed) result.changed = true;
+    if (out.copied) {
+        result.copied = true;
+        result.copy_tag = 0;
+    }
+    if (out.prompt) |d| result.search_prompt = if (d == .down) 1 else 2;
 }
 
 /// UTF-16 units of a codepoint.
@@ -591,16 +768,19 @@ fn typed(t: *vt.Terminal, result: *Result) void {
 
 /// Report a mouse button press or release, or motion, if the program
 /// asked for mouse events; else select with the left button. Shift
-/// selects even when it asked.
+/// selects even when it asked, and so does copy mode, which the program
+/// hears nothing from.
 fn mouse(self: *View, t: *vt.Terminal, m: Events.Mouse, result: *Result) Error!void {
+    const copying = self.source.copy.isOn();
     if (!self.selecting and m.button == .left and m.action == .press) {
-        if (t.flags.mouse_event != .none and !m.mods.shift) {
+        if (t.flags.mouse_event != .none and !m.mods.shift and !copying) {
             self.gesture.reset(t);
         } else {
             self.selecting = true;
         }
     }
     if (self.selecting) return selectionInput(self, t, m, result);
+    if (copying) return;
 
     var opts: MouseEncodeOptions = .fromTerminal(t, surfaceSize(self, t));
     opts.any_button_pressed = m.held;
@@ -647,6 +827,8 @@ fn selectionInput(self: *View, t: *vt.Terminal, m: Events.Mouse, result: *Result
         return;
     };
     t.screens.active.select(sel) catch return error.SelectionFailed;
+    // Copy mode's cursor follows the mouse: a drag's end, or a click.
+    if (self.source.copy.active()) |mode| mode.syncSelection(pin) catch return error.SelectionFailed;
     result.changed = true;
 }
 
@@ -662,8 +844,10 @@ fn endSelection(self: *View, t: *vt.Terminal, pin: ?vt.Pin) void {
 /// alternate scroll (mode 1007) set, else move the viewport through
 /// scrollback.
 fn wheel(self: *View, t: *vt.Terminal, m: Events.Wheel, result: *Result) Error!void {
-    const reporting = t.flags.mouse_event != .none;
-    const alternate_scroll = !reporting and
+    // Copy mode scrolls the viewport, whatever the program asked for.
+    const copying = self.source.copy.isOn();
+    const reporting = t.flags.mouse_event != .none and !copying;
+    const alternate_scroll = !reporting and !copying and
         t.screens.active_key == .alternate and
         t.modes.get(.mouse_alternate_scroll);
     if (m.horizontal and !reporting) return;
@@ -701,6 +885,7 @@ fn wheel(self: *View, t: *vt.Terminal, m: Events.Wheel, result: *Result) Error!v
     } else {
         const delta: isize = @intCast(count);
         t.scrollViewport(.{ .delta = if (up) -delta else delta });
+        if (self.source.copy.active()) |mode| mode.viewportMoved() catch return error.SelectionFailed;
         result.changed = true;
     }
 }

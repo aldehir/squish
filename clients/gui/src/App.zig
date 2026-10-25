@@ -287,6 +287,10 @@ pub const SearchEdit = struct {
     /// The pane's session's id.
     pane: u32,
     field: TextField,
+    /// Copy mode's prompt for a needle (its / or ?, or start_search in
+    /// copy mode): typing searches nothing, and Enter searches this way
+    /// once, as tmux's prompt does. Null for the pane's own search.
+    prompt: ?Session.SearchDirection = null,
 };
 
 /// Asking whether to kill a workspace, or to let a browser pane's page
@@ -3003,6 +3007,9 @@ fn outputArrived(self: *App) void {
         var it = t.iterator();
         while (it.next()) |s| {
             if (s.status_changed.swap(false, .acq_rel)) status_changed = true;
+            // Copy mode's / or ?, on a pane in view: its prompt opens.
+            const prompt = s.search_prompt.swap(0, .acq_rel);
+            if (prompt != 0 and i == self.active and t.shows(s)) self.startPrompt(s, if (prompt == 2) .up else .down);
             if (!s.unseen.swap(false, .acq_rel)) continue;
             if (i == self.active) {
                 if (!t.shows(s)) continue;
@@ -3156,6 +3163,7 @@ fn runAction(self: *App, action: binding.Action) bool {
             if (self.mode == .search and self.mode.search.pane == s.id) self.cancelSearch(true) else s.endSearch();
             self.markDirty();
         },
+        .copy_mode => return s.toggleCopyMode(),
         .paste_from_clipboard => {
             if (s.content == .browser or !self.shell.clipboardHasText()) return false;
             s.paste();
@@ -3676,6 +3684,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = if (zoomed) L("Unzoom pane") else L("Zoom pane"), .icon = if (zoomed) .minimize_2 else .maximize_2, .action = .toggle_split_zoom },
         .{ .label = L("Equalize splits"), .icon = .columns_2, .action = .equalize_splits },
         .{ .label = L("Search"), .icon = .search, .action = .start_search },
+        .{ .label = L("Copy mode"), .icon = .copy, .action = .copy_mode },
         .{ .label = L("Next tab"), .icon = .arrow_right, .action = .next_tab },
         .{ .label = L("Previous tab"), .icon = .arrow_left, .action = .previous_tab },
         .{ .label = L("Increase font size"), .icon = null, .action = .{ .increase_font_size = 1 } },
@@ -3847,6 +3856,8 @@ fn urlShown(self: *App) bool {
 /// if there's one within a row, or bring an open card's keys back.
 fn startSearch(self: *App, s: *Session) void {
     if (s.content != .terminal) return;
+    // Copy mode searches its snapshot, with its prompt.
+    if (s.inCopyMode()) return self.startPrompt(s, .up);
     if (self.mode == .search and self.mode.search.pane == s.id) {
         self.mode.search.field.press(.select_all, false, false);
         self.resetBlink();
@@ -3869,9 +3880,38 @@ fn startSearch(self: *App, s: *Session) void {
     self.markDirty();
 }
 
-/// The needle changed: search the pane for it.
+/// Open the card as copy mode's prompt for a needle: it starts empty,
+/// Up brings back the last one, and Enter searches `direction` once and
+/// folds the card into its pill, the keys going back to copy mode (n
+/// and N), as tmux's prompt does.
+fn startPrompt(self: *App, s: *Session, direction: Session.SearchDirection) void {
+    if (s.content != .terminal) return;
+    self.focusPane(s);
+    self.closeConfirm();
+    self.closePalette();
+    self.mode = .{ .search = .{ .pane = s.id, .field = .{}, .prompt = direction } };
+    self.resetBlink();
+    self.markDirty();
+}
+
+/// Enter in copy mode's prompt: search for the needle, if there's one,
+/// and fold the card.
+fn runPrompt(self: *App, direction: Session.SearchDirection) void {
+    const se = &self.mode.search;
+    if (self.findSession(se.pane)) |found| if (se.field.text().len > 0) {
+        var buf: [TextField.max_len * 3]u8 = undefined;
+        const n = std.unicode.utf16LeToUtf8(&buf, se.field.text()) catch 0;
+        found.s.search(direction, buf[0..n]);
+        found.s.setSearchNeedle(se.field.text());
+    };
+    self.cancelSearch(false);
+}
+
+/// The needle changed: search the pane for it, unless the card is copy
+/// mode's prompt, which searches on Enter.
 fn searchChanged(self: *App) void {
     const se = &self.mode.search;
+    if (se.prompt != null) return;
     const found = self.findSession(se.pane) orelse return;
     var buf: [TextField.max_len * 3]u8 = undefined;
     const n = std.unicode.utf16LeToUtf8(&buf, se.field.text()) catch 0;
@@ -3884,6 +3924,32 @@ fn searchChanged(self: *App) void {
 /// false for keys it doesn't take.
 fn searchKey(self: *App, field: *TextField, vk: u32) bool {
     const se = &self.mode.search;
+    if (se.prompt) |direction| switch (vk) {
+        win32.VK_RETURN => {
+            self.runPrompt(direction);
+            self.keyHandled();
+            return true;
+        },
+        // The prompt goes; copy mode's marks stay.
+        win32.VK_ESCAPE => {
+            self.cancelSearch(false);
+            self.keyHandled();
+            return true;
+        },
+        win32.VK_UP => {
+            const found = self.findSession(se.pane) orelse return false;
+            const last = found.s.searchNeedle();
+            if (last.len > 0) {
+                field.press(.select_all, false, false);
+                field.insert(last);
+                self.resetBlink();
+                self.markDirty();
+            }
+            self.keyHandled();
+            return true;
+        },
+        else => {},
+    };
     switch (vk) {
         win32.VK_RETURN => if (self.findSession(se.pane)) |found| {
             found.s.searchStep(if (self.shell.keyDown(win32.VK_SHIFT)) .previous else .next);

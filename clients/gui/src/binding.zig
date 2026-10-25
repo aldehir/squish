@@ -38,6 +38,9 @@ pub const Action = union(enum) {
     start_search,
     navigate_search: NavigateSearch,
     end_search,
+    /// Put the focused pane in copy mode (tmux's, with vi keys, in the
+    /// daemon: internal/vt/copymode.zig), or take it out.
+    copy_mode,
     /// A function init.lua bound, which the daemon runs
     /// (action.invoke{lua}) for the focused pane.
     lua: u32,
@@ -148,6 +151,8 @@ pub const defaults = [_]Binding{
     .{ .trigger = .{ .vk = win32.VK_OEM_PLUS, .mods = ctrl_alt_shift }, .action = .equalize_splits, .performable = true },
     .{ .trigger = .{ .vk = 'P', .mods = ctrl_shift }, .action = .toggle_command_palette },
     .{ .trigger = .{ .vk = 'F', .mods = ctrl_shift }, .action = .start_search, .performable = true },
+    // Windows Terminal's mark mode key.
+    .{ .trigger = .{ .vk = 'M', .mods = ctrl_shift }, .action = .copy_mode, .performable = true },
 };
 
 /// The binding for a key pressed with `mods`, with no sequence under
@@ -353,6 +358,7 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .next_tab => .next_tab,
         .previous_tab => .previous_tab,
         .reset_font_size => .reset_font_size,
+        .copy_mode => .copy_mode,
         .equalize_splits => .equalize_splits,
         .toggle_split_zoom => .toggle_split_zoom,
         .toggle_command_palette => .toggle_command_palette,

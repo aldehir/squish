@@ -158,7 +158,7 @@ which are for the top level only:
                              equalize_splits, toggle_split_zoom,
                              toggle_command_palette, start_search,
                              navigate_search {direction = "next"|"previous"},
-                             end_search, copy_to_clipboard,
+                             end_search, copy_mode, copy_to_clipboard,
                              paste_from_clipboard,
                              increase_font_size {amount}, decrease_font_size
                              {amount}, reset_font_size), or else an action of
@@ -189,6 +189,50 @@ which are for the top level only:
                              by default), and makes the current one the
                              selection; Enter and shift+Enter step, Escape
                              closes.
+  slime.bind("copy-mode:" .. key, action)
+                             a key of copy mode (the copy_mode action,
+                             ctrl+shift+m: tmux's copy mode with its vi keys,
+                             in the daemon). It shows a snapshot of the pane
+                             and its scrollback, taken as it starts; output
+                             goes on unseen until q, ctrl+c, or a copy leaves.
+                             tmux's keys: Space begins a selection, v and
+                             ctrl+v make it a rectangle, V selects lines,
+                             Enter copies and leaves, Escape clears; / and ?
+                             open the search card as a prompt, which searches
+                             on Enter from the cursor (an all-lowercase needle
+                             ignores case; up recalls the last), and n and N
+                             repeat; * and # search the word under the cursor.
+                             key is the character the key types ("v", "G",
+                             "$"), a name (escape, enter, space, tab,
+                             backspace, up, down, left, right, home, end,
+                             pageup, pagedown, delete, insert), or "ctrl+"
+                             with one ("ctrl+v"); digits are counts. action
+                             is one of tmux's copy-mode commands, with
+                             underscores or tmux's hyphens (copy-pipe names
+                             copy): begin_selection, select_line,
+                             rectangle_toggle, other_end, clear_selection,
+                             cancel, copy_selection,
+                             copy_selection_and_cancel, copy_end_of_line,
+                             copy_end_of_line_and_cancel, cursor_left,
+                             cursor_right, cursor_up, cursor_down,
+                             start_of_line, back_to_indentation, end_of_line,
+                             top_line, middle_line, bottom_line, history_top,
+                             history_bottom, next_word, next_word_end,
+                             previous_word, next_space, next_space_end,
+                             previous_space, next_paragraph,
+                             previous_paragraph, next_matching_bracket,
+                             previous_matching_bracket, page_up, page_down,
+                             halfpage_up, halfpage_down, scroll_up,
+                             scroll_down, scroll_middle, jump_forward,
+                             jump_backward, jump_to_forward,
+                             jump_to_backward, jump_again, jump_reverse,
+                             search_forward, search_backward, search_again,
+                             search_reverse, search_word_forward,
+                             search_word_backward. slime.unbind("copy-mode:"
+                             .. key) drops a default. The usual tmux.conf
+                             setup is slime.bind("copy-mode:v",
+                             "begin-selection") and slime.bind("copy-mode:y",
+                             "copy-selection-and-cancel").
   slime.action{name, title, args, run}
                              an action: slime do <name> key=value..., a bound
                              key, and slime.invoke run run(ctx, args), and print

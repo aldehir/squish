@@ -167,7 +167,7 @@ pub const State = struct {
 
 /// The rows from `start` to `end` as a flattened highlight, the form the
 /// render state takes.
-fn flatten(start: Pin, end: Pin) std.mem.Allocator.Error!vt.highlight.Flattened {
+pub fn flatten(start: Pin, end: Pin) std.mem.Allocator.Error!vt.highlight.Flattened {
     const Flattened = vt.highlight.Flattened;
     var chunks: std.MultiArrayList(Flattened.Chunk) = .empty;
     errdefer chunks.deinit(alloc);
@@ -183,7 +183,7 @@ fn flatten(start: Pin, end: Pin) std.mem.Allocator.Error!vt.highlight.Flattened 
 
 /// Drop every row's highlights, marking the rows that had any dirty, so
 /// the frame carries them without.
-fn clearHighlights(state: *RenderState) void {
+pub fn clearHighlights(state: *RenderState) void {
     const rows = state.row_data.slice();
     var any = false;
     for (rows.items(.highlights), rows.items(.dirty)) |*hls, *dirty| {

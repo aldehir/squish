@@ -145,14 +145,22 @@ pub const Cells = struct {
             self.cache_key = key;
         }
 
+        const cursor_style = cursorStyle(state, cursor);
+        const cursor_pos = if (cursor_style != null) state.cursor.viewport else null;
         // OSC 12 or a configured color, then one taken from the cursor's
-        // cell, which Ghostty reads from the cursor's pen style.
-        const cursor_color = colors.cursor orelse if (config.cursor_color) |c| color: {
+        // cell, which Ghostty reads from the cursor's pen style. In a
+        // selection (copy mode's cursor sits at its end) the cursor takes
+        // the selection's text color instead, so it shows against the
+        // selection's background, which is often the cursor's own color.
+        const cursor_selected = if (cursor_pos) |pos| pos.y < state.row_data.items.len and
+            if (state.row_data.items[pos.y].selection) |sel| pos.x >= sel[0] and pos.x <= sel[1] else false else false;
+        const cursor_color = if (cursor_selected) color: {
+            const fg, const bg = cellColors(state.cursor.style, state.cursor.cell, colors);
+            break :color if (config.selection_foreground) |c| c.resolve(fg, bg) else colors.background;
+        } else colors.cursor orelse if (config.cursor_color) |c| color: {
             const fg, const bg = cellColors(state.cursor.style, state.cursor.cell, colors);
             break :color c.resolve(fg, bg);
         } else colors.foreground;
-        const cursor_style = cursorStyle(state, cursor);
-        const cursor_pos = if (cursor_style != null) state.cursor.viewport else null;
 
         // A block cursor goes under the text, so it's drawn first.
         if (cursor_pos) |pos| if (cursor_style == .block) {
@@ -238,11 +246,16 @@ pub const Cells = struct {
             // inverted, as in Ghostty.
             const selected = if (row.selection) |sel| x >= sel[0] and x <= sel[1] else false;
             var fg, var bg = cellColors(style, raw, colors);
+            // The selection's background: what text under a block cursor
+            // in it takes, the cursor being drawn in the selection's
+            // text color there.
+            var selection_bg = bg;
             if (selected) {
                 const cell_fg = fg;
                 const cell_bg = bg;
                 bg = if (config.selection_background) |c| c.resolve(cell_fg, cell_bg) else colors.foreground;
                 fg = if (config.selection_foreground) |c| c.resolve(cell_fg, cell_bg) else colors.background;
+                selection_bg = bg;
             }
             // A search match: the match color, faint behind every match
             // and solid with inverted text behind the current one, over
@@ -273,7 +286,7 @@ pub const Cells = struct {
             // Text under a block cursor takes the cell's background
             // color so it stays readable, unless configured.
             const under_cursor = row.cursor_block and row.cursor_x == x;
-            const cursor_text = if (config.cursor_text) |c| c.resolve(fg, bg) else bg;
+            const cursor_text = if (selected) selection_bg else if (config.cursor_text) |c| c.resolve(fg, bg) else bg;
             const text_color = if (under_cursor) cursor_text else fg;
             const alpha: u8 = if (style.flags.faint) 128 else 255;
 

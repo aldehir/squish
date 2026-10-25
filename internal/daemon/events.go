@@ -35,6 +35,14 @@ func (p *Pane) event(c *conn, data []byte) {
 		}
 		c.sendForce(p.id, &Copied{Tag: r.CopyTag, Text: string(text)})
 	}
+	// Copy mode's / or ?: the viewer that pressed it asks for the needle.
+	if r.SearchPrompt != 0 {
+		dir := "down"
+		if r.SearchPrompt == 2 {
+			dir = "up"
+		}
+		c.sendForce(p.id, &Notice{Kind: NoticeSearch, Text: dir})
+	}
 	if r.Changed {
 		p.changedLocked()
 	}

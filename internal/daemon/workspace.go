@@ -681,6 +681,7 @@ func (s *Server) addPaneLocked(t *tab, st *started) pane {
 	}
 	p := newPane(s, st.id, st.command, st.size, st.pty, st.term)
 	p.tab = t
+	p.copyKeys = s.copyKeysLocked()
 	s.panes[p.id] = p
 	ws := t.ws
 	s.log.Info("pane started", "pane", p.id, "command", st.command, "pid", st.pty.PID())

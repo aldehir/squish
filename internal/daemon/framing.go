@@ -146,6 +146,7 @@ func (p *Pane) attachFramesLocked(c *conn, from PaneID) (*paneViewer, error) {
 				return nil, err
 			}
 			p.fr.source = src
+			p.applyCopyKeysLocked()
 		}
 		view, err := vt.NewView(p.fr.source)
 		if err != nil {

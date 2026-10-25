@@ -510,6 +510,7 @@ const Builder = struct {
                 const buttons = try self.paneButtons(id, s, tab, p.frame.w, several);
                 try items.append(self.arena, .{ .id = id.with(.terminal), .kind = .{ .pane = .{
                     .title = s.title(),
+                    .badge = if (s.inCopyMode()) L("COPY") else &.{},
                     .focused = focused,
                     .dot = several and focused,
                     .dimmed = several and !focused,
@@ -603,6 +604,13 @@ const Builder = struct {
         const editing = app.mode == .search and app.mode.search.pane == s.id;
         const info = s.searchInfo();
         if (!editing and info == null) return null;
+        // Copy mode's prompt counts nothing until Enter: it says which
+        // way it searches, as tmux's does.
+        if (editing) if (app.mode.search.prompt) |dir| return .{
+            .field = &app.mode.search.field,
+            .caret = app.focused and app.blink_visible,
+            .hint = if (dir == .up) L("\u{2191} up") else L("\u{2193} down"),
+        };
         const i = info orelse Session.SearchInfo{ .matches = 0, .current = 0, .partial = false };
         const typed = if (editing) app.mode.search.field.text().len > 0 else true;
         return .{
