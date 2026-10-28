@@ -34,6 +34,7 @@ const Dialog = Ui.Dialog;
 const Menu = Ui.Menu;
 const Palette = Ui.Palette;
 const PaletteView = @import("ui/widgets/PaletteView.zig");
+const TreeList = @import("ui/widgets/TreeList.zig");
 const PaneStrip = @import("ui/widgets/PaneStrip.zig");
 const Modal = @import("ui/widgets/Modal.zig");
 const TextFieldView = @import("ui/widgets/TextFieldView.zig");
@@ -194,8 +195,10 @@ pane_drag: ?PaneDrag = null,
 /// The sidebar's edge being dragged, which has the mouse until the
 /// button's up.
 sidebar_drag: ?SidebarDrag = null,
-/// The palette's scrollbar thumb being dragged, likewise.
-palette_scroll: ?PaletteScroll = null,
+/// The palette's scrollbar thumb being dragged, likewise; and the
+/// sidebar's.
+palette_scroll: ?ThumbDrag = null,
+sidebar_scroll: ?ThumbDrag = null,
 /// A text field pressed in, selecting as the mouse moves, likewise.
 field_drag: ?FieldDrag = null,
 /// The last press in a text field, to count a third click: Windows
@@ -239,8 +242,8 @@ pub const Rename = struct {
     field: TextField,
 };
 
-/// The palette's scrollbar thumb being dragged.
-const PaletteScroll = struct {
+/// A scrollbar's thumb being dragged.
+const ThumbDrag = struct {
     /// How far into the thumb the mouse took hold, in pixels.
     grab: f32,
 };
@@ -943,6 +946,7 @@ fn captureLost(self: *App) void {
     if (self.drag != null) self.endDrag();
     if (self.sidebar_drag != null) self.endSidebarDrag();
     if (self.palette_scroll != null) self.endPaletteScroll();
+    if (self.sidebar_scroll != null) self.endSidebarScroll();
     self.endFieldDrag();
     // A pane drag that lost the mouse lands nowhere.
     self.cancelDrag();
@@ -3391,7 +3395,7 @@ fn startPaletteScroll(self: *App, pos: win32.POINT) void {
 }
 
 /// Move the list with the thumb to the mouse.
-fn paletteScrollTo(self: *App, d: PaletteScroll, pos: win32.POINT) void {
+fn paletteScrollTo(self: *App, d: ThumbDrag, pos: win32.POINT) void {
     const p = switch (self.mode) {
         .palette => |*p| p,
         else => return,
@@ -3407,6 +3411,54 @@ fn paletteScrollTo(self: *App, d: PaletteScroll, pos: win32.POINT) void {
 fn endPaletteScroll(self: *App) void {
     // First: releasing the capture comes back as `capture_lost`.
     self.palette_scroll = null;
+    self.setPressed(.none);
+    self.shell.releaseMouse();
+}
+
+/// The sidebar's tree of rows in the current tree, laid out.
+fn sidebarList(self: *App) ?*const Ui.Node {
+    return Ui.find(self.currentTree(), .window(.sidebar));
+}
+
+/// Scroll the sidebar's rows `pixels` down, as far as they go.
+fn scrollSidebarBy(self: *App, pixels: f32) void {
+    const list = self.sidebarList() orelse return;
+    const scroll = TreeList.scrolledBy(list, pixels);
+    if (scroll == self.ui.sidebar_scroll) return;
+    self.ui.sidebar_scroll = scroll;
+    self.markDirty();
+}
+
+/// The mouse went down on the sidebar's scrollbar: on the thumb, it
+/// drags; off it, the rows page toward the mouse.
+fn startSidebarScroll(self: *App, pos: win32.POINT) void {
+    const list = self.sidebarList() orelse return;
+    const bar = TreeList.bar(self.ui, list) orelse return;
+    const y: f32 = @floatFromInt(pos.y);
+    if (y >= bar.thumb.y and y < bar.thumb.bottom()) {
+        self.hideTip();
+        self.sidebar_scroll = .{ .grab = y - bar.thumb.y };
+        self.setPressed(.window(.sidebar_scrollbar));
+        self.shell.captureMouse();
+        return;
+    }
+    self.scrollSidebarBy(if (y < bar.thumb.y) -list.rect.h else list.rect.h);
+}
+
+/// Move the rows with the thumb to the mouse.
+fn sidebarScrollTo(self: *App, d: ThumbDrag, pos: win32.POINT) void {
+    const list = self.sidebarList() orelse return;
+    const bar = TreeList.bar(self.ui, list) orelse return;
+    const m = TreeList.metrics(list) orelse return;
+    const scroll: f32 = @floatFromInt(Ui.Scrollbar.startAt(bar, m, @as(f32, @floatFromInt(pos.y)) - d.grab));
+    if (scroll == self.ui.sidebar_scroll) return;
+    self.ui.sidebar_scroll = scroll;
+    self.markDirty();
+}
+
+fn endSidebarScroll(self: *App) void {
+    // First: releasing the capture comes back as `capture_lost`.
+    self.sidebar_scroll = null;
     self.setPressed(.none);
     self.shell.releaseMouse();
 }
@@ -4176,6 +4228,8 @@ pub fn view(self: *App) *const Tree {
         break :tree .{ .root = .{ .kind = .{ .canvas = &.{} } }, .frame = self.frame.* };
     };
     self.ui.layout(&self.tree.?);
+    // The sidebar's rows scroll only as far as they go.
+    if (Ui.find(&self.tree.?, .window(.sidebar))) |list| self.ui.sidebar_scroll = list.kind.tree.scroll;
     self.tree_stale = false;
     self.views +%= 1;
     // The field with the keyboard scrolls to show its caret, from where
@@ -4323,6 +4377,11 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
         if (!held) self.endPaletteScroll();
         return;
     }
+    if (self.sidebar_scroll) |d| {
+        self.sidebarScrollTo(d, pos);
+        if (!held) self.endSidebarScroll();
+        return;
+    }
     if (self.field_drag) |*d| {
         if (held) self.fieldDragTo(d, pos) else self.endFieldDrag();
         return;
@@ -4383,6 +4442,7 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
             if (hit.target == .corner) return self.startCornerDrag(hit.target.corner, pos);
             if (hit.eql(.window(.sidebar_edge))) return self.startSidebarDrag(pos);
             if (hit.eql(.window(.scrollbar))) return self.startPaletteScroll(pos);
+            if (hit.eql(.window(.sidebar_scrollbar))) return self.startSidebarScroll(pos);
             if (self.fieldPress(hit, m)) return;
             if (hit.part == .title) if (self.shownPane(hit.target)) |pane| {
                 // Double-clicking a pane's title zooms it, as its button
@@ -4435,6 +4495,17 @@ fn wheelInput(self: *App, m: Msg.Mouse) void {
             return;
         }
     }
+    // Over the sidebar's rows (not a menu over them), they scroll.
+    if (!self.mouse_in_terminal and m.msg == win32.WM_MOUSEWHEEL) if (self.sidebarList()) |list| {
+        const hit = self.hitAt(m.pos);
+        // (Rows' icons have no id: a miss elsewhere isn't one of them.)
+        if (hit.eql(.window(.sidebar_scrollbar)) or (hit.target != .none and Ui.findIn(list, hit) != null)) {
+            const delta: i16 = @bitCast(@as(u16, @truncate(m.wparam >> 16)));
+            // Three rows a notch; a finer wheel, its fraction of that.
+            self.scrollSidebarBy(-@as(f32, @floatFromInt(delta)) / 120 * self.ui.px(TreeList.wheel_notch));
+            return;
+        }
+    };
     const pane = if (self.mouse_in_terminal) (self.focusedSession() orelse return) else pane: {
         const hit = self.hitAt(m.pos);
         if (hit.part != .terminal) return;
@@ -4715,6 +4786,8 @@ pub const TestShell = struct {
     /// The last answer to a page's permission question.
     answer: ?Web.Answer = null,
     stats_shown: bool = false,
+    /// What the sidebar shows for the frame stats.
+    stats_text: []const u16 = &.{},
 
     fn captureMouse(ctx: *anyopaque) void {
         self_(ctx).captured = true;
@@ -4780,8 +4853,8 @@ pub const TestShell = struct {
         self_(ctx).font_size = size;
     }
     fn relayout(_: *anyopaque) void {}
-    fn stats(_: *anyopaque) []const u16 {
-        return &.{};
+    fn stats(ctx: *anyopaque) []const u16 {
+        return self_(ctx).stats_text;
     }
     fn statsShown(ctx: *anyopaque) bool {
         return self_(ctx).stats_shown;
@@ -5549,4 +5622,71 @@ test "the palette's scrollbar pages on a click off the thumb and drags the list 
     try std.testing.expect(app.palette_scroll != null);
     app.closePalette();
     try std.testing.expect(app.palette_scroll == null);
+}
+
+test "the sidebar's rows scroll with the wheel and their scrollbar, which pages on a click off the thumb" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    // A window short enough that a dozen workspaces don't fit.
+    t.frame = t.ui.frame(1000, 240);
+    var last_key: u32 = 0;
+    for (0..12) |i| last_key = try t.workspace(@intCast(10 + i), L("ws"), 0, 1, false);
+    _ = app.view();
+    const list = app.sidebarList() orelse return error.TestUnexpectedResult;
+    // (Copied: each view's arena drops the last tree's nodes.)
+    const list_rect = list.rect;
+    const m = TreeList.metrics(list) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(m.total > m.visible);
+    try std.testing.expectEqual(@as(f32, 0), app.ui.sidebar_scroll);
+    const notch: f32 = app.ui.px(TreeList.wheel_notch);
+    const x: i32 = @intFromFloat(list_rect.x + 40);
+    const y: i32 = @intFromFloat(list_rect.y + 10);
+    // A notch down over a row scrolls three rows; back up, back to the top.
+    const down: win32.WPARAM = @as(u32, @bitCast(@as(i32, -120))) << 16;
+    const up: win32.WPARAM = @as(u32, 120) << 16;
+    _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = down, .pos = .{ .x = x, .y = y } } });
+    try std.testing.expectEqual(notch, app.ui.sidebar_scroll);
+    _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = up, .pos = .{ .x = x, .y = y } } });
+    try std.testing.expectEqual(@as(f32, 0), app.ui.sidebar_scroll);
+    // Over the terminal area, the wheel isn't the sidebar's.
+    _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = down, .pos = .{ .x = @intFromFloat(t.frame.terminal.x + 100), .y = @intFromFloat(t.frame.terminal.y + 100) } } });
+    try std.testing.expectEqual(@as(f32, 0), app.ui.sidebar_scroll);
+    // Many notches stop at the end, and the view keeps the clamped value.
+    for (0..20) |_| _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = down, .pos = .{ .x = x, .y = y } } });
+    const most: f32 = @floatFromInt(m.most());
+    try std.testing.expectEqual(most, app.ui.sidebar_scroll);
+    _ = app.view();
+    try std.testing.expectEqual(most, app.ui.sidebar_scroll);
+    // The last row ends at the list's bottom now.
+    const last = Ui.find(app.view(), .{ .target = .{ .workspace = last_key } }).?;
+    try std.testing.expectEqual(app.sidebarList().?.rect.bottom(), last.rect.bottom());
+
+    // A click above the thumb pages up.
+    app.ui.sidebar_scroll = most;
+    _ = app.view();
+    const bar = TreeList.bar(app.ui, app.sidebarList().?) orelse return error.TestUnexpectedResult;
+    const bx: i32 = @intFromFloat(bar.thumb.x + 1);
+    const high: i32 = @intFromFloat(bar.track.y + 2);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = .{ .x = bx, .y = high } } });
+    try std.testing.expectEqual(Id.window(.sidebar_scrollbar), app.ui.hover);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = .{ .x = bx, .y = high } } });
+    try std.testing.expectEqual(@round(most - list_rect.h), app.ui.sidebar_scroll);
+    try std.testing.expect(app.sidebar_scroll == null);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = bx, .y = high } } });
+    // Dragging the thumb to the top of its track scrolls to the start;
+    // losing the capture ends the drag.
+    _ = app.view();
+    const thumb = TreeList.bar(app.ui, app.sidebarList().?).?.thumb;
+    const grab: i32 = @intFromFloat(thumb.y + 2);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = .{ .x = bx, .y = grab } } });
+    try std.testing.expect(app.sidebar_scroll != null);
+    try std.testing.expect(shell.captured);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = bx, .y = grab - 1000 } } });
+    try std.testing.expectEqual(@as(f32, 0), app.ui.sidebar_scroll);
+    _ = app.update(.capture_lost);
+    try std.testing.expect(app.sidebar_scroll == null);
+    try std.testing.expectEqual(Id.none, app.ui.pressed);
 }

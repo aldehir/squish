@@ -16,12 +16,12 @@ is attached.
 
 - **Tabs in the title bar.** The toggle only hides the sidebar; the
   tabs (titles, close buttons, overflow) aren't drawn in the bar.
-- **Sidebar scrolling.** Rows past the bottom are clipped. The palette's
-  list has the overlay scrollbar (`clients/gui/src/ui/Scrollbar.zig`:
-  a thin thumb that widens under the mouse, drags, and pages on a click
-  off the thumb) for the sidebar's tree to take up, with a scroll
-  offset of its own and the wheel over it. The terminal's scrollback
-  needs the frame to carry its length and viewport offset first.
+- **The sidebar's scroll follows nothing.** Its rows scroll with the
+  wheel and the overlay scrollbar (`clients/gui/src/ui/Scrollbar.zig`,
+  shared with the palette), but switching tabs from the keyboard or the
+  palette, or opening one, doesn't bring the row into view, and the
+  offset isn't kept across windows. The terminal's scrollback needs the
+  frame to carry its length and viewport offset first.
 - **Reordering and renaming** tab rows. Rows have a context menu
   (`clients/gui/src/ui/Menu.zig`, built in `App.openMenu`); a tab's
   only closes it.

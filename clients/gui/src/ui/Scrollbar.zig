@@ -40,6 +40,14 @@ pub const Metrics = struct {
 
 pub const State = enum { rest, hover, drag };
 
+/// The bar with `id`: wide while the mouse is near its list's edge,
+/// dark while dragged.
+pub fn stateOf(ui: *const Ui, id: Ui.Id) State {
+    if (ui.pressed.eql(id)) return .drag;
+    if (ui.hover.eql(id)) return .hover;
+    return .rest;
+}
+
 pub const Layout = struct {
     track: Rect,
     thumb: Rect,

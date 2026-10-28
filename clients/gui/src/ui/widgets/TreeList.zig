@@ -3,19 +3,28 @@
 //! trunk down from the parent's fold column with a branch to each child,
 //! turning into the last one with a rounded corner. Rows under a section
 //! header sit flush with it, unguided. The `fold` arrow a row shows is
-//! a leaf of its own, so each row colors and hit-tests its own.
+//! a leaf of its own, so each row colors and hit-tests its own. Rows
+//! past the bottom scroll (`TreeList.scroll`, in pixels, which the
+//! owner keeps), with the overlay scrollbar along the right edge.
 
 const std = @import("std");
 const Ui = @import("../Ui.zig");
 const Painter = @import("../../renderer/Painter.zig");
 const TreeRow = @import("../Tree.zig").TreeRow;
+const List = @import("../Tree.zig").TreeList;
 
 const Node = Ui.Node;
 const Size = Ui.Size;
 const Rect = Ui.Rect;
 const Id = Ui.Id;
+const Scrollbar = Ui.Scrollbar;
+
+/// The scrollbar's id: the sidebar's, the one tree there is.
+const bar_id = Id.window(.sidebar_scrollbar);
 
 // Sizes in DIPs.
+/// A wheel notch scrolls this far: three rows.
+pub const wheel_notch = 3 * 28;
 /// Between rows, and between a section header and the section before.
 pub const row_gap = 2;
 pub const section_gap = 10;
@@ -38,35 +47,95 @@ pub fn measure(ui: *const Ui, node: *const Node) Size {
     };
 }
 
+/// Place a tree's rows from its top less its scroll. The rows' height
+/// is only known once they're placed, so a scroll past what it allows
+/// (rows went away) places them again, clamped.
 pub fn layout(ui: *const Ui, node: *Node) void {
     switch (node.kind) {
-        .tree => |t| {
-            var y = node.rect.y;
-            layoutRows(ui, t.rows, node.rect.x, node.rect.w, &y);
+        .tree => |*t| {
+            t.scroll = @max(0, @round(t.scroll));
+            t.content_h = placeRows(ui, t, node.rect);
+            const most = @max(0, @round(t.content_h - node.rect.h));
+            if (t.scroll > most) {
+                t.scroll = most;
+                _ = placeRows(ui, t, node.rect);
+            }
         },
         else => {},
     }
 }
 
+/// Place `t`'s rows in `rect` less the gutter, from its top less the
+/// scroll, and return their height together.
+fn placeRows(ui: *const Ui, t: *const List, rect: Rect) f32 {
+    const top = rect.y - t.scroll;
+    var y = top;
+    var bottom = top;
+    layoutRows(ui, t.rows, rect.x, @max(0, rect.w - ui.px(t.gutter)), &y, &bottom);
+    return bottom - top;
+}
+
 /// Place `rows` from `y` down, each as tall as it measures, and the
-/// rows under each, set in, after it.
-fn layoutRows(ui: *const Ui, rows: []TreeRow, x: f32, w: f32, y: *f32) void {
+/// rows under each, set in, after it. `bottom` ends as the last row's,
+/// without the gap after it.
+fn layoutRows(ui: *const Ui, rows: []TreeRow, x: f32, w: f32, y: *f32, bottom: *f32) void {
     for (rows, 0..) |*row, i| {
         if (row.section and i > 0) y.* += ui.px(section_gap);
         const h = ui.measure(&row.node).h orelse 0;
         row.node.rect = .{ .x = x, .y = y.*, .w = w, .h = h };
         ui.layoutNode(&row.node);
         y.* += h;
+        bottom.* = y.*;
         if (!row.section) y.* += ui.px(row_gap);
         if (row.folded) continue;
         const in = if (row.section) 0 else ui.px(indent);
-        layoutRows(ui, row.children, x + in, @max(0, w - in), y);
+        layoutRows(ui, row.children, x + in, @max(0, w - in), y, bottom);
     }
 }
 
+/// What a laid-out tree's scrollbar measures, in pixels: the rows'
+/// height, the tree's, and the scroll. Null while every row fits.
+pub fn metrics(node: *const Node) ?Scrollbar.Metrics {
+    const t = node.kind.tree;
+    const m: Scrollbar.Metrics = .{
+        .total = @intFromFloat(@max(0, @round(t.content_h))),
+        .visible = @intFromFloat(@max(0, @round(node.rect.h))),
+        .start = @intFromFloat(t.scroll),
+    };
+    return if (Scrollbar.needed(m)) m else null;
+}
+
+/// The scrollbar along a laid-out tree's right edge, while not every
+/// row fits.
+pub fn bar(ui: *const Ui, node: *const Node) ?Scrollbar.Layout {
+    const m = metrics(node) orelse return null;
+    return Scrollbar.layout(ui, node.rect, m, Scrollbar.stateOf(ui, bar_id));
+}
+
+/// The scroll `pixels` on from `node`'s, kept to what its rows allow.
+pub fn scrolledBy(node: *const Node, pixels: f32) f32 {
+    const t = node.kind.tree;
+    const most = @max(0, @round(t.content_h - node.rect.h));
+    return std.math.clamp(@round(t.scroll + pixels), 0, most);
+}
+
+/// The strip the mouse takes hold of the scrollbar in: the gutter,
+/// where there is one, which the rows keep out of; else the bar's own,
+/// over the rows' right ends.
+fn strip(ui: *const Ui, node: *const Node) Rect {
+    const gutter = ui.px(node.kind.tree.gutter);
+    if (gutter == 0) return Scrollbar.strip(ui, node.rect);
+    const r = node.rect;
+    return .{ .x = r.right() - gutter, .y = r.y, .w = gutter, .h = r.h };
+}
+
+/// The scrollbar's strip, then the rows.
 pub fn hitTest(ui: *const Ui, node: *const Node, x: f32, y: f32) ?Id {
     return switch (node.kind) {
-        .tree => |t| hitRows(ui, t.rows, x, y),
+        .tree => |t| {
+            if (metrics(node) != null and strip(ui, node).contains(x, y)) return bar_id;
+            return hitRows(ui, t.rows, x, y);
+        },
         else => null,
     };
 }
@@ -90,7 +159,10 @@ pub fn find(rows: []const TreeRow, id: Id) ?*const Node {
 
 pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
     switch (node.kind) {
-        .tree => |t| paintRows(ui, p, t.rows),
+        .tree => |t| {
+            paintRows(ui, p, t.rows, node.rect);
+            if (bar(ui, node)) |b| Scrollbar.paint(ui, p, b, Scrollbar.stateOf(ui, bar_id));
+        },
         .fold => |f| {
             // Centered: down while open, right while folded.
             const area = node.rect;
@@ -110,12 +182,15 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
     }
 }
 
-fn paintRows(ui: *const Ui, p: *Painter, rows: []const TreeRow) void {
+/// Draw the rows within `view` (the tree's rect, which clips), and the
+/// guides, which may run through it from rows outside.
+fn paintRows(ui: *const Ui, p: *Painter, rows: []const TreeRow, view: Rect) void {
     for (rows) |*row| {
-        ui.paintNode(p, &row.node);
+        const r = row.node.rect;
+        if (r.bottom() > view.y and r.y < view.bottom()) ui.paintNode(p, &row.node);
         if (row.folded) continue;
         if (!row.section) paintGuides(ui, p, &row.node, row.children);
-        paintRows(ui, p, row.children);
+        paintRows(ui, p, row.children, view);
     }
 }
 
@@ -207,4 +282,50 @@ test "sections, rows under rows, folding, and guides" {
     try std.testing.expect(hitTest(&ui, &node, 100, first_r.bottom() + 20) != null);
     try std.testing.expect(find(&sections, .{ .target = .{ .pane = 1 } }) != null);
     try std.testing.expect(find(&sections, .{ .target = .{ .pane = 9 } }) == null);
+}
+
+test "rows past the bottom scroll, clamped to what's left, under a scrollbar" {
+    const ui: Ui = .{ .scale = 1, .fonts = .none, .theme = undefined };
+    var rows: [10]TreeRow = undefined;
+    for (&rows, 0..) |*r, i| r.* = testRow(.{ .target = .{ .tab = @intCast(i) } }, 28, &.{});
+    var node: Node = .{ .id = Id.window(.sidebar), .kind = .{ .tree = .{ .rows = &rows } }, .rect = .{ .x = 12, .y = 40, .w = 216, .h = 100 } };
+    ui.layoutNode(&node);
+    // Ten rows of 28 with nine gaps of 2: 298, of which 100 show.
+    try std.testing.expectEqual(@as(f32, 298), node.kind.tree.content_h);
+    try std.testing.expectEqual(@as(f32, 40), rows[0].node.rect.y);
+    const m = metrics(&node).?;
+    try std.testing.expectEqual(Scrollbar.Metrics{ .total = 298, .visible = 100, .start = 0 }, m);
+    try std.testing.expectEqual(@as(usize, 198), m.most());
+    // The strip along the right edge is the bar; the rows end short of it.
+    try std.testing.expectEqual(Id.window(.sidebar_scrollbar), hitTest(&ui, &node, 220, 50).?);
+    try std.testing.expectEqual(Id{ .target = .{ .tab = 0 } }, hitTest(&ui, &node, 100, 50).?);
+    // Scrolled, the rows move up; the first is above the top.
+    try std.testing.expectEqual(@as(f32, 60), scrolledBy(&node, 60));
+    try std.testing.expectEqual(@as(f32, 198), scrolledBy(&node, 1000));
+    try std.testing.expectEqual(@as(f32, 0), scrolledBy(&node, -1));
+    node.kind.tree.scroll = 60;
+    ui.layoutNode(&node);
+    try std.testing.expectEqual(@as(f32, -20), rows[0].node.rect.y);
+    try std.testing.expectEqual(@as(f32, 40), rows[2].node.rect.y);
+    try std.testing.expectEqual(Id{ .target = .{ .tab = 2 } }, hitTest(&ui, &node, 100, 50).?);
+    // A scroll past the end (rows went away) is clamped and re-placed.
+    node.kind.tree.scroll = 1000;
+    ui.layoutNode(&node);
+    try std.testing.expectEqual(@as(f32, 198), node.kind.tree.scroll);
+    try std.testing.expectEqual(node.rect.bottom(), rows[9].node.rect.bottom());
+    // Every row fitting, there's no bar, and no scroll: the strip is
+    // the rows' right ends again.
+    node.rect.h = 400;
+    ui.layoutNode(&node);
+    try std.testing.expectEqual(@as(f32, 0), node.kind.tree.scroll);
+    try std.testing.expect(metrics(&node) == null);
+    try std.testing.expectEqual(Id{ .target = .{ .tab = 0 } }, hitTest(&ui, &node, 220, 50).?);
+    // With a gutter, the rows stop short of it, and only it is the bar.
+    node.rect.h = 100;
+    node.kind.tree.gutter = 8;
+    ui.layoutNode(&node);
+    try std.testing.expectEqual(@as(f32, 208), rows[0].node.rect.w);
+    try std.testing.expectEqual(Id.window(.sidebar_scrollbar), hitTest(&ui, &node, 222, 50).?);
+    try std.testing.expectEqual(Id{ .target = .{ .tab = 0 } }, hitTest(&ui, &node, 219, 50).?);
+    try std.testing.expectEqual(@as(f32, 228 - 3 - 3), bar(&ui, &node).?.thumb.x);
 }

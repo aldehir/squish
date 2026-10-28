@@ -176,12 +176,8 @@ fn listHeight(ui: *const Ui, pal: *const Palette, most: f32) f32 {
     return h;
 }
 
-/// Wide while the mouse is near the list's edge, dark while dragged.
 fn barState(ui: *const Ui) Scrollbar.State {
-    const id = Id.window(.scrollbar);
-    if (ui.pressed.eql(id)) return .drag;
-    if (ui.hover.eql(id)) return .hover;
-    return .rest;
+    return Scrollbar.stateOf(ui, Id.window(.scrollbar));
 }
 
 /// Where the box goes: the node's rect.

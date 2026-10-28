@@ -90,6 +90,10 @@ theme: Theme,
 sidebar_shown: bool = true,
 /// The sidebar's width in DIPs, as its edge was last dragged.
 sidebar_width: f32 = default_sidebar_width,
+/// How far the sidebar's rows are scrolled, in pixels, as the wheel or
+/// their scrollbar last left them. Layout clamps it; `App.view` keeps
+/// the clamped value.
+sidebar_scroll: f32 = 0,
 /// Lines in the notice under the title bar (what's wrong with the
 /// config); 0 while there's none.
 notice_lines: u8 = 0,

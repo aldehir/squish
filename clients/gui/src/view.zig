@@ -58,11 +58,14 @@ const Labels = struct {
 const sidebar_pad_x = 12;
 const sidebar_pad_top = 4;
 const sidebar_pad_bottom = 12;
+/// The right padding the rows' scrollbar sits in: the padding short of
+/// the edge's grip.
+const scrollbar_gutter = sidebar_pad_x - Ui.sidebar_edge_grip;
 /// Between the rows and "Connect".
 const connect_gap = 10;
 const connect_height = 32;
-/// The frame stats sit above "Connect", in line with the section
-/// headers.
+/// The frame stats sit between the rows and "Connect", in line with the
+/// section headers; this much under the rows.
 const stats_gap = 10;
 const header_height = 28;
 const workspace_height = 28;
@@ -170,8 +173,8 @@ const Builder = struct {
         return .{ .id = .window(part), .kind = .{ .caption_button = .{ .part = part, .maximized = maximized, .focused = self.app.focused } } };
     }
 
-    /// The sections, "Connect" (or the host field) under them, and the
-    /// frame stats over the rows' bottom when built with them.
+    /// The sections, which scroll and take the height, then the frame
+    /// stats when built with them, then "Connect" (or the host field).
     fn sidebar(self: *const Builder) Allocator.Error!Node {
         const app = self.app;
         const t = &self.ui.theme;
@@ -184,27 +187,30 @@ const Builder = struct {
             } } },
             else => .{ .id = .window(.connect), .kind = .{ .button = .{ .label = L("Connect…"), .icon = .plug, .h = connect_height } } },
         };
-        const column: Node = .{ .kind = .{ .column = .{
-            .children = try self.nodes(&.{
-                .{ .kind = .{ .tree = .{ .rows = try self.sections() } }, .clip = true },
-                .{ .kind = .{ .spacer = connect_gap } },
-                connect,
-            }),
-            .pad = .{ .left = sidebar_pad_x, .right = sidebar_pad_x, .top = sidebar_pad_top, .bottom = sidebar_pad_bottom },
-            .bg = t.ground,
-        } } };
+        // The column's right padding stops at the gutter: the rows leave
+        // it for their scrollbar, and the rest keep out of it themselves.
+        var children: std.ArrayList(Node) = .empty;
+        try children.append(self.arena, .{
+            .id = .window(.sidebar),
+            .kind = .{ .tree = .{ .rows = try self.sections(), .scroll = self.ui.sidebar_scroll, .gutter = scrollbar_gutter } },
+            .clip = true,
+        });
         const stats = app.shell.stats();
-        if (stats.len == 0) {
-            var alone = column;
-            alone.rect = self.frame.sidebar;
-            return alone;
+        if (stats.len > 0) {
+            try children.append(self.arena, .{ .kind = .{ .spacer = stats_gap } });
+            // In line with the section headers' text.
+            try children.append(self.arena, .{ .kind = .{ .column = .{
+                .children = try self.nodes(&.{.{ .kind = .{ .lines = .{ .text = stats, .font = .mono, .color = t.text_muted } } }}),
+                .pad = .{ .left = 2, .right = scrollbar_gutter },
+            } } });
         }
-        const stats_column: Node = .{ .kind = .{ .column = .{
-            .children = try self.nodes(&.{.{ .kind = .{ .lines = .{ .text = stats, .font = .mono, .color = t.text_muted } } }}),
-            .pad = .{ .left = sidebar_pad_x + 2, .right = sidebar_pad_x, .bottom = sidebar_pad_bottom + connect_height + stats_gap },
-            .justify = .end,
-        } } };
-        return .{ .kind = .{ .stack = try self.nodes(&.{ column, stats_column }) }, .rect = self.frame.sidebar };
+        try children.append(self.arena, .{ .kind = .{ .spacer = connect_gap } });
+        try children.append(self.arena, .{ .kind = .{ .row = .{ .children = try self.nodes(&.{connect}), .pad = .{ .right = scrollbar_gutter } } } });
+        return .{ .kind = .{ .column = .{
+            .children = children.items,
+            .pad = .{ .left = sidebar_pad_x, .right = sidebar_pad_x - scrollbar_gutter, .top = sidebar_pad_top, .bottom = sidebar_pad_bottom },
+            .bg = t.ground,
+        } }, .rect = self.frame.sidebar };
     }
 
     /// The strip astride the sidebar's edge that drags its width: over
@@ -786,6 +792,32 @@ test "sections and their rows come in the sidebar's order, by id" {
     try std.testing.expectEqual(Id.window(.connect), app.ui.hitTest(lit, t.frame.sidebar.x + 20, t.frame.sidebar.bottom() - sidebar_pad_bottom - 5));
     // With nothing shown, the terminal area says what the sidebar is for.
     try std.testing.expectEqual(Id.none, app.ui.hitTest(lit, t.frame.terminal.x + 100, t.frame.terminal.y + 100));
+}
+
+test "the rows end above the frame stats, which sit above Connect" {
+    var shell: App.TestShell = .{};
+    var t: App.TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    _ = try t.workspace(10, L("alpha"), 0, 1, false);
+    // Without stats, the rows run down to the gap over Connect.
+    const plain = app.view();
+    // (Copied: the next view's arena drops these nodes.)
+    const connect = Ui.find(plain, Id.window(.connect)).?.rect;
+    const rows = Ui.find(plain, Id.window(.sidebar)).?.rect;
+    try std.testing.expectEqual(t.frame.sidebar.y + sidebar_pad_top, rows.y);
+    try std.testing.expectEqual(connect.y - connect_gap, rows.bottom());
+    try std.testing.expectEqual(t.frame.sidebar.bottom() - sidebar_pad_bottom, connect.bottom());
+    // With them, the rows stop short of the stats' two lines, which
+    // keep the same place over Connect.
+    shell.stats_text = L("60 fps\n0.0 MB/s");
+    const stats = app.view();
+    const connect_s = Ui.find(stats, Id.window(.connect)).?;
+    const rows_s = Ui.find(stats, Id.window(.sidebar)).?;
+    try std.testing.expectEqual(connect, connect_s.rect);
+    try std.testing.expectEqual(connect_s.rect.y - connect_gap - 2 * 16 - stats_gap, rows_s.rect.bottom());
+    try std.testing.expectEqual(rows.y, rows_s.rect.y);
 }
 
 test "a context menu is over everything, and the window under it is scrim" {

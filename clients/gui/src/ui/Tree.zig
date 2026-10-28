@@ -234,6 +234,15 @@ pub const Fold = struct {
 
 pub const TreeList = struct {
     rows: []TreeRow,
+    /// How far the rows are scrolled up past the top, in pixels. Layout
+    /// clamps it to what the rows run past the bottom, and writes it
+    /// back.
+    scroll: f32 = 0,
+    /// The rows' height together, in pixels: set by layout.
+    content_h: f32 = 0,
+    /// Space at the right the rows leave, in DIPs, where the scrollbar
+    /// goes: in the owner's padding, not over the rows' buttons.
+    gutter: f32 = 0,
 };
 
 /// A row of a `TreeList`, with the rows under it.

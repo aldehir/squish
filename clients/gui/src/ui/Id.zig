@@ -72,9 +72,12 @@ pub const Part = enum {
     menu,
     /// The command palette's box, between its rows.
     palette,
-    /// A list's scrollbar: the strip along its right edge, thumb and
-    /// track.
+    /// The palette's list's scrollbar: the strip along its right edge,
+    /// thumb and track.
     scrollbar,
+    /// The sidebar's tree of rows, where no row is; and its scrollbar.
+    sidebar,
+    sidebar_scrollbar,
     /// The host field, or the button that opens it.
     connect,
     /// A row's fold arrow.
