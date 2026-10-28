@@ -275,7 +275,8 @@ test "kitty images are placed in frames, their pixels sent once" {
     var b64: [16]u8 = undefined;
     _ = std.base64.standard.Encoder.encode(&b64, &rgb);
     h.write("\x1b[2;3H\x1b_Gf=24,s=2,v=2,i=7,a=T;" ++ b64 ++ "\x1b\\");
-    try sender.gather(h.alloc, &h.t);
+    try h.state.update(h.alloc, &h.t);
+    try sender.gather(h.alloc, &h.t, &h.state);
     try testing.expectEqual(1, sender.pending.items.len);
     try testing.expectEqual(1, sender.placements.items.len);
     try testing.expectEqual(0, sender.dropped.items.len);
@@ -300,7 +301,8 @@ test "kitty images are placed in frames, their pixels sent once" {
     try testing.expectEqual(0, h.screen.dropped.items.len);
 
     // Still placed, but sent already.
-    try sender.gather(h.alloc, &h.t);
+    try h.state.update(h.alloc, &h.t);
+    try sender.gather(h.alloc, &h.t, &h.state);
     try testing.expectEqual(0, sender.pending.items.len);
     try testing.expectEqual(1, sender.placements.items.len);
 
@@ -309,16 +311,20 @@ test "kitty images are placed in frames, their pixels sent once" {
     try h.t.setAttribute(.{ .@"256_fg" = 7 });
     h.t.screens.active.cursorAbsolute(4, 3);
     try h.t.printString("\u{10EEEE}\u{0305}\u{0305}");
-    try sender.gather(h.alloc, &h.t);
+    try h.state.update(h.alloc, &h.t);
+    try sender.gather(h.alloc, &h.t, &h.state);
     try testing.expectEqual(2, sender.placements.items.len);
-    const v = sender.placements.items[1];
-    try testing.expectEqual(-1, v.z);
+    // In no order: the one under the text is the placeholder's.
+    const v = for (sender.placements.items) |pl| {
+        if (pl.z == -1) break pl;
+    } else return error.TestUnexpectedResult;
     try testing.expectEqual(.{ 4, 3 }, .{ v.x, v.y });
     try testing.expectEqual(.{ 10, 10 }, .{ v.width, v.height });
 
     // Deleted, the image is dropped in the next frame and gone from it.
     h.write("\x1b_Ga=d,d=I,i=7\x1b\\");
-    try sender.gather(h.alloc, &h.t);
+    try h.state.update(h.alloc, &h.t);
+    try sender.gather(h.alloc, &h.t, &h.state);
     try testing.expectEqualSlices(u32, &.{7}, sender.dropped.items);
     try testing.expectEqual(0, sender.placements.items.len);
     try h.state.update(h.alloc, &h.t);
@@ -330,7 +336,8 @@ test "kitty images are placed in frames, their pixels sent once" {
     try testing.expectEqual(0, h.screen.placements.items.len);
     // Placed again, it's sent again.
     h.write("\x1b_Gf=24,s=2,v=2,i=7,a=T;" ++ b64 ++ "\x1b\\");
-    try sender.gather(h.alloc, &h.t);
+    try h.state.update(h.alloc, &h.t);
+    try sender.gather(h.alloc, &h.t, &h.state);
     try testing.expectEqual(1, sender.pending.items.len);
 }
 
@@ -362,9 +369,9 @@ test "max_len is the largest event" {
 
     // A key with the most text and win32 records.
     buf.clearRetainingCapacity();
-    const records = [_]event.Win32Key{.{ .down = true }} ** (Events.max_win32 + 1);
+    const records: [Events.max_win32 + 1]event.Win32Key = @splat(.{ .down = true });
     try Events.encode(&buf.writer, .{ .key = .{
-        .event = .{ .action = .press, .key = .key_a, .mods = .{}, .consumed_mods = .{}, .composing = false, .utf8 = "x" ** 300, .unshifted_codepoint = 'a' },
+        .event = .{ .action = .press, .key = .key_a, .mods = .{}, .consumed_mods = .{}, .composing = false, .utf8 = &@as([300]u8, @splat('x')), .unshifted_codepoint = 'a' },
         .win32 = &records,
     } });
     try testing.expect(buf.written().len <= Events.max_len);

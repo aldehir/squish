@@ -63,23 +63,23 @@ const ranges: []const Range = ranges: {
 
     var count = 0;
     for (structs) |s| {
-        for (@typeInfo(s).@"struct".decls) |decl| {
-            if (std.mem.startsWith(u8, decl.name, "draw")) count += 1;
+        for (@typeInfo(s).@"struct".decl_names) |decl_name| {
+            if (std.mem.startsWith(u8, decl_name, "draw")) count += 1;
         }
     }
 
     var r: [count]Range = undefined;
     var i = 0;
     for (structs) |s| {
-        for (@typeInfo(s).@"struct".decls) |decl| {
-            if (!std.mem.startsWith(u8, decl.name, "draw")) continue;
-            const sep = std.mem.indexOfScalar(u8, decl.name, '_') orelse decl.name.len;
-            const min = std.fmt.parseInt(u21, decl.name[4..sep], 16) catch unreachable;
-            const max = if (sep == decl.name.len)
+        for (@typeInfo(s).@"struct".decl_names) |decl_name| {
+            if (!std.mem.startsWith(u8, decl_name, "draw")) continue;
+            const sep = std.mem.indexOfScalar(u8, decl_name, '_') orelse decl_name.len;
+            const min = std.fmt.parseInt(u21, decl_name[4..sep], 16) catch unreachable;
+            const max = if (sep == decl_name.len)
                 min
             else
-                std.fmt.parseInt(u21, decl.name[sep + 1 ..], 16) catch unreachable;
-            r[i] = .{ .min = min, .max = max, .draw = &@field(s, decl.name) };
+                std.fmt.parseInt(u21, decl_name[sep + 1 ..], 16) catch unreachable;
+            r[i] = .{ .min = min, .max = max, .draw = &@field(s, decl_name) };
             i += 1;
         }
     }

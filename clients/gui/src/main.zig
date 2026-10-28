@@ -78,7 +78,7 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(command_line);
     // What the sidebar's "Local" runs when the command is an ssh:// URL:
     // slime's shell.
-    const local_command = if (isSshUrl(command_line)) try init.gpa.dupeZ(u16, &.{}) else try init.gpa.dupeZ(u16, command_line);
+    const local_command = if (isSshUrl(command_line)) try init.gpa.dupeSentinel(u16, &.{}, 0) else try init.gpa.dupeSentinel(u16, command_line, 0);
     defer init.gpa.free(local_command);
 
     // The window owns the connection from here, failing or not.
@@ -132,7 +132,7 @@ fn decodePng(alloc: std.mem.Allocator, data: []const u8) ghostty_vt.sys.DecodeEr
 /// program name, verbatim (`slime-gui pwsh -NoLogo`), else empty for
 /// slime's shell (init.lua's shell.command, else %COMSPEC%).
 fn shellCommand(alloc: std.mem.Allocator) ![:0]u16 {
-    return alloc.dupeZ(u16, argsAfterProgram(std.mem.span(win32.GetCommandLineW())));
+    return alloc.dupeSentinel(u16, argsAfterProgram(std.mem.span(win32.GetCommandLineW())), 0);
 }
 
 fn isSshUrl(command_line: []const u16) bool {

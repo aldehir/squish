@@ -398,7 +398,7 @@ export fn slime_vt_view_frame(
     self.changed.resize(alloc, src.gens.items.len) catch return false;
     for (src.gens.items, self.changed.items) |g, *c| c.* = g > self.generation;
     if (full) self.images.reset();
-    self.images.gather(alloc, src.copy.terminal() orelse term) catch return false;
+    self.images.gather(alloc, src.copy.terminal() orelse term, &src.state) catch return false;
     const palette = src.state.colors.palette;
     const palette_changed = if (self.palette) |p| !std.mem.eql(vt.color.RGB, &p, &palette) else true;
     // In copy mode the frame's cursor is copy mode's: a steady block
@@ -454,7 +454,8 @@ fn copyCursor(src: *Source) vt.RenderState.Cursor {
         const cells = rows.items(.cells)[y].slice();
         if (at.x < cells.len) {
             cur.cell = cells.items(.raw)[at.x];
-            cur.style = cells.items(.style)[at.x];
+            // The state's style is undefined for a cell with none.
+            if (cur.cell.style_id != 0) cur.style = cells.items(.style)[at.x];
         }
     }
     cur.viewport = .{ .x = at.x, .y = @intCast(at.y), .wide_tail = cur.cell.wide == .spacer_tail };

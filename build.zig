@@ -35,12 +35,12 @@ pub fn build(b: *std.Build) void {
             bool,
             "console",
             "Build with the console subsystem (default: true in Debug)",
-        ) orelse (optimize == .Debug),
+        ) orelse (optimize == .debug),
         .stats = b.option(
             bool,
             "stats",
             "Show frame timing and throughput in the sidebar from the start (default: true in Debug)",
-        ) orelse (optimize == .Debug),
+        ) orelse (optimize == .debug),
         .@"max-fps" = b.option(
             u32,
             "max-fps",
@@ -60,7 +60,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(gui_exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     b.step("run", "Run the app").dependOn(&run_cmd.step);
 
     const test_step = b.step("test", "Run unit tests");
@@ -107,7 +107,7 @@ fn terminfoSteps(b: *std.Build, test_step: *std.Build.Step) void {
 /// every time rather than tracking the sources. Without Go it warns and
 /// leaves them out, unless `-Dremote=true` asked for them.
 fn installGoHelpers(b: *std.Build, required: bool) void {
-    const go = b.findProgram(&.{"go"}, &.{}) catch {
+    const go = b.findProgram(.{ .names = &.{"go"} }) orelse {
         if (required) {
             b.getInstallStep().dependOn(&b.addFail("go not found; -Dremote=true needs it to build slime").step);
             return;
@@ -119,7 +119,6 @@ fn installGoHelpers(b: *std.Build, required: bool) void {
     // library for each target from a nested build of the submodule, which
     // tracks its own sources. internal/vt/slime.zig is compiled in for
     // slime's own exports. scripts/build-vt-lib.ps1 does the same.
-    const extra = b.fmt("-Dvt-extra={s}", .{b.path("internal/vt/slime.zig").getPath(b)});
     const copy = b.addUpdateSourceFiles();
     // go build hashes cgo's flags, not the library's bytes: a Go file
     // with the libraries' hash goes beside them (build/libstamp.zig),
@@ -129,7 +128,7 @@ fn installGoHelpers(b: *std.Build, required: bool) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("build/libstamp.zig"),
             .target = b.graph.host,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
         }),
     });
     const stamp = b.addRunArtifact(stamp_tool);
@@ -138,7 +137,10 @@ fn installGoHelpers(b: *std.Build, required: bool) void {
         .{ .zig = "x86_64-windows-gnu", .go = "windows_amd64", .lib = "ghostty-vt-static.lib" },
         .{ .zig = "x86_64-linux-musl", .go = "linux_amd64", .lib = "libghostty-vt.a" },
     }) |t| {
-        const lib = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "-Demit-lib-vt", b.fmt("-Dtarget={s}", .{t.zig}), "-Doptimize=ReleaseFast", extra, "--prefix" });
+        const lib = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "-Demit-lib-vt", b.fmt("-Dtarget={s}", .{t.zig}), "-Doptimize=ReleaseFast" });
+        // The nested build runs in ghostty/, so the path must be absolute.
+        lib.addFileArg2(b.path("internal/vt/slime.zig"), .{ .prefix = "-Dvt-extra=", .make_absolute = true });
+        lib.addArg("--prefix");
         const prefix = lib.addOutputDirectoryArg(b.fmt("vt-{s}", .{t.zig}));
         lib.setCwd(b.path("ghostty"));
         lib.has_side_effects = true;
@@ -170,7 +172,7 @@ fn installRemote(b: *std.Build, go: []const u8, libs: *std.Build.Step) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("build/pack.zig"),
             .target = b.graph.host,
-            .optimize = .ReleaseFast,
+            .optimize = .fast,
         }),
     });
     const pack = b.addRunArtifact(tool);
@@ -220,13 +222,13 @@ fn installConpty(b: *std.Build) void {
     b.getInstallStep().dependOn(&dll.step);
     b.getInstallStep().dependOn(&host.step);
 
-    b.build_root.handle.access(b.graph.io, conpty_dir ++ "/conpty.dll", .{}) catch {
+    b.root.root_dir.handle.access(b.graph.io, conpty_dir ++ "/conpty.dll", .{}) catch {
         const fetch = b.addSystemCommand(&.{
             "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         });
         fetch.addFileArg(b.path("scripts/fetch-conpty.ps1"));
         fetch.addArgs(&.{ "-Version", conpty_version, "-Sha256", conpty_sha256, "-Out" });
-        fetch.addArg(b.pathFromRoot(conpty_dir));
+        fetch.addArg(b.root.joinString(b.allocator, conpty_dir) catch @panic("OOM"));
         dll.step.dependOn(&fetch.step);
         host.step.dependOn(&fetch.step);
     };
@@ -237,13 +239,13 @@ fn installWebView2(b: *std.Build) void {
     const dll = b.addInstallBinFile(b.path(webview2_dir ++ "/WebView2Loader.dll"), "WebView2Loader.dll");
     b.getInstallStep().dependOn(&dll.step);
 
-    b.build_root.handle.access(b.graph.io, webview2_dir ++ "/WebView2Loader.dll", .{}) catch {
+    b.root.root_dir.handle.access(b.graph.io, webview2_dir ++ "/WebView2Loader.dll", .{}) catch {
         const fetch = b.addSystemCommand(&.{
             "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         });
         fetch.addFileArg(b.path("scripts/fetch-webview2.ps1"));
         fetch.addArgs(&.{ "-Version", webview2_version, "-Sha256", webview2_sha256, "-Out" });
-        fetch.addArg(b.pathFromRoot(webview2_dir));
+        fetch.addArg(b.root.joinString(b.allocator, webview2_dir) catch @panic("OOM"));
         dll.step.dependOn(&fetch.step);
     };
 }

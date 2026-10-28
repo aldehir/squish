@@ -1233,7 +1233,7 @@ fn createDevice(device: *?*d3d11.IDevice, context: *?*d3d11.IDeviceContext) Erro
     };
 
     for (attempts) |a| {
-        if (builtin.mode != .Debug and a.flags & d3d11.CREATE_DEVICE_DEBUG != 0) continue;
+        if (builtin.mode != .debug and a.flags & d3d11.CREATE_DEVICE_DEBUG != 0) continue;
 
         var level: d3d11.FEATURE_LEVEL = undefined;
         const hr = d3d11.D3D11CreateDevice(
@@ -1377,7 +1377,7 @@ const Pipeline = struct {
     /// output pointer: vertex shaders use vs_5_0, pixel shaders ps_5_0.
     fn createShader(device: *d3d11.IDevice, comptime entry: [:0]const u8, out: anytype) Error!void {
         const is_vs = @TypeOf(out) == *?*d3d11.IVertexShader;
-        const flags = d3dcompiler.COMPILE_ENABLE_STRICTNESS | if (builtin.mode == .Debug)
+        const flags = d3dcompiler.COMPILE_ENABLE_STRICTNESS | if (builtin.mode == .debug)
             d3dcompiler.COMPILE_DEBUG | d3dcompiler.COMPILE_SKIP_OPTIMIZATION
         else
             d3dcompiler.COMPILE_OPTIMIZATION_LEVEL3;

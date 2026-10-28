@@ -586,7 +586,8 @@ test inflateImage {
     const alloc = std.testing.allocator;
     var in: ImageIn = .{ .width = 3, .height = 2 };
     defer in.data.deinit(alloc);
-    const rgba = [_]u8{ 1, 2, 3, 4 } ** 6;
+    var rgba: [24]u8 = undefined;
+    for (&rgba, 0..) |*b, i| b.* = @intCast(i % 4 + 1);
     var out: std.Io.Writer.Allocating = .init(alloc);
     defer out.deinit();
     try out.ensureUnusedCapacity(64);

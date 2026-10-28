@@ -223,7 +223,7 @@ fn findFamily(alloc: Allocator, collection: *dwrite.IFontCollection, families: [
         log.warn("font family \"{s}\" not found", .{utf8});
     }
     for (default_families) |name| {
-        if (familyExists(collection, name)) return alloc.dupeZ(u16, name);
+        if (familyExists(collection, name)) return alloc.dupeSentinel(u16, name, 0);
     }
     return error.FontNotFound;
 }

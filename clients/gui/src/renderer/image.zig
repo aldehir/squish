@@ -152,7 +152,7 @@ test "placements lay out by layer, without images not yet here" {
     const alloc = testing.allocator;
     var images: Images = .{};
     defer images.deinit(alloc);
-    try images.put(alloc, 1, .{ .generation = 1, .width = 4, .height = 4, .rgba = try alloc.dupe(u8, &[_]u8{0xff} ** 64) });
+    try images.put(alloc, 1, .{ .generation = 1, .width = 4, .height = 4, .rgba = try alloc.dupe(u8, &@as([64]u8, @splat(0xff))) });
     try images.put(alloc, 2, .{ .generation = 1, .width = 1, .height = 1, .rgba = try alloc.dupe(u8, &[_]u8{ 1, 2, 3, 4 }) });
 
     const place = struct {

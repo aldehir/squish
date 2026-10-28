@@ -233,7 +233,7 @@ const no_offset: dwrite.GLYPH_OFFSET = .{ .advanceOffset = 0, .ascenderOffset = 
 test "placeClusters one glyph per cell" {
     var out: std.ArrayList(Glyph) = .empty;
     defer out.deinit(testing.allocator);
-    try placeClusters(testing.allocator, &out, &.{ 0, 1, 2 }, &.{ 10, 11, 12 }, &.{ 8, 8, 8 }, &([_]dwrite.GLYPH_OFFSET{no_offset} ** 3), &.{ 0, 1, 2 });
+    try placeClusters(testing.allocator, &out, &.{ 0, 1, 2 }, &.{ 10, 11, 12 }, &.{ 8, 8, 8 }, &@as([3]dwrite.GLYPH_OFFSET, @splat(no_offset)), &.{ 0, 1, 2 });
     try testing.expectEqual(3, out.items.len);
     for (out.items, 0..) |g, i| {
         try testing.expectEqual(i, g.cell);
@@ -245,7 +245,7 @@ test "placeClusters ligature spans cells" {
     // "=>" shaped into one glyph: both text units map to glyph 0.
     var out: std.ArrayList(Glyph) = .empty;
     defer out.deinit(testing.allocator);
-    try placeClusters(testing.allocator, &out, &.{ 0, 0, 1 }, &.{ 42, 7 }, &.{ 16, 8 }, &([_]dwrite.GLYPH_OFFSET{no_offset} ** 2), &.{ 0, 1, 2 });
+    try placeClusters(testing.allocator, &out, &.{ 0, 0, 1 }, &.{ 42, 7 }, &.{ 16, 8 }, &@as([2]dwrite.GLYPH_OFFSET, @splat(no_offset)), &.{ 0, 1, 2 });
     try testing.expectEqual(2, out.items.len);
     try testing.expectEqual(@as(u16, 42), out.items[0].index);
     try testing.expectEqual(@as(u16, 0), out.items[0].cell);
@@ -269,7 +269,7 @@ test "placeClusters surrogate pair maps to one cell" {
     // A non-BMP codepoint is two UTF-16 units in one cluster.
     var out: std.ArrayList(Glyph) = .empty;
     defer out.deinit(testing.allocator);
-    try placeClusters(testing.allocator, &out, &.{ 0, 0, 1 }, &.{ 99, 3 }, &.{ 32, 8 }, &([_]dwrite.GLYPH_OFFSET{no_offset} ** 2), &.{ 0, 0, 2 });
+    try placeClusters(testing.allocator, &out, &.{ 0, 0, 1 }, &.{ 99, 3 }, &.{ 32, 8 }, &@as([2]dwrite.GLYPH_OFFSET, @splat(no_offset)), &.{ 0, 0, 2 });
     try testing.expectEqual(2, out.items.len);
     try testing.expectEqual(@as(u16, 0), out.items[0].cell);
     try testing.expectEqual(@as(u16, 2), out.items[1].cell);

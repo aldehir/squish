@@ -1234,7 +1234,7 @@ fn setUp(self: *View, comp: *wv.ICompositionController) !void {
 /// Go to `url`. False if the WebView wouldn't.
 fn navigate(self: *View, url: []const u16) bool {
     const w = self.webview orelse return false;
-    const z = self.web.alloc.dupeZ(u16, url) catch return false;
+    const z = self.web.alloc.dupeSentinel(u16, url, 0) catch return false;
     defer self.web.alloc.free(z);
     log.debug("pane {d} goes to {f}", .{ self.key, std.unicode.fmtUtf16Le(url) });
     com.check(w.navigate(z), "ICoreWebView2::Navigate") catch {

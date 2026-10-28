@@ -82,8 +82,8 @@ pub const Hits = std.StaticBitSet(max_text);
 pub const Result = struct {
     entry: usize,
     score: i32,
-    label_hits: Hits = .initEmpty(),
-    detail_hits: Hits = .initEmpty(),
+    label_hits: Hits = .empty,
+    detail_hits: Hits = .empty,
 };
 
 /// The entries' text and the lists, emptied for each rebuild.
@@ -273,7 +273,7 @@ pub fn match(text: []const u16, query: []const u16) ?Match {
 
 /// The query matched greedily from `start`, where its first unit is.
 fn matchFrom(text: []const u16, query: []const u16, start: usize) ?Match {
-    var m: Match = .{ .score = 0, .hits = .initEmpty() };
+    var m: Match = .{ .score = 0, .hits = .empty };
     var at = start;
     var prev: ?usize = null;
     for (query) |q| {

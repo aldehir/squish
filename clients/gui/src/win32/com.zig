@@ -81,8 +81,8 @@ fn Return(comptime Fn: type) type {
 /// calling convention.
 fn WithThis(comptime Self: type, comptime Fn: type) type {
     const info = @typeInfo(Fn).@"fn";
-    var params: [info.params.len + 1]type = undefined;
+    var params: [info.param_types.len + 1]type = undefined;
     params[0] = Self;
-    for (info.params, 1..) |p, i| params[i] = p.type.?;
+    for (info.param_types, 1..) |p, i| params[i] = p.?;
     return @Fn(&params, &@splat(.{}), info.return_type.?, .{ .@"callconv" = .winapi });
 }

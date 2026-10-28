@@ -738,7 +738,7 @@ fn jsonString(allocator: Allocator, source: anytype, options: std.json.ParseOpti
 /// has fields, dotted; "" is none.
 fn parseRef(comptime T: type, text: []const u8) error{UnexpectedToken}!T {
     if (text.len == 0) return .none;
-    const fields = @typeInfo(T).@"struct".fields;
+    const fields = @typeInfo(T).@"struct".field_names;
     var parts: [fields.len]u32 = undefined;
     var it = std.mem.splitScalar(u8, text, '.');
     for (&parts) |*p| {
@@ -748,7 +748,7 @@ fn parseRef(comptime T: type, text: []const u8) error{UnexpectedToken}!T {
     }
     if (it.next() != null) return error.UnexpectedToken;
     var out: T = undefined;
-    inline for (fields, 0..) |f, i| @field(out, f.name) = parts[i];
+    inline for (fields, 0..) |name, i| @field(out, name) = parts[i];
     return out;
 }
 

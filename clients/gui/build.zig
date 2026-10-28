@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         bool,
         "console",
         "Build with the console subsystem (default: true in Debug)",
-    ) orelse (optimize == .Debug);
+    ) orelse (optimize == .debug);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
         bool,
         "stats",
         "Show frame timing and throughput in the window title (default: true in Debug)",
-    ) orelse (optimize == .Debug));
+    ) orelse (optimize == .debug));
     options.addOption(u32, "max_fps", b.option(
         u32,
         "max-fps",
@@ -98,7 +98,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_cmd.addArgs(args);
+    run_cmd.addPassthruArgs();
     b.step("run", "Run the app").dependOn(&run_cmd.step);
 
     const unit_tests = b.addTest(.{ .root_module = exe_mod });
@@ -119,7 +119,7 @@ fn embedThemes(b: *std.Build) std.Build.LazyPath {
     if (b.lazyDependency("iterm2_themes", .{})) |dep| {
         _ = wf.addCopyDirectory(dep.path(""), "themes", .{ .exclude_extensions = &.{".md"} });
         var names: std.ArrayList([]const u8) = .empty;
-        var dir = dep.builder.build_root.handle.openDir(io, ".", .{ .iterate = true }) catch @panic("themes: can't open the dependency");
+        var dir = dep.builder.root.root_dir.handle.openDir(io, ".", .{ .iterate = true }) catch @panic("themes: can't open the dependency");
         defer dir.close(io);
         var it = dir.iterate();
         while (it.next(io) catch @panic("themes: can't list the dependency")) |entry| {

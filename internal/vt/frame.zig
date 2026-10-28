@@ -134,9 +134,10 @@ pub fn Codec(comptime vt: type) type {
             var h = std.hash.Fnv1a_64.init();
             h.update(std.fmt.comptimePrint("{d}", .{version}));
             for (.{ Cell, StyleFlags }) |T| {
-                for (@typeInfo(T).@"struct".fields) |f| {
-                    h.update(f.name);
-                    h.update(std.fmt.comptimePrint(":{d};", .{@bitSizeOf(f.type)}));
+                const info = @typeInfo(T).@"struct";
+                for (info.field_names, info.field_types) |name, Field| {
+                    h.update(name);
+                    h.update(std.fmt.comptimePrint(":{d};", .{@bitSizeOf(Field)}));
                 }
             }
             break :id h.final();
@@ -184,13 +185,14 @@ pub fn Codec(comptime vt: type) type {
 
             /// Find the placements in the viewport, the images among them
             /// to send first, and the sent images the terminal dropped.
-            /// Call with the terminal locked, before each `encode`.
-            pub fn gather(self: *ImageSender, alloc: Allocator, t: *const vt.Terminal) !void {
+            /// The placements are the render state's, so `state` is
+            /// updated from `t`. Call with the terminal locked, before
+            /// each `encode`.
+            pub fn gather(self: *ImageSender, alloc: Allocator, t: *const vt.Terminal, state: *const RenderState) !void {
                 self.placements.clearRetainingCapacity();
                 self.pending.clearRetainingCapacity();
                 self.dropped.clearRetainingCapacity();
-                const screen = t.screens.active;
-                const storage = &screen.kitty_images;
+                const storage = &t.screens.active.kitty_images;
 
                 var sent = self.sent.keyIterator();
                 while (sent.next()) |id| {
@@ -198,85 +200,35 @@ pub fn Codec(comptime vt: type) type {
                 }
                 for (self.dropped.items) |id| _ = self.sent.remove(id);
 
-                if (t.cols == 0 or t.rows == 0 or storage.placements.count() == 0) return;
-                const cell_width = t.width_px / t.cols;
-                const cell_height = t.height_px / t.rows;
-                if (cell_width == 0 or cell_height == 0) return;
-                const pages = &screen.pages;
-                const top = pages.getTopLeft(.viewport);
-                const bot = pages.getBottomRight(.viewport).?;
-                const top_y = pages.pointFromPin(.screen, top).?.screen.y;
-                const bot_y = pages.pointFromPin(.screen, bot).?.screen.y;
-
-                var virtual = false;
-                var it = storage.placements.iterator();
-                while (it.next()) |kv| {
-                    const p = kv.value_ptr;
-                    const pin = switch (p.location) {
-                        .pin => |pin| pin,
-                        // Shown where placeholder cells are; see below.
-                        .virtual => {
-                            virtual = true;
-                            continue;
-                        },
-                        // TODO: relative placements.
-                        .relative => continue,
-                    };
-                    if (pin.garbage) continue;
-                    const image = storage.imageById(kv.key_ptr.image_id) orelse continue;
+                // Every kind of placement, positioned: fixed ones at
+                // their cell, relative ones from their parent, and
+                // Unicode placeholders (cells of U+10EEEE whose colors
+                // and diacritics name an image and which part of it to
+                // show) where the cells are, below the text, as in
+                // Ghostty. A program draws placeholders as text, so
+                // they scroll and redraw with it, which is what lets
+                // images work through tmux.
+                var it = state.imagePlacementIterator();
+                while (it.next()) |p| {
+                    if (p.width == 0 or p.height == 0) continue;
+                    // Only a relative placement can start left of the
+                    // viewport; the wire carries no such column.
+                    if (p.x < 0) continue;
+                    const image = storage.imageById(p.image_id) orelse continue;
                     if (image.data.isPending()) continue;
-
-                    const grid = p.gridSize(image, t);
-                    if (grid.cols == 0 or grid.rows == 0) continue;
-                    const y = pages.pointFromPin(.screen, pin.*).?.screen.y;
-                    if (y > bot_y or y + grid.rows - 1 < top_y) continue;
-
-                    const size = p.pixelSize(image, t);
-                    if (size.width == 0 or size.height == 0) continue;
-                    const offset = p.cellOffset(t);
-                    const src = p.sourceRect(image);
                     try self.place(alloc, image, .{
                         .image_id = image.id,
                         .z = p.z,
-                        .x = pin.x,
-                        .y = @intCast(@as(i64, y) - @as(i64, top_y)),
-                        .offset_x = offset.x,
-                        .offset_y = offset.y,
-                        .width = size.width,
-                        .height = size.height,
-                        .src_x = src.x,
-                        .src_y = src.y,
-                        .src_width = src.width,
-                        .src_height = src.height,
-                    });
-                }
-
-                // Unicode placeholders: cells of U+10EEEE whose colors and
-                // diacritics name an image and which part of it to show.
-                // A program draws them as text, so they scroll and
-                // redraw with it, which is what lets images work through
-                // tmux. Below the text, as in Ghostty.
-                if (!virtual) return;
-                var v_it = kitty.unicode.placementIterator(top, bot);
-                while (v_it.next()) |vp| {
-                    const image = storage.imageById(vp.image_id) orelse continue;
-                    if (image.data.isPending()) continue;
-                    const rp = vp.renderPlacement(storage, &image, cell_width, cell_height) catch continue;
-                    if (rp.dest_width == 0 or rp.dest_height == 0) continue;
-                    const y = pages.pointFromPin(.viewport, rp.top_left) orelse continue;
-                    try self.place(alloc, image, .{
-                        .image_id = image.id,
-                        .z = -1,
-                        .x = rp.top_left.x,
-                        .y = @intCast(y.viewport.y),
-                        .offset_x = rp.offset_x,
-                        .offset_y = rp.offset_y,
-                        .width = rp.dest_width,
-                        .height = rp.dest_height,
-                        .src_x = rp.source_x,
-                        .src_y = rp.source_y,
-                        .src_width = rp.source_width,
-                        .src_height = rp.source_height,
+                        .x = @intCast(p.x),
+                        .y = p.y,
+                        .offset_x = p.offset_x,
+                        .offset_y = p.offset_y,
+                        .width = p.width,
+                        .height = p.height,
+                        .src_x = p.source_x,
+                        .src_y = p.source_y,
+                        .src_width = p.source_width,
+                        .src_height = p.source_height,
                     });
                 }
             }
@@ -439,7 +391,7 @@ pub fn Codec(comptime vt: type) type {
             // so an id means one style throughout it. A gradient can give
             // every cell its own.
             const styles = cells.items(.style);
-            var seen: std.StaticBitSet(std.math.maxInt(StyleId) + 1) = .initEmpty();
+            var seen: std.StaticBitSet(std.math.maxInt(StyleId) + 1) = .empty;
             var n_ids: u16 = 0;
             for (raws) |raw| {
                 if (!raw.hasStyling() or seen.isSet(raw.style_id)) continue;

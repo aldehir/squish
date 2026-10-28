@@ -547,15 +547,16 @@ fn applyTheme(self: *Config, text: []const u8, path: []const u8) Allocator.Error
 /// An empty value resets one to its default.
 fn setThemeKey(self: *Config, key: []const u8, value: []const u8) !void {
     const alloc = self._arena.allocator();
-    inline for (@typeInfo(Config).@"struct".fields) |field| {
-        if (comptime themeKey(field.name)) {
-            if (std.mem.eql(u8, key, field.name)) {
-                const ptr = &@field(self, field.name);
+    const info = @typeInfo(Config).@"struct";
+    inline for (info.field_names, info.field_types, info.field_attrs) |name, Field, attrs| {
+        if (comptime themeKey(name)) {
+            if (std.mem.eql(u8, key, name)) {
+                const ptr = &@field(self, name);
                 if (value.len == 0) {
-                    ptr.* = field.defaultValue().?;
+                    ptr.* = attrs.defaultValue(Field).?;
                     return;
                 }
-                switch (field.type) {
+                switch (Field) {
                     RGB => ptr.* = try RGB.parse(value),
                     ?TerminalColor => ptr.* = try TerminalColor.parse(value),
                     else => try ptr.parse(alloc, value),

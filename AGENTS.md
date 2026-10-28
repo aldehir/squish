@@ -17,7 +17,7 @@ zig build run                # Debug build; logs on stderr
 zig build test
 ```
 
-- Zig 0.16.0 lives in `tools\` (gitignored; download from ziglang.org).
+- Zig 0.17.0 lives in `tools\` (gitignored; download from ziglang.org).
 - slime links libghostty-vt with cgo, compiled by `zig cc` (the setup
   script sets `CC`); no other C toolchain. `zig build` builds the static
   libs into `internal\vt\lib`; for `go test` alone, run
