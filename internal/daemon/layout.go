@@ -21,6 +21,8 @@ func leaf(pane PaneID) *Node { return &Node{Pane: pane} }
 // splitNode puts pane beside target, on side dir, taking share basis points
 // of target's space. It returns the new root. A split along the same
 // axis as target's parent joins that split rather than nesting another.
+// The new pane's slot is From target, so closing it gives target its
+// space back.
 func splitNode(root *Node, target, pane PaneID, dir Direction, share uint16) (*Node, error) {
 	if share == 0 || share >= Whole {
 		return nil, fmt.Errorf("daemon: split share %d out of range", share)
@@ -45,7 +47,7 @@ func splitNode(root *Node, target, pane PaneID, dir Direction, share uint16) (*N
 		if before {
 			at = i
 		}
-		parent.Children = append(parent.Children[:at], append([]Child{{Share: newShare, Node: added}}, parent.Children[at:]...)...)
+		parent.Children = append(parent.Children[:at], append([]Child{{Share: newShare, From: target, Node: added}}, parent.Children[at:]...)...)
 		return root, nil
 	}
 
@@ -56,9 +58,9 @@ func splitNode(root *Node, target, pane PaneID, dir Direction, share uint16) (*N
 	} else {
 		t = parent.Children[i].Node
 	}
-	kids := []Child{{Share: Whole - share, Node: t}, {Share: share, Node: added}}
+	kids := []Child{{Share: Whole - share, Node: t}, {Share: share, From: target, Node: added}}
 	if before {
-		kids[0], kids[1] = Child{Share: share, Node: added}, Child{Share: Whole - share, Node: t}
+		kids[0], kids[1] = kids[1], kids[0]
 	}
 	split := &Node{Axis: axis, Children: kids}
 	if parent == nil {
@@ -98,8 +100,10 @@ func joinEdge(root *Node, pane PaneID, dir Direction) *Node {
 }
 
 // removeNode takes pane out of the tree and returns the new root: nil if it
-// was the last. Its siblings grow in proportion to fill its space, and a
-// split left with one child is replaced by that child.
+// was the last. Its space goes to its heir (heirOf), else its siblings
+// grow in proportion to fill it, and a split left with one child is
+// replaced by that child. What pointed at it points at what took its
+// region.
 func removeNode(root *Node, pane PaneID) *Node {
 	if root == nil {
 		return nil
@@ -114,9 +118,111 @@ func removeNode(root *Node, pane PaneID) *Node {
 	if i < 0 {
 		return root
 	}
+	gone := parent.Children[i]
+	h := heirOf(parent, i)
 	parent.Children = append(parent.Children[:i], parent.Children[i+1:]...)
-	rebalance(parent)
-	return collapse(root)
+	if h < 0 {
+		rebalance(parent)
+		repoint(root, pane, gone.From)
+	} else {
+		if h > i {
+			h--
+		}
+		heir := &parent.Children[h]
+		heir.Share += gone.Share
+		if heir.From == pane {
+			// Split from pane, it lived in pane's region: it takes
+			// pane's place in the chain.
+			heir.From = gone.From
+			repoint(root, pane, firstPane(heir.Node))
+		} else {
+			repoint(root, pane, gone.From)
+		}
+	}
+	root = collapse(root)
+	normalize(root)
+	return root
+}
+
+// heirOf picks the sibling that takes child i's space when its pane
+// closes: the nearest split from it (the one before on a tie), else the
+// one holding the pane it was split from. -1 if neither, when the
+// siblings share it in proportion.
+func heirOf(parent *Node, i int) int {
+	pane := parent.Children[i].Node.Pane
+	for d := 1; d < len(parent.Children); d++ {
+		for _, j := range []int{i - d, i + d} {
+			if j >= 0 && j < len(parent.Children) && parent.Children[j].From == pane {
+				return j
+			}
+		}
+	}
+	if from := parent.Children[i].From; !from.IsZero() {
+		for j, c := range parent.Children {
+			if j != i && holds(c.Node, from) {
+				return j
+			}
+		}
+	}
+	return -1
+}
+
+// repoint makes every From naming gone name to instead (zero for none).
+func repoint(n *Node, gone, to PaneID) {
+	if n == nil {
+		return
+	}
+	for i := range n.Children {
+		if n.Children[i].From == gone {
+			n.Children[i].From = to
+		}
+		repoint(n.Children[i].Node, gone, to)
+	}
+}
+
+// holds reports whether pane is in n.
+func holds(n *Node, pane PaneID) bool {
+	if n.IsLeaf() {
+		return n.Pane == pane
+	}
+	for _, c := range n.Children {
+		if holds(c.Node, pane) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstPane(n *Node) PaneID {
+	for !n.IsLeaf() {
+		n = n.Children[0].Node
+	}
+	return n.Pane
+}
+
+// normalize zeroes every From that doesn't name a pane in a sibling's
+// subtree: one gone, moved, or in this child's own, or a tree a client
+// restructured. Its child then falls back to proportional growth.
+func normalize(n *Node) {
+	if n == nil || n.IsLeaf() {
+		return
+	}
+	for i := range n.Children {
+		c := &n.Children[i]
+		if !c.From.IsZero() {
+			ok := false
+			for j, s := range n.Children {
+				if j != i && holds(s.Node, c.From) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				c.From = PaneID{}
+			}
+		}
+		normalize(c.Node)
+	}
 }
 
 // collapse replaces every split with one child by that child.

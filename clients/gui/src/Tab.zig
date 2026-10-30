@@ -55,6 +55,10 @@ pub const Split = struct {
 pub const Child = struct {
     /// Of the split's space, as a fraction of the children's total.
     share: u16,
+    /// The pane this child's space was split from, as slime sent it
+    /// (rpc.Child's From): closing a pane gives its space back that way.
+    /// Kept through drags so `toLayout` sends it back.
+    from: ?*Session = null,
     node: Node,
 };
 
@@ -198,10 +202,10 @@ pub fn first(node: Node) *Session {
     };
 }
 
-/// Take `s` out of the tree, as slime will once it hears: its siblings
-/// share its space, and a split left with one child gives way to it.
-/// Returns the pane nearest to where it was, to focus, or null if it was
-/// the tab's last.
+/// Take `s` out of the tree, as slime will once it hears: its space goes
+/// to its heir (`heirOf`), else its siblings share it, and a split left
+/// with one child gives way to it. Returns the pane nearest to where it
+/// was, to focus, or null if it was the tab's last.
 pub fn remove(self: *Tab, alloc: Allocator, s: *const Session) ?*Session {
     if (self.zoom == s) self.zoom = null;
     switch (self.root) {
@@ -213,31 +217,88 @@ pub fn remove(self: *Tab, alloc: Allocator, s: *const Session) ?*Session {
     return near;
 }
 
-fn removeNode(alloc: Allocator, node: *Node, s: *const Session) ?*Session {
-    const sp = &node.split;
-    for (sp.children, 0..) |*c, i| switch (c.node) {
-        .pane => |p| if (p == s) {
-            const rest = alloc.alloc(Child, sp.children.len - 1) catch {
-                // Leave it in, sharing nothing: slime's tree replaces
-                // this one soon.
-                c.share = 0;
-                return first(sp.children[if (i == 0) 1 else i - 1].node);
-            };
-            @memcpy(rest[0..i], sp.children[0..i]);
-            @memcpy(rest[i..], sp.children[i + 1 ..]);
-            alloc.free(sp.children);
-            sp.children = rest;
-            const near = first(rest[if (i == 0) 0 else i - 1].node);
-            if (rest.len == 1) {
-                const only = rest[0].node;
-                alloc.free(rest);
-                node.* = only;
-            }
-            return near;
-        },
-        .split => if (containsNode(c.node, s)) return removeNode(alloc, &c.node, s),
+/// slime's removeNode (internal/daemon/layout.go), so the window lays
+/// the tab out as slime will.
+fn removeNode(alloc: Allocator, root: *Node, s: *const Session) ?*Session {
+    const p = parentOf(root, s) orelse return null;
+    const sp = p.split;
+    const i = p.index;
+    const gone = sp.children[i];
+    const heir = heirOf(sp, i);
+    if (heir) |h| sp.children[h].share +|= gone.share;
+    const rest = alloc.alloc(Child, sp.children.len - 1) catch {
+        // Leave it in, sharing nothing: slime's tree replaces this one
+        // soon.
+        sp.children[i].share = 0;
+        return first(sp.children[if (i == 0) 1 else i - 1].node);
     };
+    @memcpy(rest[0..i], sp.children[0..i]);
+    @memcpy(rest[i..], sp.children[i + 1 ..]);
+    alloc.free(sp.children);
+    sp.children = rest;
+    const near = first(rest[if (i == 0) 0 else i - 1].node);
+    // What pointed at s points at what took its region.
+    if (heir) |h| {
+        const c = &rest[if (h > i) h - 1 else h];
+        if (c.from == s) {
+            // Split from s, it lived in s's region: it takes s's place
+            // in the chain.
+            c.from = gone.from;
+            repoint(root, s, first(c.node));
+        } else repoint(root, s, gone.from);
+    } else repoint(root, s, gone.from);
+    if (rest.len == 1) {
+        const only = rest[0].node;
+        alloc.free(rest);
+        p.node.* = only;
+    }
+    normalize(root);
+    return near;
+}
+
+/// The sibling that takes child `i`'s space when its pane closes: the
+/// nearest split from it (the one before on a tie), else the one holding
+/// the pane it was split from. Null if neither: the siblings share it.
+fn heirOf(sp: *const Split, i: usize) ?usize {
+    const s = sp.children[i].node.pane;
+    var d: usize = 1;
+    while (d < sp.children.len) : (d += 1) {
+        if (i >= d and sp.children[i - d].from == s) return i - d;
+        if (i + d < sp.children.len and sp.children[i + d].from == s) return i + d;
+    }
+    const from = sp.children[i].from orelse return null;
+    for (sp.children, 0..) |c, j| {
+        if (j != i and containsNode(c.node, from)) return j;
+    }
     return null;
+}
+
+/// Make every `from` naming `gone` name `to` instead.
+fn repoint(node: *Node, gone: *const Session, to: ?*Session) void {
+    switch (node.*) {
+        .pane => {},
+        .split => |sp| for (sp.children) |*c| {
+            if (c.from == gone) c.from = to;
+            repoint(&c.node, gone, to);
+        },
+    }
+}
+
+/// Clear every `from` that doesn't name a pane in a sibling's subtree,
+/// as slime does: that child's space goes back in proportion instead.
+fn normalize(node: *Node) void {
+    switch (node.*) {
+        .pane => {},
+        .split => |sp| for (sp.children, 0..) |*c, i| {
+            if (c.from) |from| {
+                const beside = for (sp.children, 0..) |o, j| {
+                    if (j != i and containsNode(o.node, from)) break true;
+                } else false;
+                if (!beside) c.from = null;
+            }
+            normalize(&c.node);
+        },
+    }
 }
 
 /// Where a dragged pane goes.
@@ -267,6 +328,9 @@ pub fn move(self: *Tab, alloc: Allocator, s: *Session, to: Place) !void {
             const into = leafOf(&root, t).?;
             from.* = .{ .pane = t };
             into.* = .{ .pane = s };
+            // The slots stay; what named either names whoever is in its
+            // region now.
+            swapRefs(&root, s, t);
         },
         .beside => |b| {
             try take(alloc, &root, s);
@@ -277,10 +341,21 @@ pub fn move(self: *Tab, alloc: Allocator, s: *Session, to: Place) !void {
             try insertEdge(alloc, &root, s, side);
         },
     }
+    normalize(&root);
     freeNode(alloc, self.root);
     self.root = root;
     self.zoom = null;
     self.focus = s;
+}
+
+fn swapRefs(node: *Node, a: *Session, b: *Session) void {
+    switch (node.*) {
+        .pane => {},
+        .split => |sp| for (sp.children) |*c| {
+            if (c.from == a) c.from = b else if (c.from == b) c.from = a;
+            swapRefs(&c.node, a, b);
+        },
+    }
 }
 
 fn cloneNode(alloc: Allocator, node: Node) !Node {
@@ -294,7 +369,7 @@ fn cloneNode(alloc: Allocator, node: Node) !Node {
                 alloc.free(children);
             }
             for (children, sp.children) |*out, c| {
-                out.* = .{ .share = c.share, .node = try cloneNode(alloc, c.node) };
+                out.* = .{ .share = c.share, .from = c.from, .node = try cloneNode(alloc, c.node) };
                 made += 1;
             }
             return .{ .split = .{ .axis = sp.axis, .children = children } };
@@ -320,14 +395,15 @@ fn take(alloc: Allocator, root: *Node, s: *const Session) !void {
     if (containsNode(root.*, s)) return error.OutOfMemory;
 }
 
-/// The split directly holding the leaf of `s`, and its index there.
-fn parentOf(node: *Node, s: *const Session) ?struct { split: *Split, index: usize } {
+/// The split directly holding the leaf of `s`, the node it is, and its
+/// index there.
+fn parentOf(node: *Node, s: *const Session) ?struct { node: *Node, split: *Split, index: usize } {
     const sp = switch (node.*) {
         .pane => return null,
         .split => |*sp| sp,
     };
     for (sp.children, 0..) |*c, i| switch (c.node) {
-        .pane => |p| if (p == s) return .{ .split = sp, .index = i },
+        .pane => |p| if (p == s) return .{ .node = node, .split = sp, .index = i },
         .split => if (parentOf(&c.node, s)) |found| return found,
     };
     return null;
@@ -352,19 +428,20 @@ fn insertChild(alloc: Allocator, sp: *Split, at: usize, child: Child) !void {
 }
 
 /// Put `s` on `side` of `target`: into the split holding it if that runs
-/// the same way, sharing its space, else in a new split with it.
+/// the same way, sharing its space, else in a new split with it. Like a
+/// split, it's from `target`, so closing it gives the space back.
 fn insertBeside(alloc: Allocator, root: *Node, s: *Session, target: *Session, side: Daemon.Direction) !void {
     const axis = axisOf(side);
     if (parentOf(root, target)) |p| if (p.split.axis == axis) {
         const t = &p.split.children[p.index];
         const half = @max(1, t.share / 2);
         t.share = @max(1, t.share - half);
-        return insertChild(alloc, p.split, if (after(side)) p.index + 1 else p.index, .{ .share = half, .node = .{ .pane = s } });
+        return insertChild(alloc, p.split, if (after(side)) p.index + 1 else p.index, .{ .share = half, .from = target, .node = .{ .pane = s } });
     };
     const leaf = leafOf(root, target).?;
     const kids = try alloc.alloc(Child, 2);
     kids[@intFromBool(!after(side))] = .{ .share = 5000, .node = .{ .pane = target } };
-    kids[@intFromBool(after(side))] = .{ .share = 5000, .node = .{ .pane = s } };
+    kids[@intFromBool(after(side))] = .{ .share = 5000, .from = target, .node = .{ .pane = s } };
     leaf.* = .{ .split = .{ .axis = axis, .children = kids } };
 }
 
@@ -580,6 +657,7 @@ fn toLayoutNode(arena: Allocator, node: Node) !?Daemon.Node {
             const children = try arena.alloc(Daemon.Child, sp.children.len);
             for (children, sp.children) |*out, c| out.* = .{
                 .share = c.share,
+                .from = if (c.from) |f| f.daemonPane() else null,
                 .node = try toLayoutNode(arena, c.node) orelse return null,
             };
             return .{ .split = .{ .axis = sp.axis, .children = children } };
@@ -601,7 +679,8 @@ pub fn fromLayout(alloc: Allocator, node: Daemon.Node, ctx: anytype) !?Node {
             }
             for (sp.children) |c| {
                 const child = try fromLayout(alloc, c.node, ctx) orelse continue;
-                kids.append(alloc, .{ .share = c.share, .node = child }) catch |err| {
+                const from = if (c.from) |id| ctx.session(id) else null;
+                kids.append(alloc, .{ .share = c.share, .from = from, .node = child }) catch |err| {
                     freeNode(alloc, child);
                     return err;
                 };
@@ -881,4 +960,147 @@ test fromLayout {
     defer freeNode(alloc, root);
     try std.testing.expectEqual(@as(usize, 2), root.split.children.len);
     try std.testing.expectEqual(&b, root.split.children[1].node.pane);
+}
+
+/// Sessions standing for slime's panes 1.1.n, n their index, for tests
+/// that go through slime's trees.
+const TestPanes = struct {
+    sessions: []Session,
+
+    fn init(sessions: []Session) TestPanes {
+        for (sessions, 0..) |*s, n| s.transport = .{ .daemon = .{ .conn = undefined, .pane = .{ .ws = 1, .tab = 1, .n = @intCast(n) } } };
+        return .{ .sessions = sessions };
+    }
+
+    pub fn session(self: TestPanes, id: Daemon.PaneRef) ?*Session {
+        return if (id.n < self.sessions.len) &self.sessions[id.n] else null;
+    }
+};
+
+test "closing a pane gives its space back as slime does" {
+    // slime's TestHeirFixtures writes these from its own cases.
+    const Fixture = struct { name: []const u8, tree: Daemon.Node, close: Daemon.PaneRef, want: Daemon.Node };
+    const alloc = std.testing.allocator;
+    var sessions: [8]Session = undefined;
+    const panes = TestPanes.init(&sessions);
+    const parsed = try std.json.parseFromSlice([]const Fixture, alloc, @embedFile("testdata/heir.json"), .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expect(parsed.value.len > 0);
+    for (parsed.value) |f| {
+        const root = (try fromLayout(alloc, f.tree, panes)).?;
+        const tab = try create(alloc, 1, null, 0, .none, root, first(root));
+        defer tab.destroy(alloc);
+        _ = tab.remove(alloc, panes.session(f.close).?);
+        const got = try std.json.Stringify.valueAlloc(a, (try tab.toLayout(a)).?, .{});
+        const want = try std.json.Stringify.valueAlloc(a, f.want, .{});
+        std.testing.expectEqualStrings(want, got) catch |err| {
+            std.debug.print("case: {s}\n", .{f.name});
+            return err;
+        };
+    }
+}
+
+test "a moved pane forgets its origin, and what came from it follows its region" {
+    const alloc = std.testing.allocator;
+    var a: Session = undefined;
+    var b: Session = undefined;
+    var c: Session = undefined;
+    // A 5000, B 2500, C 2500, C split from B.
+    const chain = struct {
+        fn chain(al: Allocator, pa: *Session, pb: *Session, pc: *Session) !*Tab {
+            const row = try al.alloc(Child, 3);
+            row[0] = .{ .share = 5000, .node = .{ .pane = pa } };
+            row[1] = .{ .share = 2500, .node = .{ .pane = pb } };
+            row[2] = .{ .share = 2500, .from = pb, .node = .{ .pane = pc } };
+            return create(al, 1, null, 0, .none, .{ .split = .{ .axis = .row, .children = row } }, pa);
+        }
+    }.chain;
+
+    {
+        // B to the bottom edge: C takes B's place, with B's origin (none).
+        const tab = try chain(alloc, &a, &b, &c);
+        defer tab.destroy(alloc);
+        try tab.move(alloc, &b, .{ .edge = .down });
+        const column = tab.root.split;
+        try std.testing.expectEqual(Axis.column, column.axis);
+        try std.testing.expectEqual(&b, column.children[1].node.pane);
+        try std.testing.expect(column.children[1].from == null);
+        const row = column.children[0].node.split.children;
+        try std.testing.expectEqual(@as(u16, 5000), row[0].share);
+        try std.testing.expectEqual(@as(u16, 5000), row[1].share);
+        try std.testing.expect(row[1].from == null);
+        // Then closing C shares its space over the row: A alone.
+        _ = tab.remove(alloc, &c);
+        try std.testing.expectEqual(&a, tab.root.split.children[0].node.pane);
+
+        // Back beside C, on its left: from C, so closing it gives C the
+        // space, not the layout from before the move.
+        const again = try chain(alloc, &a, &b, &c);
+        defer again.destroy(alloc);
+        try again.move(alloc, &b, .{ .edge = .down });
+        try again.move(alloc, &b, .{ .beside = .{ .target = &c, .side = .left } });
+        const kids = again.root.split.children;
+        try std.testing.expectEqual(@as(usize, 3), kids.len);
+        try std.testing.expectEqual(&b, kids[1].node.pane);
+        try std.testing.expectEqual(@as(?*Session, &c), kids[1].from);
+        try std.testing.expectEqual([3]u16{ 5000, 2500, 2500 }, [3]u16{ kids[0].share, kids[1].share, kids[2].share });
+        _ = again.remove(alloc, &b);
+        try std.testing.expectEqual([2]u16{ 5000, 5000 }, [2]u16{ again.root.split.children[0].share, again.root.split.children[1].share });
+        try std.testing.expectEqual(&c, again.root.split.children[1].node.pane);
+    }
+    {
+        // B beside A, to its left: from A, and closing it gives A its
+        // space back.
+        const tab = try chain(alloc, &a, &b, &c);
+        defer tab.destroy(alloc);
+        try tab.move(alloc, &b, .{ .beside = .{ .target = &a, .side = .left } });
+        const kids = tab.root.split.children;
+        try std.testing.expectEqual(&b, kids[0].node.pane);
+        try std.testing.expectEqual(@as(?*Session, &a), kids[0].from);
+        try std.testing.expect(kids[1].from == null);
+        try std.testing.expectEqual([3]u16{ 2500, 2500, 5000 }, [3]u16{ kids[0].share, kids[1].share, kids[2].share });
+        _ = tab.remove(alloc, &b);
+        try std.testing.expectEqual([2]u16{ 5000, 5000 }, [2]u16{ tab.root.split.children[0].share, tab.root.split.children[1].share });
+        try std.testing.expectEqual(&a, tab.root.split.children[0].node.pane);
+    }
+    {
+        // Swapping B and C swaps what names them: B's slot is from C.
+        const tab = try chain(alloc, &a, &b, &c);
+        defer tab.destroy(alloc);
+        try tab.move(alloc, &b, .{ .swap = &c });
+        const kids = tab.root.split.children;
+        try std.testing.expectEqual(&c, kids[1].node.pane);
+        try std.testing.expectEqual(&b, kids[2].node.pane);
+        try std.testing.expectEqual(@as(?*Session, &c), kids[2].from);
+        _ = tab.remove(alloc, &b);
+        try std.testing.expectEqual([2]u16{ 5000, 5000 }, [2]u16{ tab.root.split.children[0].share, tab.root.split.children[1].share });
+    }
+}
+
+test "a layout's from goes to slime and back" {
+    const alloc = std.testing.allocator;
+    var sessions: [4]Session = undefined;
+    const panes = TestPanes.init(&sessions);
+    const p = struct {
+        fn p(n: u32) Daemon.PaneRef {
+            return .{ .ws = 1, .tab = 1, .n = n };
+        }
+    }.p;
+    var inner = [_]Daemon.Child{ .{ .share = 5000, .node = .{ .pane = p(2) } }, .{ .share = 5000, .from = p(2), .node = .{ .pane = p(3) } } };
+    var outer = [_]Daemon.Child{ .{ .share = 5000, .node = .{ .pane = p(1) } }, .{ .share = 5000, .from = p(1), .node = .{ .split = .{ .axis = .column, .children = &inner } } } };
+    const tree: Daemon.Node = .{ .split = .{ .axis = .row, .children = &outer } };
+    const root = (try fromLayout(alloc, tree, panes)).?;
+    const tab = try create(alloc, 1, null, 0, .none, root, first(root));
+    defer tab.destroy(alloc);
+    try std.testing.expectEqual(@as(?*Session, &sessions[1]), tab.root.split.children[1].from);
+
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const want = try std.json.Stringify.valueAlloc(a, tree, .{});
+    const got = try std.json.Stringify.valueAlloc(a, (try tab.toLayout(a)).?, .{});
+    try std.testing.expectEqualStrings(want, got);
 }

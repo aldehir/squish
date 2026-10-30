@@ -981,6 +981,7 @@ func (s *Server) tabLayout(_ *callCtx, m rpc.TabLayoutParams) (rpc.Empty, error)
 	if err := Validate(m.Tree, t.root.Panes()); err != nil {
 		return rpc.Empty{}, rpc.Errorf(rpc.CodeInvalidParams, "%v", err)
 	}
+	normalize(m.Tree)
 	t.root = m.Tree
 	s.retileLocked(t)
 	s.changedLocked(t.ws, nil)

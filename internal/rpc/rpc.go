@@ -259,8 +259,8 @@ func (d Direction) Axis() Axis {
 // Node is a tab's layout tree: a pane (Pane set) or a split whose
 // children each have a share of it in basis points, summing to Whole.
 // On the wire a pane is {"pane": "1.2.3"} and a split {"split":
-// {"axis": "row", "children": [{"share": 5000, "node": ...}, ...]}}:
-// the shape a tagged union takes in Zig's std.json.
+// {"axis": "row", "children": [{"share": 5000, "from": "1.2.3", "node":
+// ...}, ...]}}: the shape a tagged union takes in Zig's std.json.
 type Node struct {
 	Pane     PaneID
 	Axis     Axis
@@ -269,7 +269,13 @@ type Node struct {
 
 type Child struct {
 	Share uint16 `json:"share"`
-	Node  *Node  `json:"node"`
+	// From is the pane this child's space was carved from when it was
+	// split off, or zero: laid out whole, joined along an edge, or its
+	// origin moved or gone. Closing a pane gives its share back that
+	// way (internal/daemon's removeNode). A nonzero From names a pane in
+	// a sibling's subtree, never this child's own.
+	From PaneID `json:"from,omitzero"`
+	Node *Node  `json:"node"`
 }
 
 // MaxDepth bounds a tree's nesting, on the wire and in the daemon.
@@ -301,7 +307,7 @@ func (n *Node) Clone() *Node {
 	}
 	c := &Node{Pane: n.Pane, Axis: n.Axis}
 	for _, ch := range n.Children {
-		c.Children = append(c.Children, Child{ch.Share, ch.Node.Clone()})
+		c.Children = append(c.Children, Child{Share: ch.Share, From: ch.From, Node: ch.Node.Clone()})
 	}
 	return c
 }
@@ -337,6 +343,7 @@ func (n *Node) unmarshal(b []byte, depth int) error {
 			Axis     Axis `json:"axis"`
 			Children []struct {
 				Share uint16          `json:"share"`
+				From  PaneID          `json:"from"`
 				Node  json.RawMessage `json:"node"`
 			} `json:"children"`
 		} `json:"split"`
@@ -354,7 +361,7 @@ func (n *Node) unmarshal(b []byte, depth int) error {
 			if err := child.unmarshal(c.Node, depth+1); err != nil {
 				return err
 			}
-			n.Children = append(n.Children, Child{Share: c.Share, Node: child})
+			n.Children = append(n.Children, Child{Share: c.Share, From: c.From, Node: child})
 		}
 	default:
 		return errors.New("rpc: a layout node is a pane or a split")

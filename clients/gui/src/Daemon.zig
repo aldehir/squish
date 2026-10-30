@@ -629,6 +629,10 @@ pub const Node = union(enum) {
                     try jw.beginObject();
                     try jw.objectField("share");
                     try jw.write(share);
+                    if (c.from) |from| {
+                        try jw.objectField("from");
+                        try jw.write(from);
+                    }
                     try jw.objectField("node");
                     try jw.write(c.node);
                     try jw.endObject();
@@ -644,6 +648,9 @@ pub const Node = union(enum) {
 pub const Child = struct {
     /// Basis points of the split's space.
     share: u16,
+    /// The pane this child's space was split from (rpc.Child's From),
+    /// which a close gives it back to; omitted when null.
+    from: ?PaneRef = null,
     node: Node,
 };
 
@@ -2671,8 +2678,8 @@ test "a layout's shares are sent summing to the whole" {
             return .{ .ws = 1, .tab = 1, .n = n };
         }
     }.p;
-    var inner = [_]Child{ .{ .share = 1, .node = .{ .pane = p(2) } }, .{ .share = 1, .node = .{ .pane = p(3) } }, .{ .share = 1, .node = .{ .pane = p(4) } } };
-    var outer = [_]Child{ .{ .share = 7000, .node = .{ .pane = p(1) } }, .{ .share = 2000, .node = .{ .split = .{ .axis = .column, .children = &inner } } } };
+    var inner = [_]Child{ .{ .share = 1, .node = .{ .pane = p(2) } }, .{ .share = 1, .node = .{ .pane = p(3) } }, .{ .share = 1, .from = p(3), .node = .{ .pane = p(4) } } };
+    var outer = [_]Child{ .{ .share = 7000, .node = .{ .pane = p(1) } }, .{ .share = 2000, .from = p(1), .node = .{ .split = .{ .axis = .column, .children = &inner } } } };
     const root: Node = .{ .split = .{ .axis = .row, .children = &outer } };
     const json = try std.json.Stringify.valueAlloc(alloc, root, .{});
     defer alloc.free(json);
@@ -2689,6 +2696,11 @@ test "a layout's shares are sent summing to the whole" {
     try std.testing.expectEqual(@as(u16, 3333), column[1].share);
     try std.testing.expectEqual(@as(u16, 3334), column[2].share);
     try std.testing.expect(column[2].node.pane.eql(p(4)));
+    // from goes where it's set, and its absence reads as null.
+    try std.testing.expect(row[0].from == null);
+    try std.testing.expect(row[1].from.?.eql(p(1)));
+    try std.testing.expect(column[0].from == null);
+    try std.testing.expect(column[2].from.?.eql(p(3)));
 }
 
 test "ids are dotted strings on the wire, and none is empty" {

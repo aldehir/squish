@@ -1,0 +1,467 @@
+[
+  {
+    "name": "the newest goes back to its origin",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.2"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.3",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.2"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "split off to the left",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 2500,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.3"
+            }
+          },
+          {
+            "share": 2500,
+            "node": {
+              "pane": "1.1.2"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.1"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.3",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.2"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.1"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "the middle of a chain goes to what was split from it",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.2"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.2",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "the nearest split from it",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 1250,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.2"
+            }
+          },
+          {
+            "share": 1250,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.4"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.2",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.4"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.4",
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "laid out evenly, siblings grow in proportion",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 3334,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 3333,
+            "node": {
+              "pane": "1.1.2"
+            }
+          },
+          {
+            "share": 3333,
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.2",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "joined at an edge",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.2"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.2",
+    "want": {
+      "pane": "1.1.1"
+    }
+  },
+  {
+    "name": "to the split holding its origin",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.1",
+            "node": {
+              "split": {
+                "axis": "column",
+                "children": [
+                  {
+                    "share": 5000,
+                    "node": {
+                      "pane": "1.1.2"
+                    }
+                  },
+                  {
+                    "share": 5000,
+                    "from": "1.1.2",
+                    "node": {
+                      "pane": "1.1.4"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "share": 2500,
+            "from": "1.1.2",
+            "node": {
+              "pane": "1.1.3"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.3",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.1",
+            "node": {
+              "split": {
+                "axis": "column",
+                "children": [
+                  {
+                    "share": 5000,
+                    "node": {
+                      "pane": "1.1.2"
+                    }
+                  },
+                  {
+                    "share": 5000,
+                    "from": "1.1.2",
+                    "node": {
+                      "pane": "1.1.4"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "a collapsed split's slot keeps its From",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.1",
+            "node": {
+              "split": {
+                "axis": "column",
+                "children": [
+                  {
+                    "share": 5000,
+                    "node": {
+                      "pane": "1.1.2"
+                    }
+                  },
+                  {
+                    "share": 5000,
+                    "from": "1.1.2",
+                    "node": {
+                      "pane": "1.1.4"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.4",
+    "want": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.2"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "down to one pane",
+    "tree": {
+      "split": {
+        "axis": "row",
+        "children": [
+          {
+            "share": 5000,
+            "node": {
+              "pane": "1.1.1"
+            }
+          },
+          {
+            "share": 5000,
+            "from": "1.1.1",
+            "node": {
+              "pane": "1.1.2"
+            }
+          }
+        ]
+      }
+    },
+    "close": "1.1.1",
+    "want": {
+      "pane": "1.1.2"
+    }
+  }
+]

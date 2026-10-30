@@ -936,6 +936,9 @@ func TestPaneMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.absorb(a)
+	for _, tab := range w.ws.Tabs {
+		checkFrom(t, tab.Tree, "after a move")
+	}
 	// The workspace's second tab, and its first pane.
 	inTab2 := PaneID{WS: w.ws.ID, Tab: 2, N: 1}
 	if len(w.ws.Tabs) != 2 || moved.Pane != inTab2 || w.ws.Tabs[1].ID != inTab2.TabID() {
@@ -969,6 +972,9 @@ func TestPaneMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.absorb(a)
+	for _, tab := range w.ws.Tabs {
+		checkFrom(t, tab.Tree, "after a move")
+	}
 	third := PaneID{WS: w.ws.ID, Tab: 1, N: 3}
 	if len(w.ws.Tabs) != 1 || moved.Pane != third {
 		t.Fatalf("after moving back: %+v, tabs %+v", moved, w.ws.Tabs)
@@ -993,6 +999,9 @@ func TestPaneMove(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.absorb(a)
+	for _, tab := range w.ws.Tabs {
+		checkFrom(t, tab.Tree, "after a move")
+	}
 	if moved.Pane != first {
 		t.Errorf("moved within its tab, %s became %s", first, moved.Pane)
 	}
@@ -1280,6 +1289,35 @@ func TestLayout(t *testing.T) {
 	var rerr *rpc.Error
 	if !errors.As(err, &rerr) || rerr.Code != rpc.CodeInvalidParams || !strings.Contains(rerr.Message, "match") {
 		t.Errorf("bad layout: %v", err)
+	}
+}
+
+// TestTabLayoutNormalizes stores a sent tree's from only where it names
+// a pane beside the child: one in another row or column is dropped.
+func TestTabLayoutNormalizes(t *testing.T) {
+	h := newHarness(t)
+	w := h.window()
+	first := w.newWorkspace()
+	a, created := w.split(first, Right, 5000, "")
+	w.absorb(a)
+	second := created.Pane
+	a, _ = w.split(second, Down, 5000, "")
+	w.absorb(a)
+	tab := w.ws.Tabs[0]
+
+	tree := tab.Tree.Clone()
+	tree.Children[1].Node.Children[1].From = first
+	if _, err := w.call(rpc.TabLayout, rpc.TabLayoutParams{ID: tab.ID, Tree: tree}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var d rpc.WorkspaceDesc
+	w.c.Call(rpc.WorkspaceInfo, rpc.WorkspaceParams{ID: w.ws.ID}, &d)
+	got := d.Tabs[0].Tree
+	if from := got.Children[1].Node.Children[1].From; !from.IsZero() {
+		t.Errorf("from %s, in another row, kept", from)
+	}
+	if from := got.Children[1].From; from != first {
+		t.Errorf("the column's from %s, want %s", from, first)
 	}
 }
 

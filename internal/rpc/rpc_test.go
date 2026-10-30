@@ -15,14 +15,17 @@ func pane(ws, tab, n uint32) PaneID { return PaneID{WS: ws, Tab: tab, N: n} }
 // with.
 func TestNodeJSON(t *testing.T) {
 	tree := &Node{Axis: Row, Children: []Child{
-		{6000, &Node{Pane: pane(1, 2, 3)}},
-		{4000, &Node{Axis: Column, Children: []Child{{5000, &Node{Pane: pane(1, 2, 4)}}, {5000, &Node{Pane: pane(1, 2, 5)}}}}},
+		{Share: 6000, Node: &Node{Pane: pane(1, 2, 3)}},
+		{Share: 4000, From: pane(1, 2, 3), Node: &Node{Axis: Column, Children: []Child{
+			{Share: 5000, Node: &Node{Pane: pane(1, 2, 4)}},
+			{Share: 5000, From: pane(1, 2, 4), Node: &Node{Pane: pane(1, 2, 5)}},
+		}}},
 	}}
 	b, err := json.Marshal(tree)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"split":{"axis":"row","children":[{"share":6000,"node":{"pane":"1.2.3"}},{"share":4000,"node":{"split":{"axis":"column","children":[{"share":5000,"node":{"pane":"1.2.4"}},{"share":5000,"node":{"pane":"1.2.5"}}]}}}]}}`
+	want := `{"split":{"axis":"row","children":[{"share":6000,"node":{"pane":"1.2.3"}},{"share":4000,"from":"1.2.3","node":{"split":{"axis":"column","children":[{"share":5000,"node":{"pane":"1.2.4"}},{"share":5000,"from":"1.2.4","node":{"pane":"1.2.5"}}]}}}]}}`
 	if string(b) != want {
 		t.Errorf("marshalled\n%s\nwant\n%s", b, want)
 	}
@@ -32,6 +35,9 @@ func TestNodeJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(&back, tree) {
 		t.Errorf("round trip %+v, want %+v", &back, tree)
+	}
+	if c := tree.Clone(); !reflect.DeepEqual(c, tree) {
+		t.Errorf("clone %+v, want %+v", c, tree)
 	}
 	for _, bad := range []string{`{}`, `{"pane":""}`, `{"pane":1}`, `{"pane":"1.2"}`, `{"pane":"1.2.3","split":{"axis":"row","children":[]}}`, `{"split":{"axis":"diagonal","children":[]}}`} {
 		if err := json.Unmarshal([]byte(bad), &back); err == nil {

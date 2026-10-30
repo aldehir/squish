@@ -32,7 +32,7 @@ var MethodDocs = []MethodDoc{
 		"pane is the first pane, which names the tab; without a layout, one pane as PaneSpec says"},
 	{TabClose, "{id}", "{}", ""},
 	{TabRename, "{id, name}", "{}", ""},
-	{TabLayout, "{id, tree: Node}", "{}", "same panes, new shares (a divider drag)"},
+	{TabLayout, "{id, tree: Node}", "{}", "same panes, new shares (a divider drag); a child's from, the pane its space was split from, is kept if it names a pane beside it and dropped if not"},
 	{TabInfo, "{id}", "Tab", ""},
 	{PaneSplit, "{pane, direction: right|down|left|up, share?: 1..9999, kind?, url?, command?, cwd?, env?}", "Created",
 		"share is the new pane's, in basis points (5000 default); the rest is the new pane's PaneSpec. A terminal without a cwd starts in pane's shell's directory, the last it reported (OSC 7 or 9;9; slime shell-integration), if that shell is on this host"},

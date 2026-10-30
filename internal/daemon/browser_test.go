@@ -90,7 +90,7 @@ func TestBrowserSplit(t *testing.T) {
 	if len(ps.Draws) != 0 || len(ps.Notices) != 0 {
 		t.Errorf("a browser pane sent %d frames and %d notices", len(ps.Draws), len(ps.Notices))
 	}
-	if got := show(w.ws.Tabs[0].Tree); got != "r(5000:1 5000:2)" {
+	if got := show(w.ws.Tabs[0].Tree); got != "r(5000:1 5000@1:2)" {
 		t.Errorf("tree %s", got)
 	}
 	if n := h.spawnedCount(); n != 1 {
