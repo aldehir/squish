@@ -54,7 +54,7 @@ pub fn under(frame: Rect, strip: f32) Rect {
 /// A junction of dividers: one passing through it and one ending at
 /// it, or two where dividers on both sides of the first line up.
 pub const Corner = struct {
-    /// Twice the gap square, centered on the junction.
+    /// Twice the grip square, centered on the junction.
     rect: Rect,
     /// Indices into `dividers`.
     through: u16,
@@ -77,8 +77,9 @@ pub fn clear(self: *Placement) void {
 /// Find the corners among the dividers: each end of a divider that
 /// meets one across it. A divider spans its split, so the one it ends
 /// at is an ancestor split's, and the ends from both sides of it only
-/// line up by chance.
-pub fn findCorners(self: *Placement, alloc: Allocator, gap: f32) !void {
+/// line up by chance. Each is `grip` either way of the junction: the
+/// dividers' grip, so it's there to take hold of with no gap.
+pub fn findCorners(self: *Placement, alloc: Allocator, grip: f32) !void {
     const ds = self.dividers.items;
     for (ds, 0..) |d, i| {
         const vertical = d.axis() == .row;
@@ -97,7 +98,7 @@ pub fn findCorners(self: *Placement, alloc: Allocator, gap: f32) !void {
             if (!touches) continue;
             const cx = if (vertical) d.rect.x + d.rect.w / 2 else e.rect.x + e.rect.w / 2;
             const cy = if (vertical) e.rect.y + e.rect.h / 2 else d.rect.y + d.rect.h / 2;
-            const rect: Rect = .{ .x = cx - gap, .y = cy - gap, .w = 2 * gap, .h = 2 * gap };
+            const rect: Rect = .{ .x = cx - grip, .y = cy - grip, .w = 2 * grip, .h = 2 * grip };
             // The end from the other side of e, if it got here first.
             for (self.corners.items) |*c| {
                 if (c.through == j and near(c.rect.x, rect.x) and near(c.rect.y, rect.y)) {

@@ -732,9 +732,11 @@ pub const Nav = enum { back, forward, reload, stop };
 pub const Geometry = struct {
     /// The terminal area, in pixels.
     terminal: struct { width: u32 = 0, height: u32 = 0 } = .{},
-    /// The part of it a tab's panes tile, and the gap between them.
+    /// The part of it a tab's panes tile, the gap between them, and how
+    /// wide the mouse takes hold of a divider (`Ui.paneGrip`).
     pane_area: Rect = .{},
     gap: f32 = 0,
+    grip: f32 = 0,
     /// A pane's title strip, above its terminal, and a browser pane's
     /// address row under that.
     title_height: f32 = 0,
@@ -4824,7 +4826,7 @@ fn fitTab(self: *App, t: *Tab) void {
 /// never moves the text that stays.
 fn placeTab(self: *App, t: *Tab, into: *Placement) void {
     const g = &self.geometry;
-    t.place(self.alloc, into, g.pane_area, g.gap) catch |err| {
+    t.place(self.alloc, into, g.pane_area, g.gap, g.grip) catch |err| {
         log.err("laying out panes failed: {}", .{err});
         into.clear();
     };
@@ -5146,6 +5148,7 @@ pub const TestApp = struct {
             .terminal = .{ .width = @intFromFloat(self.frame.terminal.w), .height = @intFromFloat(self.frame.terminal.h) },
             .pane_area = self.ui.paneArea(&self.frame),
             .gap = self.ui.paneGap(),
+            .grip = self.ui.paneGrip(),
             .title_height = self.ui.paneTitleHeight(),
             .cell = TestShell.cellFor(undefined, self.app.shell.fontSize()),
         });

@@ -22,8 +22,8 @@ const Tree = Ui.Tree;
 const BrowserPane = @import("../Tree.zig").BrowserPane;
 
 // Sizes in DIPs.
-/// Between panes, and around them (`Ui.paneArea`), with room for their
-/// shadows.
+/// Between panes, and around them (`Ui.paneArea`): the default
+/// `pane.gap`.
 pub const gap = 10;
 /// The title strip's height.
 pub const title_height = 30;
@@ -66,8 +66,9 @@ const search_count = 60;
 /// The badge after the title (`Tree.Pane.badge`).
 const badge_width = 42;
 const badge_height = 18;
-/// A drop highlight's corners.
-const drop_radius = 8;
+/// How much rounder a pane's corners are than a drop highlight's, which
+/// sits inside it.
+const drop_rounding = 2;
 
 /// How much of a pane's background covers it while another has focus,
 /// as Ghostty's `unfocused-split-opacity` of 0.7 leaves.
@@ -406,7 +407,7 @@ pub fn paintDrag(ui: *const Ui, p: *Painter, tree: *const Tree, thumb: ?Painter.
     }
     if (d.drop) |drop| {
         const a = ui.theme.accent;
-        const radius = ui.px(drop_radius);
+        const radius = @max(0, f.corner - ui.px(drop_rounding));
         p.fillRounded(drop, radius, .{ a[0], a[1], a[2], 0.16 });
         p.strokeRounded(drop, radius, ui.px(2), a);
     }

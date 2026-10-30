@@ -78,11 +78,19 @@ pub const sidebar_edge_grip = 4;
 /// The notice's line height, and the space over and under its lines.
 pub const notice_line_height = 18;
 pub const notice_pad = 7;
+/// The narrowest a divider's grab area gets, however small the gap:
+/// what's left to drag at `pane.gap = 0`.
+pub const min_grip = 6;
+pub const default_pane_radius = 10;
 
 /// Pixels per DIP: the monitor's scale times `zoom`.
 scale: f32,
 /// The configured `chrome-scale`, over the monitor's.
 zoom: f32 = 1,
+/// The configured `pane.gap` and `pane.radius`, in DIPs; `frame` and
+/// `paneGap` scale them.
+pane_gap: f32 = widgets.PaneStrip.gap,
+pane_radius: f32 = default_pane_radius,
 fonts: Fonts,
 theme: Theme,
 /// The tabs are listed in a sidebar; hidden, the terminal area takes
@@ -171,7 +179,7 @@ pub fn frame(self: *const Ui, width: f32, height: f32) Frame {
         .notice = .{ .y = bar_h, .w = width, .h = notice_h },
         .sidebar = .{ .y = top, .w = side_w, .h = h },
         .terminal = .{ .x = side_w, .y = top, .w = width - side_w, .h = h },
-        .corner = self.px(10),
+        .corner = self.px(self.pane_radius),
         .inset = self.px(10),
     };
 }
@@ -186,7 +194,12 @@ pub fn paneArea(self: *const Ui, f: *const Frame) Rect {
 
 /// Between panes, and around them in the terminal area.
 pub fn paneGap(self: *const Ui) f32 {
-    return self.px(widgets.PaneStrip.gap);
+    return self.px(self.pane_gap);
+}
+
+/// A divider's grab width: the gap, or `min_grip` where that's narrower.
+pub fn paneGrip(self: *const Ui) f32 {
+    return @max(self.paneGap(), self.px(min_grip));
 }
 
 /// The height of a pane's title strip, above its terminal.
@@ -753,6 +766,27 @@ test "the frame, with and without the sidebar" {
     f = ui.frame(1000, 600);
     try std.testing.expectEqual(@as(f32, 0), f.notice.h);
     try std.testing.expectEqual(f.titlebar.h, f.terminal.y);
+}
+
+test "the configured pane gap and radius, scaled" {
+    for ([_]f32{ 1, 1.5 }) |scale| {
+        var ui: Ui = .{ .scale = scale, .fonts = .none, .theme = undefined, .pane_gap = 4, .pane_radius = 7 };
+        const f = ui.frame(1000, 600);
+        try std.testing.expectEqual(ui.px(7), f.corner);
+        const a = ui.paneArea(&f);
+        const m = ui.px(4);
+        try std.testing.expectEqual(f.terminal.x + m, a.x);
+        try std.testing.expectEqual(f.terminal.y, a.y);
+        try std.testing.expectEqual(f.terminal.right() - m, a.right());
+        try std.testing.expectEqual(f.terminal.bottom() - m, a.bottom());
+        // A gap narrower than the grip leaves the grip to drag.
+        try std.testing.expectEqual(ui.px(min_grip), ui.paneGrip());
+        ui.pane_gap = 0;
+        try std.testing.expectEqual(@as(f32, 0), ui.paneGap());
+        try std.testing.expectEqual(ui.px(min_grip), ui.paneGrip());
+        ui.pane_gap = 10;
+        try std.testing.expectEqual(ui.paneGap(), ui.paneGrip());
+    }
 }
 
 test "layout and hit testing a small tree" {

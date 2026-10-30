@@ -528,7 +528,7 @@ const Builder = struct {
                 } }, .rect = p.frame });
             }
             for (app.placed().dividers.items, 0..) |d, i| {
-                try items.append(self.arena, .{ .id = .{ .target = .{ .divider = @intCast(i) } }, .kind = .hit_area, .rect = d.rect });
+                try items.append(self.arena, .{ .id = .{ .target = .{ .divider = @intCast(i) } }, .kind = .hit_area, .rect = d.grip });
             }
             // Over the dividers' ends, so they win there.
             for (app.placed().corners.items, 0..) |c, i| {

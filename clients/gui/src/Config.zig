@@ -15,6 +15,7 @@
 //!              selection_foreground = "cell-foreground", palette = { "#000", "#800" } },
 //!   window = { padding = { x = 3, y = { 3, 6 } } },  -- points; a pair is left/top, right/bottom
 //!   chrome = { scale = 1 },
+//!   pane = { gap = 10, radius = 10 },      -- DIPs, like the chrome
 //!   selection = { word_chars = " \t'\"" },
 //!   clipboard = { read = "ask", write = "allow" },
 //!   ssh = { terminfo = true },
@@ -51,6 +52,11 @@ const log = std.log.scoped(.config);
 /// How much larger than the monitor's scale to draw the chrome: the
 /// title bar, session list, and dialogs. From 0.5 to 3.
 @"chrome-scale": f32 = 1,
+/// Between panes, and around them in the terminal area, in DIPs (the
+/// chrome's units, so `chrome-scale` grows it too). From 0 to 64.
+@"pane-gap": f32 = 10,
+/// The radius of each pane's corners, in DIPs. From 0 (square) to 32.
+@"pane-radius": f32 = 10,
 
 /// Ghostty's default colors. Programs can override these with OSC 10/11.
 background: RGB = .{ .r = 0x28, .g = 0x2c, .b = 0x34 },
@@ -326,7 +332,7 @@ pub fn load(gpa: Allocator, io: std.Io, settings: std.json.Value, opts: LoadOpti
         const key = kv.key_ptr.*;
         const value = kv.value_ptr.*;
         if (std.mem.eql(u8, key, "theme") or std.mem.eql(u8, key, "shell") or std.mem.eql(u8, key, "host")) continue; // handled above; the daemon's
-        const Section = enum { font, colors, window, chrome, selection, clipboard, ssh, browser };
+        const Section = enum { font, colors, window, chrome, pane, selection, clipboard, ssh, browser };
         const section = std.meta.stringToEnum(Section, key) orelse {
             try self.warn("unknown setting \"{s}\"", .{key});
             continue;
@@ -420,6 +426,15 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
             const scale = try floatOf(value);
             if (scale < 0.5 or scale > 3) return error.InvalidValue;
             self.@"chrome-scale" = scale;
+        } else return error.UnknownKey,
+        .pane => if (eql(u8, name, "gap")) {
+            const gap = try floatOf(value);
+            if (gap < 0 or gap > 64) return error.InvalidValue;
+            self.@"pane-gap" = gap;
+        } else if (eql(u8, name, "radius")) {
+            const radius = try floatOf(value);
+            if (radius < 0 or radius > 32) return error.InvalidValue;
+            self.@"pane-radius" = radius;
         } else return error.UnknownKey,
         .selection => if (eql(u8, name, "word_chars")) {
             try self.@"selection-word-chars".parse(alloc, try stringOf(value));
@@ -648,6 +663,32 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     defer none.deinit();
     try std.testing.expectEqual(12, none.@"font-size");
     try std.testing.expectEqual(600, none.@"browser-idle");
+
+    var pane = try testConfig(
+        \\{"pane": {"gap": 0, "radius": 4.5}}
+    );
+    defer pane.deinit();
+    try std.testing.expectEqual(0, pane.@"pane-gap");
+    try std.testing.expectEqual(4.5, pane.@"pane-radius");
+    try std.testing.expectEqual(0, pane.errors.items.len);
+
+    var bad = try testConfig(
+        \\{"pane": {"gap": -1,"radius": 40, "border": 1}}
+    );
+    defer bad.deinit();
+    try std.testing.expectEqual(10, bad.@"pane-gap");
+    try std.testing.expectEqual(10, bad.@"pane-radius");
+    try std.testing.expectEqual(3, bad.errors.items.len);
+    try std.testing.expectEqualStrings("pane.gap: invalid value: InvalidValue", bad.errors.items[0]);
+    try std.testing.expectEqualStrings("pane.radius: invalid value: InvalidValue", bad.errors.items[1]);
+    try std.testing.expectEqualStrings("unknown setting pane.border", bad.errors.items[2]);
+
+    var text = try testConfig(
+        \\{"pane": {"gap": "x"}}
+    );
+    defer text.deinit();
+    try std.testing.expectEqual(10, text.@"pane-gap");
+    try std.testing.expectEqualStrings("pane.gap: invalid value: InvalidValue", text.errors.items[0]);
 }
 
 test "theme under user colors" {

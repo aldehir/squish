@@ -464,19 +464,22 @@ fn insertEdge(alloc: Allocator, root: *Node, s: *Session, side: Daemon.Direction
 }
 
 /// Give each pane its part of `area` as its frame in `p`, replacing what
-/// `p` held, with `gap` pixel dividers between them; a zoomed pane gets
-/// all of it. The rest of each pane's placement is the caller's to fill.
-pub fn place(self: *Tab, alloc: Allocator, p: *Placement, area: Rect, gap: f32) !void {
+/// `p` held, with `gap` pixel dividers between them, which the mouse
+/// takes hold of `grip` pixels wide where the gap is narrower; a zoomed
+/// pane gets all of it. The rest of each pane's placement is the
+/// caller's to fill.
+pub fn place(self: *Tab, alloc: Allocator, p: *Placement, area: Rect, gap: f32, grip: f32) !void {
     p.clear();
     if (self.zoom) |z| {
         try p.panes.append(alloc, .{ .session = z, .frame = area });
         return;
     }
-    try placeNode(alloc, p, &self.root, area, gap);
-    try p.findCorners(alloc, gap);
+    const g = @max(gap, grip);
+    try placeNode(alloc, p, &self.root, area, gap, g);
+    try p.findCorners(alloc, g);
 }
 
-fn placeNode(alloc: Allocator, p: *Placement, node: *Node, r: Rect, gap: f32) !void {
+fn placeNode(alloc: Allocator, p: *Placement, node: *Node, r: Rect, gap: f32, grip: f32) !void {
     const sp = switch (node.*) {
         .pane => |s| return p.panes.append(alloc, .{ .session = s, .frame = r }),
         .split => |*sp| sp,
@@ -500,12 +503,18 @@ fn placeNode(alloc: Allocator, p: *Placement, node: *Node, r: Rect, gap: f32) !v
             .{ .x = start, .y = r.y, .w = @max(0, end - start), .h = r.h }
         else
             .{ .x = r.x, .y = start, .w = r.w, .h = @max(0, end - start) };
-        try placeNode(alloc, p, &c.node, child, gap);
+        try placeNode(alloc, p, &c.node, child, gap, grip);
+        // The grip, widened about the gap's middle.
+        const grab = end + @round((gap - grip) / 2);
         if (!last) try p.dividers.append(alloc, .{
             .rect = if (row)
                 .{ .x = end, .y = r.y, .w = gap, .h = r.h }
             else
                 .{ .x = r.x, .y = end, .w = r.w, .h = gap },
+            .grip = if (row)
+                .{ .x = grab, .y = r.y, .w = grip, .h = r.h }
+            else
+                .{ .x = r.x, .y = grab, .w = r.w, .h = grip },
             .split = sp,
             .index = i,
             .span = span,
@@ -609,7 +618,11 @@ fn width(node: Node, axis: Axis) u32 {
 /// A gap between two of a split's children, which dragging moves.
 /// Points into the tree, so it's good until the tree next changes.
 pub const Divider = struct {
+    /// The gap between the children: what's drawn as ground.
     rect: Rect,
+    /// Where the mouse takes hold of it: `rect`, widened about its
+    /// middle to the grip where the gap is narrower.
+    grip: Rect,
     split: *Split,
     /// Between children `index` and `index + 1`.
     index: usize,
@@ -715,7 +728,7 @@ test "placing and removing panes" {
 
     var p: Placement = .{};
     defer p.deinit(alloc);
-    try tab.place(alloc, &p, .{ .x = 10, .y = 20, .w = 401, .h = 201 }, 1);
+    try tab.place(alloc, &p, .{ .x = 10, .y = 20, .w = 401, .h = 201 }, 1, 1);
     try std.testing.expectEqual(Rect{ .x = 10, .y = 20, .w = 300, .h = 201 }, p.find(&a).?.frame);
     try std.testing.expectEqual(Rect{ .x = 311, .y = 20, .w = 100, .h = 100 }, p.find(&b).?.frame);
     try std.testing.expectEqual(Rect{ .x = 311, .y = 121, .w = 100, .h = 100 }, p.find(&c).?.frame);
@@ -741,13 +754,13 @@ test "placing and removing panes" {
     try std.testing.expectEqual(&b, tab.remove(alloc, &c).?);
     try std.testing.expectEqual(&b, tab.focus);
     try std.testing.expect(!tab.contains(&c));
-    try tab.place(alloc, &p, .{ .w = 401, .h = 100 }, 1);
+    try tab.place(alloc, &p, .{ .w = 401, .h = 100 }, 1, 1);
     try std.testing.expectEqual(Rect{ .x = 301, .w = 100, .h = 100 }, p.find(&b).?.frame);
     try std.testing.expect(p.find(&c) == null);
 
     // Zoomed, a is all that's placed.
     tab.zoom = &a;
-    try tab.place(alloc, &p, .{ .w = 401, .h = 100 }, 1);
+    try tab.place(alloc, &p, .{ .w = 401, .h = 100 }, 1, 1);
     try std.testing.expectEqual(Rect{ .w = 401, .h = 100 }, p.find(&a).?.frame);
     try std.testing.expectEqual(@as(usize, 1), p.panes.items.len);
     try std.testing.expectEqual(@as(usize, 0), p.dividers.items.len);
@@ -777,7 +790,7 @@ test "navigating, resizing, and equalizing panes" {
     defer tab.destroy(alloc);
     var p: Placement = .{};
     defer p.deinit(alloc);
-    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1);
+    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1, 1);
 
     // From a, right is b: b and c touch it and are as far off its middle,
     // and b comes first. From c, up is b, and left is a.
@@ -836,7 +849,7 @@ test "corners are where a divider ends at one across it" {
     defer tab.destroy(alloc);
     var p: Placement = .{};
     defer p.deinit(alloc);
-    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1);
+    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1, 1);
 
     try std.testing.expectEqual(@as(usize, 3), p.dividers.items.len);
     try std.testing.expectEqual(@as(usize, 2), p.corners.items.len);
@@ -880,7 +893,7 @@ test "a cross is one corner with an end from each side" {
     defer tab.destroy(alloc);
     var p: Placement = .{};
     defer p.deinit(alloc);
-    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1);
+    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1, 1);
 
     try std.testing.expectEqual(@as(usize, 1), p.corners.items.len);
     const cross = p.corners.items[0];
@@ -889,8 +902,81 @@ test "a cross is one corner with an end from each side" {
 
     // Zoomed, there are no dividers and so no corners.
     tab.zoom = &a;
-    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1);
+    try tab.place(alloc, &p, .{ .w = 401, .h = 201 }, 1, 1);
     try std.testing.expectEqual(@as(usize, 0), p.corners.items.len);
+}
+
+test "with no gap, panes abut and the dividers keep a grip" {
+    const alloc = std.testing.allocator;
+    var a: Session = undefined;
+    var b: Session = undefined;
+    const row = try alloc.alloc(Child, 2);
+    row[0] = .{ .share = 5000, .node = .{ .pane = &a } };
+    row[1] = .{ .share = 5000, .node = .{ .pane = &b } };
+    const tab = try create(alloc, 1, null, 0, .none, .{ .split = .{ .axis = .row, .children = row } }, &a);
+    defer tab.destroy(alloc);
+    var p: Placement = .{};
+    defer p.deinit(alloc);
+
+    try tab.place(alloc, &p, .{ .w = 400, .h = 200 }, 0, 6);
+    try std.testing.expectEqual(p.find(&a).?.frame.right(), p.find(&b).?.frame.x);
+    const d = p.dividers.items[0];
+    try std.testing.expectEqual(Rect{ .x = 200, .w = 0, .h = 200 }, d.rect);
+    try std.testing.expectEqual(Rect{ .x = 197, .w = 6, .h = 200 }, d.grip);
+
+    // A gap at least as wide is its own grip.
+    try tab.place(alloc, &p, .{ .w = 410, .h = 200 }, 10, 10);
+    try std.testing.expectEqual(p.dividers.items[0].rect, p.dividers.items[0].grip);
+}
+
+test "with no gap, corners are where they'd be with one, a grip square" {
+    const alloc = std.testing.allocator;
+    var sessions: [4]Session = undefined;
+    const a = &sessions[0];
+    const b = &sessions[1];
+    const c = &sessions[2];
+    const d = &sessions[3];
+    // A T, a | (b over (c | d)), then a cross, (a over b) | (c over d).
+    const pair = try alloc.alloc(Child, 2);
+    pair[0] = .{ .share = 5000, .node = .{ .pane = c } };
+    pair[1] = .{ .share = 5000, .node = .{ .pane = d } };
+    const column = try alloc.alloc(Child, 2);
+    column[0] = .{ .share = 5000, .node = .{ .pane = b } };
+    column[1] = .{ .share = 5000, .node = .{ .split = .{ .axis = .row, .children = pair } } };
+    const row = try alloc.alloc(Child, 2);
+    row[0] = .{ .share = 5000, .node = .{ .pane = a } };
+    row[1] = .{ .share = 5000, .node = .{ .split = .{ .axis = .column, .children = column } } };
+    const t = try create(alloc, 1, null, 0, .none, .{ .split = .{ .axis = .row, .children = row } }, a);
+    defer t.destroy(alloc);
+
+    const left = try alloc.alloc(Child, 2);
+    left[0] = .{ .share = 5000, .node = .{ .pane = a } };
+    left[1] = .{ .share = 5000, .node = .{ .pane = b } };
+    const right = try alloc.alloc(Child, 2);
+    right[0] = .{ .share = 5000, .node = .{ .pane = c } };
+    right[1] = .{ .share = 5000, .node = .{ .pane = d } };
+    const cross_row = try alloc.alloc(Child, 2);
+    cross_row[0] = .{ .share = 5000, .node = .{ .split = .{ .axis = .column, .children = left } } };
+    cross_row[1] = .{ .share = 5000, .node = .{ .split = .{ .axis = .column, .children = right } } };
+    const plus = try create(alloc, 2, null, 0, .none, .{ .split = .{ .axis = .row, .children = cross_row } }, a);
+    defer plus.destroy(alloc);
+
+    for ([_]*Tab{ t, plus }) |tab| {
+        var gapped: Placement = .{};
+        defer gapped.deinit(alloc);
+        try tab.place(alloc, &gapped, .{ .w = 420, .h = 210 }, 10, 10);
+        var flush: Placement = .{};
+        defer flush.deinit(alloc);
+        try tab.place(alloc, &flush, .{ .w = 400, .h = 200 }, 0, 6);
+
+        try std.testing.expectEqual(gapped.corners.items.len, flush.corners.items.len);
+        for (gapped.corners.items, flush.corners.items) |g, f| {
+            try std.testing.expectEqual(g.through, f.through);
+            try std.testing.expectEqual(g.ends, f.ends);
+            try std.testing.expectEqual(@as(f32, 12), f.rect.w);
+            try std.testing.expectEqual(@as(f32, 12), f.rect.h);
+        }
+    }
 }
 
 test "moving panes" {

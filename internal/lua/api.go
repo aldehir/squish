@@ -148,7 +148,8 @@ which are for the top level only:
                              only the hosts that connect after it);
                              each window takes what it understands and ignores
                              the rest (slime-gui: font, theme, colors, window,
-                             chrome, selection, clipboard, ssh, browser).
+                             chrome, pane, selection, clipboard, ssh,
+                             browser).
                              Values must be JSON: no functions.
   slime.bind(key, action[, args])
                              key (a chord: "ctrl+shift+d"; modifiers ctrl,
@@ -268,6 +269,7 @@ one without applying it.
     colors = { background = "#282c34", cursor = "#ffcc00" },
     window = { padding = { x = 3, y = 3 } },
     chrome = { scale = 1 },
+    pane = { gap = 10, radius = 10 }, -- DIPs between panes and of their corners; 0 tiles them square
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     shell = { command = "pwsh -NoLogo" },
     host = { proxy = true },         -- a SOCKS proxy per connected host (slime host ls)

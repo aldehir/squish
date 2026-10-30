@@ -192,6 +192,8 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
     errdefer self.grids.deinit();
     self.ui = try .init(self.dpi, config.@"chrome-scale", theme);
     errdefer self.ui.deinit();
+    self.ui.pane_gap = config.@"pane-gap";
+    self.ui.pane_radius = config.@"pane-radius";
 
     const size = self.clientSize();
     self.updateLayout(size);
@@ -305,9 +307,9 @@ fn reloadConfig(self: *Window, settings: []const u8) void {
     self.applyConfig(config);
 }
 
-/// Make `new` the config: the chrome's theme and scale, the font (a new
-/// grid, when it changed), the renderer's text, every session's colors,
-/// and the layout.
+/// Make `new` the config: the chrome's theme and scale, the panes' gap
+/// and corners, the font (a new grid, when it changed), the renderer's
+/// text, every session's colors, and the layout.
 fn applyConfig(self: *Window, new: Config) void {
     var old = self.config.*;
     defer old.deinit();
@@ -325,6 +327,8 @@ fn applyConfig(self: *Window, new: Config) void {
         const dark: win32.BOOL = if (theme.light) win32.FALSE else win32.TRUE;
         _ = win32.DwmSetWindowAttribute(hwnd, win32.DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, @sizeOf(win32.BOOL));
     }
+    self.ui.pane_gap = config.@"pane-gap";
+    self.ui.pane_radius = config.@"pane-radius";
     if (zoom_changed) self.ui.setZoom(self.dpi, config.@"chrome-scale") catch |err| log.err("chrome scale change failed: {}", .{err});
     if (fonts_changed) {
         if (font.Grid.init(self.alloc, self.io, config.@"font-family".items, config.@"font-size", self.dpi, config.@"font-antialias")) |grid| {
@@ -435,6 +439,7 @@ fn geometry(self: *const Window) App.Geometry {
         .terminal = .{ .width = size.width, .height = size.height },
         .pane_area = self.ui.paneArea(&self.frame),
         .gap = self.ui.paneGap(),
+        .grip = self.ui.paneGrip(),
         .title_height = self.ui.paneTitleHeight(),
         .bar_height = self.ui.paneBarHeight(),
         .inset = @intFromFloat(self.frame.inset),
