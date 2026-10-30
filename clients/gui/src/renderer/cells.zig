@@ -139,7 +139,7 @@ pub const Cells = struct {
         grid.beginFrame();
         self.frame += 1;
 
-        const key = cacheKey(self.cols, colors, m, grid.atlas.resets, config);
+        const key = cacheKey(self.cols, colors, m, grid.id, grid.atlas.resets, config);
         if (key != self.cache_key) {
             self.clearCache(alloc);
             self.cache_key = key;
@@ -468,11 +468,13 @@ const Row = struct {
 };
 
 /// A hash of the state shared by every row: the grid width, colors,
-/// cell metrics, and the atlas regions glyphs were placed in.
+/// cell metrics, and the atlas regions glyphs were placed in (which
+/// grid's atlas, since its last reset).
 fn cacheKey(
     cols: u32,
     colors: *const RenderState.Colors,
     m: font.Grid.Metrics,
+    grid_id: u32,
     atlas_resets: u32,
     config: ColorOptions,
 ) u64 {
@@ -484,6 +486,7 @@ fn cacheKey(
     for (&palette, colors.palette) |*p, c| p.* = pack(c, 0);
     h.update(std.mem.asBytes(&palette));
     std.hash.autoHash(&h, m);
+    std.hash.autoHash(&h, grid_id);
     std.hash.autoHash(&h, atlas_resets);
     std.hash.autoHash(&h, config);
     return h.final();

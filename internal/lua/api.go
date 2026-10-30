@@ -112,7 +112,10 @@ EVENTS, WAITING, TIMERS, PROCESSES
                              perform a window action with args, as if its key
                              were pressed there: copy_to_clipboard,
                              paste_from_clipboard, increase_font_size
-                             {amount}, decrease_font_size, reset_font_size.
+                             {amount}, decrease_font_size, reset_font_size,
+                             and the focused pane's increase_pane_font_size
+                             {amount}, decrease_pane_font_size,
+                             reset_pane_font_size (each window's own pane).
                              Every window showing the workspace does, so one
                              that changes the workspace (new_split, new_tab,
                              toggle_split_zoom, ...) is refused: slime.pane.split
@@ -149,9 +152,12 @@ which are for the top level only:
                              Values must be JSON: no functions.
   slime.bind(key, action[, args])
                              key (a chord: "ctrl+shift+d"; modifiers ctrl,
-                             shift, alt, super/win, then a key name; or keys
-                             pressed one after another, joined by >:
-                             "ctrl+b>c") runs a window action by name with
+                             shift, alt, super/win, then a key name, or a
+                             notch of the wheel: wheel_up, wheel_down,
+                             wheel_left, wheel_right, which bind alone, never
+                             in a sequence; or keys pressed one after
+                             another, joined by >: "ctrl+b>c") runs a window
+                             action by name with
                              args (slime-gui's: new_tab, new_split {direction},
                              close_surface, next_tab, previous_tab, goto_split
                              {direction}, resize_split {direction, amount},
@@ -161,8 +167,16 @@ which are for the top level only:
                              end_search, copy_mode, copy_to_clipboard,
                              paste_from_clipboard,
                              increase_font_size {amount}, decrease_font_size
-                             {amount}, reset_font_size), or else an action of
-                             this file by name. A later bind of the key
+                             {amount}, reset_font_size, the window's size and
+                             ctrl+wheel's; increase_pane_font_size {amount},
+                             decrease_pane_font_size {amount},
+                             reset_pane_font_size, points on the window's for
+                             the focused pane, or for a wheel binding the one
+                             under the pointer, ctrl+shift+wheel's), or else
+                             an action of this file by name. A wheel binding
+                             takes the wheel from the program under it:
+                             unbind "ctrl+wheel_up" and the rest for a program
+                             that zooms on ctrl+wheel. A later bind of the key
                              replaces the earlier, and the window's default for
                              it. A key runs an action or starts a sequence,
                              never both: the later binding hides the earlier

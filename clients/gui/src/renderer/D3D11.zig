@@ -82,9 +82,9 @@ uniforms: *d3d11.IBuffer,
 bg_cells: DynamicBuffer = .{ .stride = @sizeOf(u32) },
 instances: DynamicBuffer = .{ .stride = @sizeOf(cells.Instance) },
 
-atlas: AtlasTexture = .{},
-color_atlas: AtlasTexture = .{},
-lcd_atlas: AtlasTexture = .{},
+/// The GPU copies of each grid's atlases, by `Fonts.id`, while a frame
+/// draws a pane at it.
+gpu_fonts: std.AutoArrayHashMapUnmanaged(u32, GpuFonts) = .empty,
 
 /// The placement being drawn (see `drawImages`).
 image_placement: *d3d11.IBuffer,
@@ -149,12 +149,43 @@ const ImageTexture = struct {
     }
 };
 
-/// What to draw: terminals sharing a font grid.
-pub const Frame = struct {
+/// One grid's atlases and metrics, which the panes drawn at its size
+/// share.
+pub const Fonts = struct {
+    /// The grid's (`font.Grid.id`).
+    id: u32,
     atlas: *const font.Atlas,
     color_atlas: *const font.Atlas,
     lcd_atlas: *const font.Atlas,
     metrics: font.Grid.Metrics,
+
+    pub fn of(grid: *const font.Grid) Fonts {
+        return .{
+            .id = grid.id,
+            .atlas = &grid.atlas,
+            .color_atlas = &grid.color_atlas,
+            .lcd_atlas = &grid.lcd_atlas,
+            .metrics = grid.metrics,
+        };
+    }
+};
+
+const GpuFonts = struct {
+    atlas: AtlasTexture = .{},
+    color_atlas: AtlasTexture = .{},
+    lcd_atlas: AtlasTexture = .{},
+    /// A pane of this frame is drawn at it.
+    seen: bool = false,
+
+    fn deinit(self: *GpuFonts) void {
+        self.lcd_atlas.deinit();
+        self.color_atlas.deinit();
+        self.atlas.deinit();
+    }
+};
+
+/// What to draw: terminals, each at its font grid's size.
+pub const Frame = struct {
     panes: []const Pane,
     /// Behind the panes, where none is.
     background: [4]f32,
@@ -182,6 +213,7 @@ pub const BoxStyle = struct {
 
 /// What to draw of a terminal, and where.
 pub const Pane = struct {
+    fonts: *const Fonts,
     cells: *const cells.Cells,
     images: *image.Images,
     textures: *ImageTextures,
@@ -332,9 +364,8 @@ pub fn deinit(self: *D3D11) void {
     (D2d{ .factory = self.d2d_factory, .device = self.d2d_device, .context = self.d2d_context, .brush = self.brush }).deinit();
     com.release(self.image_placement);
     com.release(self.box);
-    self.lcd_atlas.deinit();
-    self.color_atlas.deinit();
-    self.atlas.deinit();
+    self.dropAtlases();
+    self.gpu_fonts.deinit(self.alloc);
     self.instances.deinit();
     self.bg_cells.deinit();
     com.release(self.uniforms);
@@ -463,9 +494,20 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
     const ctx = self.context;
     self.waitForFrame();
 
-    try self.atlas.upload(self.device, ctx, f.atlas);
-    try self.color_atlas.upload(self.device, ctx, f.color_atlas);
-    try self.lcd_atlas.upload(self.device, ctx, f.lcd_atlas);
+    // Each grid's atlases once, however many panes are at its size; a
+    // grid no pane is drawn at any more loses its copies after.
+    for (self.gpu_fonts.values()) |*g| g.seen = false;
+    for (f.panes) |pane| {
+        const gop = self.gpu_fonts.getOrPut(self.alloc, pane.fonts.id) catch return error.HResult;
+        if (!gop.found_existing) gop.value_ptr.* = .{};
+        const g = gop.value_ptr;
+        if (g.seen) continue;
+        g.seen = true;
+        try g.atlas.upload(self.device, ctx, pane.fonts.atlas);
+        try g.color_atlas.upload(self.device, ctx, pane.fonts.color_atlas);
+        try g.lcd_atlas.upload(self.device, ctx, pane.fonts.lcd_atlas);
+    }
+    defer self.dropUnseenFonts();
 
     // Direct2D shares the context and leaves its own state bound.
     ctx.clearState();
@@ -499,7 +541,7 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
             .border_width = f.box.border_width,
             .bounds = rectArray(pane.frame),
             .box = rectArray(pane.frame),
-            .fill = pane.cells.uniforms(f.metrics, .{ 0, 0, 1, 1 }, .{ 0, 0 }).default_bg,
+            .fill = pane.cells.uniforms(pane.fonts.metrics, .{ 0, 0, 1, 1 }, .{ 0, 0 }).default_bg,
             .border = premultiply(f.box.border),
             .shadow = .{ 0, 0, 0, 0 },
             .shadow_sigma = 0,
@@ -509,7 +551,7 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
         try self.instances.upload(self.device, ctx, std.mem.sliceAsBytes(pane.cells.instances.items));
         try self.uploadImages(alloc, pane.images, pane.textures);
 
-        const uniforms = pane.cells.uniforms(f.metrics, .{ v.x, v.y, v.w, v.h }, pane.grid_offset);
+        const uniforms = pane.cells.uniforms(pane.fonts.metrics, .{ v.x, v.y, v.w, v.h }, pane.grid_offset);
         var mapped: d3d11.MAPPED_SUBRESOURCE = undefined;
         try com.check(ctx.map(self.uniforms.resource(), d3d11.MAP_WRITE_DISCARD, &mapped), "Map(uniforms)");
         @as(*cells.Uniforms, @ptrCast(@alignCast(mapped.pData.?))).* = uniforms;
@@ -648,7 +690,8 @@ fn drawGrid(self: *D3D11, f: Pane) Error!void {
         ctx.vsSetConstantBuffers(0, &.{self.uniforms});
         ctx.vsSetShaderResources(1, &.{self.instances.srv});
         ctx.psSetShader(self.pipeline.text_ps);
-        ctx.psSetShaderResources(2, &.{ self.atlas.srv, self.color_atlas.srv, self.lcd_atlas.srv });
+        const g = self.gpu_fonts.getPtr(f.fonts.id).?;
+        ctx.psSetShaderResources(2, &.{ g.atlas.srv, g.color_atlas.srv, g.lcd_atlas.srv });
         ctx.omSetBlendState(self.pipeline.text_blend);
         ctx.drawInstanced(4, @intCast(frame.instances.items.len), 0, 0);
     }
@@ -1176,12 +1219,24 @@ fn textAntialiasMode(antialias: font.Antialias) u32 {
     };
 }
 
-/// The font grid was made anew (a config reload): its atlases are
+/// The font grids were made anew (a config reload): their atlases are
 /// uploaded afresh, whatever generation they're at.
 pub fn dropAtlases(self: *D3D11) void {
-    for ([_]*AtlasTexture{ &self.atlas, &self.color_atlas, &self.lcd_atlas }) |a| {
-        a.deinit();
-        a.* = .{};
+    for (self.gpu_fonts.values()) |*g| g.deinit();
+    self.gpu_fonts.clearRetainingCapacity();
+}
+
+/// Release the atlases of grids the frame drew no pane at.
+fn dropUnseenFonts(self: *D3D11) void {
+    var i: usize = 0;
+    while (i < self.gpu_fonts.count()) {
+        const g = &self.gpu_fonts.values()[i];
+        if (g.seen) {
+            i += 1;
+            continue;
+        }
+        g.deinit();
+        self.gpu_fonts.swapRemoveAt(i);
     }
 }
 

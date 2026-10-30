@@ -117,6 +117,12 @@ search_needle_buf: [64]u16 = undefined,
 search_needle_len: usize = 0,
 search_needle_live: bool = false,
 
+/// Points added to the window's font size for this pane; 0 follows the
+/// window. The window's own, not the daemon's: another window on the
+/// workspace has its own, and closing this one forgets it. UI thread
+/// only.
+font_delta: f32 = 0,
+
 /// What fills a pane.
 pub const Content = union(enum) {
     terminal: Terminal,
@@ -159,6 +165,8 @@ pub const Terminal = struct {
     /// layout that changes nothing sends nothing.
     sized: ?Daemon.Size = null,
     geometry: ?event.Geometry = null,
+    /// The cell the layout gave the pane, at its font size.
+    cell: CellSize = .{ .width = 1, .height = 1 },
 
     /// The first half of a surrogate pair from a lone WM_CHAR.
     high_surrogate: ?u16 = null,
@@ -310,14 +318,8 @@ pub const CellSize = struct { width: u32, height: u32 };
 pub const Env = struct {
     config: *const Config,
     ctx: *anyopaque,
-    /// The window's cell size, which every pane shares.
-    cell_size: *const fn (*anyopaque) CellSize,
     /// The user typed or pasted into the session.
     on_input: *const fn (*anyopaque) void,
-
-    fn cellSize(self: Env) CellSize {
-        return self.cell_size(self.ctx);
-    }
 
     fn input(self: Env) void {
         self.on_input(self.ctx);
@@ -645,7 +647,7 @@ pub fn applyFrames(self: *Session) void {
     // A search that ended (another window's Escape) isn't this window's
     // any more; the needle stays for the next.
     if (!t.screen.search) self.search_needle_live = false;
-    const cell = self.env.cellSize();
+    const cell = t.cell;
     t.images.update(self.alloc, t.screen.placements.items, cell.width, cell.height) catch |err| log.err("laying out images failed: {}", .{err});
 }
 
@@ -1001,14 +1003,15 @@ pub fn resize(self: *Session, p: Placement.Pane) void {
     const rows = p.rows;
     t.cols = cols;
     t.rows = rows;
+    const cell = p.cell;
+    t.cell = cell;
     const s = self.live() orelse {
         self.resizeScreen() catch |err| log.err("resizing the screen failed: {}", .{err});
         return;
     };
-    // A new font size (e.g. on a DPI change) can keep the grid size. The
-    // daemon's terminal answers pixel size reports, so it hears about new
-    // fonts too.
-    const cell = self.env.cellSize();
+    // A new font size (e.g. on a DPI change, or the pane's own) can keep
+    // the grid size. The daemon's terminal answers pixel size reports, so
+    // it hears about new fonts too.
     const size: Daemon.Size = .{ .cols = cols, .rows = rows, .cell_width = cell.width, .cell_height = cell.height };
     if (t.sized == null or !std.meta.eql(t.sized.?, size)) {
         t.sized = size;
@@ -1440,7 +1443,7 @@ pub fn testBrowser(alloc: Allocator, config: *const Config, url: []const u16) !S
     return .{
         .alloc = alloc,
         .wake = undefined,
-        .env = .{ .config = config, .ctx = undefined, .cell_size = undefined, .on_input = undefined },
+        .env = .{ .config = config, .ctx = undefined, .on_input = undefined },
         .id = 1,
         .default_title = &.{},
         .content = .{ .browser = .{ .url = try alloc.dupe(u16, url) } },

@@ -206,6 +206,10 @@ field_drag: ?FieldDrag = null,
 field_click: FieldClick = .{},
 /// The tab a middle click went down on, to close it on release.
 middle_pressed: ?Id.Target = null,
+/// What a bound wheel turned short of a notch, vertically and across,
+/// and the modifiers it turned with (`wheelBinding`).
+wheel_rest: [2]i32 = .{ 0, 0 },
+wheel_mods: input.Mods.Keys = .{},
 
 /// Output from background sessions before this tick count isn't
 /// activity. See `resize_quiet_ms`.
@@ -568,6 +572,12 @@ pub const Shell = struct {
         /// window out again.
         fontSize: *const fn (*anyopaque) f32,
         setFontSize: *const fn (*anyopaque, f32) void,
+        /// The cell a pane drawn at `size_pt` gets: the window's grid at
+        /// that size, made if needed.
+        cellFor: *const fn (*anyopaque, f32) Session.CellSize,
+        /// Panes are drawn at these sizes (and the window's), and no
+        /// others: the grids for the rest can go.
+        keepFonts: *const fn (*anyopaque, []const f32) void,
         /// Lay the window out again: the UI's frame changed.
         relayout: *const fn (*anyopaque) void,
         /// Build the config again from the settings init.lua reloaded
@@ -665,6 +675,12 @@ pub const Shell = struct {
     }
     fn setFontSize(self: Shell, size_pt: f32) void {
         self.vt.setFontSize(self.ctx, size_pt);
+    }
+    fn cellFor(self: Shell, size_pt: f32) Session.CellSize {
+        return self.vt.cellFor(self.ctx, size_pt);
+    }
+    fn keepFonts(self: Shell, sizes: []const f32) void {
+        self.vt.keepFonts(self.ctx, sizes);
     }
     fn relayout(self: Shell) void {
         self.vt.relayout(self.ctx);
@@ -1959,12 +1975,7 @@ fn createSession(self: *App, target: Target, size: GridSize) !*Session {
 
 /// What a session asks the app on the UI thread.
 fn sessionEnv(self: *App) Session.Env {
-    return .{ .config = self.config, .ctx = self, .cell_size = sessionCellSize, .on_input = sessionInput };
-}
-
-fn sessionCellSize(ctx: *anyopaque) Session.CellSize {
-    const self: *App = @ptrCast(@alignCast(ctx));
-    return self.geometry.cell;
+    return .{ .config = self.config, .ctx = self, .on_input = sessionInput };
 }
 
 fn sessionInput(ctx: *anyopaque) void {
@@ -2597,8 +2608,10 @@ fn gotoPane(self: *App, to: binding.GotoSplit) void {
 fn resizePane(self: *App, side: Daemon.Direction, cells: u16) void {
     const t = self.activeTab();
     self.unzoom(t);
-    const d = t.dividerFor(self.placed().dividers.items, t.focus, side) orelse return;
-    const m = self.geometry.cell;
+    const placed_ = self.placed();
+    const d = t.dividerFor(placed_.dividers.items, t.focus, side) orelse return;
+    // The focused pane's cells, at its font size.
+    const m = if (placed_.find(t.focus)) |p| p.cell else self.geometry.cell;
     const cell: f32 = @floatFromInt(if (d.axis() == .row) m.width else m.height);
     const px = cell * @as(f32, @floatFromInt(cells));
     const before = d.shares();
@@ -3179,6 +3192,7 @@ fn runAction(self: *App, action: binding.Action) bool {
         .increase_font_size => |pt| self.shell.setFontSize(self.shell.fontSize() + pt),
         .decrease_font_size => |pt| self.shell.setFontSize(self.shell.fontSize() - pt),
         .reset_font_size => self.shell.setFontSize(self.config.@"font-size"),
+        .increase_pane_font_size, .decrease_pane_font_size, .reset_pane_font_size => return self.runActionOn(action, s),
         .new_split => |dir| self.splitPane(s, switch (dir) {
             inline else => |d| @field(Daemon.Direction, @tagName(d)),
         }),
@@ -3190,6 +3204,28 @@ fn runAction(self: *App, action: binding.Action) bool {
         .toggle_split_zoom => if (self.activeTab().count() > 1 or self.activeTab().zoom != null) self.toggleZoom(s),
         .lua, .invoke, .toggle_command_palette => unreachable,
     }
+    return true;
+}
+
+/// `runAction`, with pane `s` as the one a pane's font size actions
+/// act on: the pane under the pointer, for a wheel binding.
+fn runActionOn(self: *App, action: binding.Action, s: *Session) bool {
+    return switch (action) {
+        .increase_pane_font_size => |pt| self.setPaneFont(s, s.font_delta + pt),
+        .decrease_pane_font_size => |pt| self.setPaneFont(s, s.font_delta - pt),
+        .reset_pane_font_size => self.setPaneFont(s, 0),
+        else => self.runAction(action),
+    };
+}
+
+/// Draw terminal pane `s` `delta` points off the window's font size,
+/// and fit its tab again. False for a browser, which zooms its page.
+fn setPaneFont(self: *App, s: *Session, delta: f32) bool {
+    if (s.content != .terminal) return false;
+    s.font_delta = std.math.clamp(delta, -255, 255);
+    const f = self.findSession(s.id) orelse return true;
+    self.layoutTab(self.tabs.items[f.tab]);
+    self.markDirty();
     return true;
 }
 
@@ -3703,6 +3739,8 @@ fn rebuildPalette(self: *App) Allocator.Error!void {
 }
 
 fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
+    // The labels' UTF-16, made at compile time.
+    @setEvalBranchQuota(2000);
     var buf: [Palette.max_text]u16 = undefined;
     for (self.tabs.items, 0..) |t, i| {
         try p.add(.{
@@ -3742,6 +3780,9 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = L("Increase font size"), .icon = null, .action = .{ .increase_font_size = 1 } },
         .{ .label = L("Decrease font size"), .icon = null, .action = .{ .decrease_font_size = 1 } },
         .{ .label = L("Reset font size"), .icon = .rotate_cw, .action = .reset_font_size },
+        .{ .label = L("Increase pane font size"), .icon = null, .action = .{ .increase_pane_font_size = 1 } },
+        .{ .label = L("Decrease pane font size"), .icon = null, .action = .{ .decrease_pane_font_size = 1 } },
+        .{ .label = L("Reset pane font size"), .icon = .rotate_cw, .action = .reset_pane_font_size },
     };
     for (commands) |c| {
         const key = self.keymap.label(c.action);
@@ -4511,11 +4552,44 @@ fn wheelInput(self: *App, m: Msg.Mouse) void {
         if (hit.part != .terminal) return;
         break :pane self.shownPane(hit.target) orelse return;
     };
+    // A page zooms itself on ctrl+wheel.
     if (pane.browser()) |b| {
         if (b.live()) self.shell.webMouse(pane, m.msg, m.wparam, m.pos);
         return;
     }
+    if (self.wheelBinding(m, pane)) return;
     pane.mouseWheel(m.msg, m.wparam, self.toPane(pane, m.pos));
+}
+
+/// Run the binding of the wheel with the modifiers held, if it has one,
+/// for terminal pane `pane` under the pointer, without moving the focus:
+/// once per whole notch, so a finer wheel (a touchpad's pinch) builds up
+/// its turns first. Returns false if the wheel goes on to the pane.
+fn wheelBinding(self: *App, m: Msg.Mouse, pane: *Session) bool {
+    const delta: i16 = @bitCast(@as(u16, @truncate(m.wparam >> 16)));
+    if (delta == 0) return false;
+    const wheel = binding.Wheel.fromMsg(m.msg, delta);
+    // MK_ flags carry no alt or the Windows key.
+    const held = self.shell.mods();
+    const mods: input.Mods = .{
+        .shift = m.wparam & win32.MK_SHIFT != 0,
+        .ctrl = m.wparam & win32.MK_CONTROL != 0,
+        .alt = held.alt,
+        .super = held.super,
+    };
+    const b = self.keymap.find(@intFromEnum(wheel), mods) orelse return false;
+    const axis: usize = @intFromBool(m.msg == win32.WM_MOUSEHWHEEL);
+    // Turns with other modifiers don't add up with these.
+    if (self.wheel_mods.int() != mods.keys().int()) self.wheel_rest = .{ 0, 0 };
+    self.wheel_mods = mods.keys();
+    const rest = &self.wheel_rest[axis];
+    rest.* += delta;
+    const notches = @divTrunc(rest.*, win32.WHEEL_DELTA);
+    rest.* -= notches * win32.WHEEL_DELTA;
+    for (0..@abs(notches)) |_| {
+        if (!self.runActionOn(b.action, pane) and b.performable) return false;
+    }
+    return true;
 }
 
 /// Act on a click that went down and up on the widget `hit` names.
@@ -4715,19 +4789,24 @@ fn showTitle(self: *App) void {
 /// active tab's are placed again before they're drawn (`placed`), as
 /// anything that changes them makes the placement stale.
 fn layoutTab(self: *App, t: *Tab) void {
+    self.fitTab(t);
+    self.placement_stale = true;
+    self.sweepFonts();
+}
+
+fn fitTab(self: *App, t: *Tab) void {
     var scratch: Placement = .{};
     defer scratch.deinit(self.alloc);
     self.placeTab(t, &scratch);
-    self.placement_stale = true;
 }
 
 /// Place tab `t`'s panes in the terminal area, into `into`, and fit
-/// their grids to them. Each pane's terminal is under its title strip,
-/// padded by the geometry's padding (but for the chrome's inset at the
-/// top, which the strip stands in for), and the grid is anchored at the
-/// top left of what's left, with the part of a cell that doesn't fit
-/// all at the right and bottom, so a resize never moves the text that
-/// stays.
+/// their grids to them, each at its own font size. Each pane's terminal
+/// is under its title strip, padded by the geometry's padding (but for
+/// the chrome's inset at the top, which the strip stands in for), and
+/// the grid is anchored at the top left of what's left, with the part
+/// of a cell that doesn't fit all at the right and bottom, so a resize
+/// never moves the text that stays.
 fn placeTab(self: *App, t: *Tab, into: *Placement) void {
     const g = &self.geometry;
     t.place(self.alloc, into, g.pane_area, g.gap) catch |err| {
@@ -4736,11 +4815,13 @@ fn placeTab(self: *App, t: *Tab, into: *Placement) void {
     };
     var pad = g.padding;
     pad.top -|= g.inset;
-    const m = g.cell;
     for (into.panes.items) |*p| {
         // A browser's page is under its address row too.
         const chrome = if (p.session.content == .browser) g.title_height + g.bar_height else g.title_height;
         p.rect = Placement.under(p.frame, chrome);
+        p.size_pt = self.paneFontSize(p.session);
+        const m = self.shell.cellFor(p.size_pt);
+        p.cell = m;
         const w = @as(u32, @intFromFloat(p.rect.w)) -| pad.left -| pad.right;
         const h = @as(u32, @intFromFloat(p.rect.h)) -| pad.top -| pad.bottom;
         p.cols = @intCast(std.math.clamp(w / m.width, 1, std.math.maxInt(u16)));
@@ -4755,6 +4836,34 @@ fn placeTab(self: *App, t: *Tab, into: *Placement) void {
     }
 }
 
+/// The size pane `s` is drawn at: the window's, plus its own delta for
+/// a terminal. Clamped as the window's is, without writing back, so a
+/// pane at the floor grows back by the steps it shrank.
+fn paneFontSize(self: *const App, s: *const Session) f32 {
+    const window = self.shell.fontSize();
+    if (s.content != .terminal or s.font_delta == 0) return window;
+    return std.math.clamp(window + s.font_delta, 1, 255);
+}
+
+/// Tell the window the font sizes panes are drawn at, in every tab, so
+/// the grids for sizes no pane is at any more go.
+fn sweepFonts(self: *const App) void {
+    var buf: [32]f32 = undefined;
+    var n: usize = 0;
+    for (self.tabs.items) |t| {
+        var it = t.iterator();
+        while (it.next()) |s| {
+            const size = self.paneFontSize(s);
+            if (std.mem.indexOfScalar(f32, buf[0..n], size) != null) continue;
+            // So many sizes at once: keep every grid until fewer.
+            if (n == buf.len) return;
+            buf[n] = size;
+            n += 1;
+        }
+    }
+    self.shell.keepFonts(buf[0..n]);
+}
+
 /// The terminal area moved or changed size (or the cells did): fit every
 /// pane's grid to it, and tell the daemons. The window draws after.
 pub fn layout(self: *App, geometry: Geometry) void {
@@ -4764,7 +4873,9 @@ pub fn layout(self: *App, geometry: Geometry) void {
     self.markDirty();
     self.closeMenu();
     self.quiet_until = self.shell.tickCount() + resize_quiet_ms;
-    for (self.tabs.items) |t| self.layoutTab(t);
+    for (self.tabs.items) |t| self.fitTab(t);
+    self.placement_stale = true;
+    self.sweepFonts();
     if (self.daemon) |conn| conn.resizeWorkspaces(self.daemonArea());
     for (self.remotes.items) |remote| if (remote.conn.attachState() == .attached) remote.conn.resizeWorkspaces(self.daemonArea());
 }
@@ -4783,6 +4894,9 @@ pub const TestShell = struct {
     /// The modifiers held, as `mods` reports them.
     held: input.Mods = .{},
     font_size: f32 = 12,
+    /// The sizes last told `keepFonts`.
+    kept_buf: [8]f32 = undefined,
+    kept_len: usize = 0,
     /// The last answer to a page's permission question.
     answer: ?Web.Answer = null,
     stats_shown: bool = false,
@@ -4852,6 +4966,15 @@ pub const TestShell = struct {
     fn setFontSize(ctx: *anyopaque, size: f32) void {
         self_(ctx).font_size = size;
     }
+    /// Cells that grow with the size, so tests see sizes differ.
+    fn cellFor(_: *anyopaque, size_pt: f32) Session.CellSize {
+        return .{ .width = @intFromFloat(@round(size_pt * 0.75)), .height = @intFromFloat(@round(size_pt * 1.5)) };
+    }
+    fn keepFonts(ctx: *anyopaque, sizes: []const f32) void {
+        const self = self_(ctx);
+        self.kept_len = @min(sizes.len, self.kept_buf.len);
+        @memcpy(self.kept_buf[0..self.kept_len], sizes[0..self.kept_len]);
+    }
     fn relayout(_: *anyopaque) void {}
     fn stats(ctx: *anyopaque) []const u16 {
         return self_(ctx).stats_text;
@@ -4902,6 +5025,8 @@ pub const TestShell = struct {
         .frameInterval = frameInterval,
         .fontSize = fontSize,
         .setFontSize = setFontSize,
+        .cellFor = cellFor,
+        .keepFonts = keepFonts,
         .relayout = relayout,
         .stats = stats,
         .statsShown = statsShown,
@@ -4975,6 +5100,40 @@ pub const TestApp = struct {
         const key = self.app.nextWorkspaceKey();
         try self.app.workspaces.append(alloc, .{ .key = key, .conn = &self.daemon, .id = id, .name = owned, .tabs = tabs, .viewers = viewers, .shown = shown });
         return key;
+    }
+
+    /// A tab of two terminal panes side by side, with no daemon behind
+    /// them, laid out and shown; the second has the focus.
+    pub fn twoPanes(self: *TestApp) ![2]*Session {
+        const alloc = std.testing.allocator;
+        const app = &self.app;
+        const a = try app.createSession(.{ .failed = .{ .title = L("a"), .why = "test" } }, .{ .cols = 80, .rows = 24 });
+        errdefer a.destroy();
+        const b = try app.createSession(.{ .failed = .{ .title = L("b"), .why = "test" } }, .{ .cols = 80, .rows = 24 });
+        errdefer b.destroy();
+        const children = try alloc.alloc(Tab.Child, 2);
+        children[0] = .{ .share = 1, .node = .{ .pane = a } };
+        children[1] = .{ .share = 1, .node = .{ .pane = b } };
+        const t = Tab.create(alloc, app.nextTabKey(), null, 0, .none, .{ .split = .{ .axis = .row, .children = children } }, b) catch |err| {
+            alloc.free(children);
+            return err;
+        };
+        errdefer t.destroy(alloc);
+        try app.tabs.append(alloc, t);
+        self.relayout();
+        _ = app.view();
+        return .{ a, b };
+    }
+
+    /// Lay the app out in the frame, as the window does on a change.
+    pub fn relayout(self: *TestApp) void {
+        self.app.layout(.{
+            .terminal = .{ .width = @intFromFloat(self.frame.terminal.w), .height = @intFromFloat(self.frame.terminal.h) },
+            .pane_area = self.ui.paneArea(&self.frame),
+            .gap = self.ui.paneGap(),
+            .title_height = self.ui.paneTitleHeight(),
+            .cell = TestShell.cellFor(undefined, self.app.shell.fontSize()),
+        });
     }
 };
 
@@ -5689,4 +5848,124 @@ test "the sidebar's rows scroll with the wheel and their scrollbar, which pages 
     _ = app.update(.capture_lost);
     try std.testing.expect(app.sidebar_scroll == null);
     try std.testing.expectEqual(Id.none, app.ui.pressed);
+}
+
+/// A notch of the wheel over pane `s`, `delta` up (or down, below 0),
+/// with the MK_ flags `keys`.
+fn testWheel(app: *App, s: *const Session, keys: win32.WPARAM, delta: i16) void {
+    const r = app.placed().find(s).?.rect;
+    const pos: win32.POINT = .{ .x = @intFromFloat(r.x + r.w / 2), .y = @intFromFloat(r.y + r.h / 2) };
+    const wparam = keys | @as(win32.WPARAM, @as(u16, @bitCast(delta))) << 16;
+    _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = wparam, .pos = pos } });
+}
+
+test "ctrl+shift+wheel over a pane sizes only that pane, and ctrl+wheel the window, keeping its difference" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const a, const b = try t.twoPanes();
+    const tab = app.activeTab();
+
+    testWheel(app, a, win32.MK_CONTROL | win32.MK_SHIFT, 120);
+    try std.testing.expectEqual(1, a.font_delta);
+    try std.testing.expectEqual(0, b.font_delta);
+    try std.testing.expectEqual(12, shell.font_size);
+    // The pane under the pointer, without the focus moving to it.
+    try std.testing.expectEqual(b, tab.focus);
+    const pa = app.placed().find(a).?;
+    const pb = app.placed().find(b).?;
+    try std.testing.expectEqual(13, pa.size_pt);
+    try std.testing.expectEqual(TestShell.cellFor(undefined, 13), pa.cell);
+    try std.testing.expectEqual(TestShell.cellFor(undefined, 12), pb.cell);
+    try std.testing.expect(pa.cols < pb.cols);
+    // The window keeps a grid for each size in use.
+    try std.testing.expectEqualSlices(f32, &.{ 13, 12 }, shell.kept_buf[0..shell.kept_len]);
+
+    // ctrl+wheel: the window's size, which the window lays out again.
+    testWheel(app, b, win32.MK_CONTROL, 120);
+    try std.testing.expectEqual(13, shell.font_size);
+    t.relayout();
+    try std.testing.expectEqual(14, app.placed().find(a).?.size_pt);
+    try std.testing.expectEqual(13, app.placed().find(b).?.size_pt);
+    try std.testing.expectEqual(1, a.font_delta);
+    // Down, a notch at a time.
+    testWheel(app, a, win32.MK_CONTROL | win32.MK_SHIFT, -240);
+    try std.testing.expectEqual(-1, a.font_delta);
+    try std.testing.expectEqual(12, app.placed().find(a).?.size_pt);
+}
+
+test "a fine wheel builds up whole notches before a binding runs" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const a, _ = try t.twoPanes();
+    const keys = win32.MK_CONTROL | win32.MK_SHIFT;
+    for (0..3) |_| testWheel(app, a, keys, 30);
+    try std.testing.expectEqual(0, a.font_delta);
+    testWheel(app, a, keys, 30);
+    try std.testing.expectEqual(1, a.font_delta);
+    // Turned back, the turns cancel out.
+    testWheel(app, a, keys, 90);
+    testWheel(app, a, keys, -90);
+    try std.testing.expectEqual(1, a.font_delta);
+    // Another chord starts over: ctrl's 90 and ctrl+shift's 30 make no
+    // notch.
+    testWheel(app, a, win32.MK_CONTROL, 90);
+    testWheel(app, a, keys, 30);
+    try std.testing.expectEqual(1, a.font_delta);
+    try std.testing.expectEqual(12, shell.font_size);
+}
+
+test "an unbound wheel chord, or a bare wheel, goes to the pane" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    try app.keymap.apply(&.{ .{ .key = "ctrl+wheel_up" }, .{ .key = "alt+wheel_up", .action = "next_tab" } });
+    const a, _ = try t.twoPanes();
+    testWheel(app, a, win32.MK_CONTROL, 120);
+    testWheel(app, a, 0, 120);
+    try std.testing.expectEqual(12, shell.font_size);
+    try std.testing.expectEqual(0, a.font_delta);
+    // The rest of the defaults stand.
+    testWheel(app, a, win32.MK_CONTROL, -120);
+    try std.testing.expectEqual(11, shell.font_size);
+    // alt comes from the keyboard's state, as MK_ flags don't carry it.
+    shell.held = .{ .alt = true };
+    try std.testing.expect(app.wheelBinding(.{ .msg = win32.WM_MOUSEWHEEL, .wparam = @as(win32.WPARAM, 120) << 16, .pos = .{ .x = 0, .y = 0 } }, a));
+}
+
+test "the pane font actions: on the focused pane, reset to the window's, and not for a browser" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const a, const b = try t.twoPanes();
+    try std.testing.expect(app.runAction(.{ .increase_pane_font_size = 2 }));
+    try std.testing.expectEqual(2, b.font_delta);
+    try std.testing.expectEqual(0, a.font_delta);
+    // The window's reset leaves the pane's difference; the pane's own
+    // takes it.
+    try std.testing.expect(app.runAction(.reset_font_size));
+    try std.testing.expectEqual(2, b.font_delta);
+    try std.testing.expect(app.runAction(.reset_pane_font_size));
+    try std.testing.expectEqual(0, b.font_delta);
+    try std.testing.expectEqualSlices(f32, &.{12}, shell.kept_buf[0..shell.kept_len]);
+    // Clamped at the floor without writing back: the steps down come
+    // back up the same.
+    try std.testing.expect(app.runAction(.{ .decrease_pane_font_size = 20 }));
+    try std.testing.expectEqual(1, app.placed().find(b).?.size_pt);
+    try std.testing.expect(app.runAction(.{ .increase_pane_font_size = 20 }));
+    try std.testing.expectEqual(12, app.placed().find(b).?.size_pt);
+
+    var browser = try Session.testBrowser(std.testing.allocator, &t.config, L("https://example.com/"));
+    defer browser.deinitContent();
+    try std.testing.expect(!app.runActionOn(.{ .increase_pane_font_size = 1 }, &browser));
+    try std.testing.expectEqual(0, browser.font_delta);
 }

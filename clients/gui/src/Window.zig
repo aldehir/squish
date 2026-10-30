@@ -1,6 +1,6 @@
 //! A top-level Win32 window: our own title bar and tab list (see `Ui`)
 //! around the active tab's panes, each a session's terminal. The window
-//! is the shell: it owns the HWND, the renderer, the font grid, and the
+//! is the shell: it owns the HWND, the renderer, the font grids, and the
 //! UI, turns window messages into an `App.Msg` each, and draws the tree
 //! `App.view` builds. Heap allocated so that its address can be stored
 //! in the HWND's user data.
@@ -77,8 +77,9 @@ stats_text: [max_stats_len]u16 = undefined,
 stats_len: usize = 0,
 dpi: u32 = win32.USER_DEFAULT_SCREEN_DPI,
 
-/// Shared by every session: they all draw at the same size.
-grid: font.Grid,
+/// The window's font size, which every pane draws at but one with a
+/// size of its own (`Session.font_delta`), which has a grid of that size.
+grids: font.Grids,
 ui: Ui,
 /// The window's regions, from the last `layout`.
 frame: Ui.Frame = .{},
@@ -98,6 +99,7 @@ syncing_focus: bool = false,
 
 /// Scratch for `render`.
 frame_panes: std.ArrayList(Renderer.Pane) = .empty,
+frame_fonts: std.ArrayList(Renderer.Fonts) = .empty,
 /// What the renderer draws a browser pane's box from: no grid, the
 /// configured background. Never built, so never holds anything.
 blank: struct {
@@ -151,7 +153,7 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
         .config = config,
         .source = source,
         .output_event = output_event,
-        .grid = undefined,
+        .grids = undefined,
         .ui = undefined,
         .app = undefined,
         .web = undefined,
@@ -185,8 +187,8 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
     _ = win32.DwmSetWindowAttribute(hwnd, win32.DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, @sizeOf(win32.BOOL));
 
     self.dpi = win32.GetDpiForWindow(hwnd);
-    self.grid = try .init(alloc, io, config.@"font-family".items, config.@"font-size", self.dpi, config.@"font-antialias");
-    errdefer self.grid.deinit();
+    self.grids = .init(try .init(alloc, io, config.@"font-family".items, config.@"font-size", self.dpi, config.@"font-antialias"));
+    errdefer self.grids.deinit();
     self.ui = try .init(self.dpi, config.@"chrome-scale", theme);
     errdefer self.ui.deinit();
 
@@ -240,10 +242,11 @@ pub fn destroy(self: *Window) void {
         self.web.deinit();
         r.deinit();
         self.ui.deinit();
-        self.grid.deinit();
+        self.grids.deinit();
     }
     self.app.deinit();
     self.frame_panes.deinit(self.alloc);
+    self.frame_fonts.deinit(self.alloc);
     _ = win32.CloseHandle(self.output_event);
     self.alloc.destroy(self);
 }
@@ -275,11 +278,12 @@ pub fn frameGateFired(self: *Window, gate: win32.HANDLE) void {
 }
 
 /// Change every session's font size, keeping the window's size: the grid
-/// gains or loses cells instead.
+/// gains or loses cells instead. A pane with a size of its own keeps
+/// its difference.
 fn setFontSize(self: *Window, size_pt: f32) void {
     const size = std.math.clamp(size_pt, 1, 255);
-    if (size == self.grid.size_pt) return;
-    self.grid.setSize(size);
+    if (size == self.grids.base.size_pt) return;
+    self.grids.setSize(size);
     self.layout();
 }
 
@@ -322,8 +326,7 @@ fn applyConfig(self: *Window, new: Config) void {
     if (zoom_changed) self.ui.setZoom(self.dpi, config.@"chrome-scale") catch |err| log.err("chrome scale change failed: {}", .{err});
     if (fonts_changed) {
         if (font.Grid.init(self.alloc, self.io, config.@"font-family".items, config.@"font-size", self.dpi, config.@"font-antialias")) |grid| {
-            self.grid.deinit();
-            self.grid = grid;
+            self.grids.setBase(grid);
             if (self.renderer) |*r| r.dropAtlases();
         } else |err| log.err("font change failed: {}", .{err});
     }
@@ -422,10 +425,10 @@ fn paddingPx(self: *const Window) Placement.Padding {
 }
 
 /// Where the terminal area is and what fits in it, for the app: from
-/// the UI's frame, the font grid, and the DPI.
+/// the UI's frame, the window's font grid, and the DPI.
 fn geometry(self: *const Window) App.Geometry {
     const size = self.terminalSize();
-    const m = self.grid.metrics;
+    const m = self.grids.base.metrics;
     return .{
         .terminal = .{ .width = size.width, .height = size.height },
         .pane_area = self.ui.paneArea(&self.frame),
@@ -473,17 +476,22 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
     const stats = self.stats_shown;
     var t: i64 = if (stats) Stats.now() else 0;
     self.frame_panes.clearRetainingCapacity();
+    self.frame_fonts.clearRetainingCapacity();
     // With nothing shown, the chrome alone is drawn.
     const tab: ?*Tab = if (app.hasTabs()) app.activeTab() else null;
     // The host field, a rename, or a dialog has the keyboard while open.
     const terminal_keys = app.keyboard() == .terminal;
     if (tab) |tb| {
-        for (app.placed().panes.items) |p| {
+        const panes = app.placed().panes.items;
+        // One per grid at most, never moved: the panes point at them.
+        try self.frame_fonts.ensureTotalCapacity(self.alloc, panes.len);
+        for (panes) |p| {
             const s = p.session;
             // A browser's box, under its stand-in.
             const term = s.term() orelse {
                 self.blank.cells.default_bg = self.config.background;
                 try self.frame_panes.append(self.alloc, .{
+                    .fonts = self.fontsOf(&self.grids.base),
                     .cells = &self.blank.cells,
                     .images = &self.blank.images,
                     .textures = &self.blank.textures,
@@ -498,7 +506,8 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
             // Panes without focus show a hollow cursor, as an unfocused
             // window's does.
             const focus = s == tb.focus;
-            try term.cells.build(self.alloc, &term.screen, &self.grid, .{
+            const grid = self.grids.get(p.size_pt);
+            try term.cells.build(self.alloc, &term.screen, grid, .{
                 .focused = focus and app.focused and terminal_keys,
                 .blink_visible = app.blink_visible,
             }, .{
@@ -510,6 +519,7 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
             });
             if (stats) t = self.stats.lap(.build, t);
             try self.frame_panes.append(self.alloc, .{
+                .fonts = self.fontsOf(grid),
                 .cells = &term.cells,
                 .images = &term.images,
                 .textures = &term.textures,
@@ -523,10 +533,6 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
     self.armIdle();
     var shadows: [2]Renderer.BoxStyle.Shadow = undefined;
     try r.draw(self.alloc, .{
-        .atlas = &self.grid.atlas,
-        .color_atlas = &self.grid.color_atlas,
-        .lcd_atlas = &self.grid.lcd_atlas,
-        .metrics = self.grid.metrics,
         .panes = self.frame_panes.items,
         // The chrome's ground, around and between the panes.
         .background = self.ui.theme.ground,
@@ -538,6 +544,14 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
         _ = self.stats.lap(.draw, t);
         self.stats.frames += 1;
     }
+}
+
+/// What the renderer draws `grid`'s panes with, in `frame_fonts`, which
+/// has room for it.
+fn fontsOf(self: *Window, grid: *const font.Grid) *const Renderer.Fonts {
+    for (self.frame_fonts.items) |*f| if (f.id == grid.id) return f;
+    self.frame_fonts.appendAssumeCapacity(.of(grid));
+    return &self.frame_fonts.items[self.frame_fonts.items.len - 1];
 }
 
 /// Show the active tab's browser panes' pages where they're placed, over
@@ -773,6 +787,8 @@ const shell_vtable: App.Shell.VTable = .{
     .frameInterval = shellFrameInterval,
     .fontSize = shellFontSize,
     .setFontSize = shellSetFontSize,
+    .cellFor = shellCellFor,
+    .keepFonts = shellKeepFonts,
     .relayout = shellRelayout,
     .reloadConfig = shellReloadConfig,
     .stats = shellStats,
@@ -896,11 +912,20 @@ fn shellFrameInterval(ctx: *anyopaque) u32 {
 }
 
 fn shellFontSize(ctx: *anyopaque) f32 {
-    return fromCtx(ctx).grid.size_pt;
+    return fromCtx(ctx).grids.base.size_pt;
 }
 
 fn shellSetFontSize(ctx: *anyopaque, size_pt: f32) void {
     fromCtx(ctx).setFontSize(size_pt);
+}
+
+fn shellCellFor(ctx: *anyopaque, size_pt: f32) Session.CellSize {
+    const m = fromCtx(ctx).grids.get(size_pt).metrics;
+    return .{ .width = m.cell_width, .height = m.cell_height };
+}
+
+fn shellKeepFonts(ctx: *anyopaque, sizes: []const f32) void {
+    fromCtx(ctx).grids.retain(sizes);
 }
 
 fn shellRelayout(ctx: *anyopaque) void {
@@ -1259,7 +1284,7 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
         win32.WM_DPICHANGED => {
             const rect: *const win32.RECT = @ptrFromInt(@as(usize, @bitCast(lparam)));
             self.dpi = win32.hiword(wparam);
-            self.grid.setDpi(self.dpi);
+            self.grids.setDpi(self.dpi);
             self.web.setDpi(self.dpi);
             self.ui.setDpi(self.dpi) catch |err| log.err("chrome DPI change failed: {}", .{err});
             _ = win32.SetWindowPos(

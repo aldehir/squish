@@ -37,6 +37,11 @@ pub const Pane = struct {
     /// The grid that fits.
     cols: u16 = 0,
     rows: u16 = 0,
+    /// The font size the pane is drawn at (the window's plus its delta,
+    /// clamped), and the cell that size gives, which `cols`/`rows`
+    /// divide by. A browser's are the window's.
+    size_pt: f32 = 0,
+    cell: Session.CellSize = .{ .width = 1, .height = 1 },
 };
 
 /// What a pane's `frame` holds under its title strip, `strip` tall: its

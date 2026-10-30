@@ -91,12 +91,17 @@ const GlyphKey = struct {
     index: u32,
 };
 
+var next_id: std.atomic.Value(u32) = .init(1);
+
 const FaceKey = struct {
     style: Style,
     cp: u21,
     emoji: bool,
 };
 
+/// Names this grid among every one made, which the renderer keys its
+/// copies of the atlases by: a pointer could be reused after a free.
+id: u32,
 alloc: Allocator,
 /// For drawing sprites.
 io: std.Io,
@@ -168,6 +173,7 @@ pub fn init(
     errdefer lcd_atlas.deinit(alloc);
 
     var self: Grid = .{
+        .id = next_id.fetchAdd(1, .monotonic),
         .alloc = alloc,
         .io = io,
         .factory = factory.?,

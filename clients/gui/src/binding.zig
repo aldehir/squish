@@ -1,8 +1,8 @@
 //! Key bindings: which key presses run an app action instead of going to
 //! the child. Actions take Ghostty's names, which init.lua's slime.bind
 //! uses to rebind them. Triggers are virtual keys, which follow the
-//! keyboard layout (VK_OEM_PLUS is whichever key types '+'), parsed from
-//! chords such as "ctrl+shift+d".
+//! keyboard layout (VK_OEM_PLUS is whichever key types '+'), or a notch
+//! of the wheel (`Wheel`), parsed from chords such as "ctrl+shift+d".
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -20,10 +20,16 @@ pub const Action = union(enum) {
     close_surface,
     next_tab,
     previous_tab,
-    /// In points.
+    /// In points. The window's size, for every pane.
     increase_font_size: f32,
     decrease_font_size: f32,
     reset_font_size,
+    /// In points, on top of the window's size: the focused pane's, or the
+    /// one under the pointer for a wheel binding. Terminal panes only.
+    increase_pane_font_size: f32,
+    decrease_pane_font_size: f32,
+    /// Back to the window's size.
+    reset_pane_font_size,
     new_split: SplitDirection,
     goto_split: GotoSplit,
     /// By `amount` cells.
@@ -66,7 +72,30 @@ pub const Invoke = struct {
     args: []const u8 = "",
 };
 
+/// The wheel, turned one notch, as the key of a trigger: virtual keys
+/// end at 0xFF, so these never collide with one. A wheel trigger binds
+/// alone, never in a sequence (the keymap's pending keys are keys).
+pub const Wheel = enum(u32) {
+    up = 0x1_0000,
+    down,
+    left,
+    right,
+
+    pub fn of(vk: u32) ?Wheel {
+        if (vk < @intFromEnum(Wheel.up) or vk > @intFromEnum(Wheel.right)) return null;
+        return @enumFromInt(vk);
+    }
+
+    /// From WM_MOUSEWHEEL / WM_MOUSEHWHEEL and the delta's sign. Windows'
+    /// horizontal delta is positive to the right.
+    pub fn fromMsg(msg: u32, delta: i16) Wheel {
+        if (msg == win32.WM_MOUSEHWHEEL) return if (delta > 0) .right else .left;
+        return if (delta > 0) .up else .down;
+    }
+};
+
 pub const Trigger = struct {
+    /// A virtual key, or a `Wheel`.
     vk: u32,
     mods: Mods.Keys = .{},
 
@@ -132,6 +161,12 @@ pub const defaults = [_]Binding{
     // Windows' default input language hotkeys take ctrl+shift+0 (direct
     // switch to the Japanese IME), so it never arrives on most machines.
     .{ .trigger = .{ .vk = '0', .mods = ctrl }, .action = .reset_font_size },
+    // The pane under the pointer, with shift. No key for a pane's size:
+    // ctrl+alt+plus is AltGr+plus on many layouts, which types.
+    .{ .trigger = .{ .vk = @intFromEnum(Wheel.up), .mods = ctrl }, .action = .{ .increase_font_size = 1 } },
+    .{ .trigger = .{ .vk = @intFromEnum(Wheel.down), .mods = ctrl }, .action = .{ .decrease_font_size = 1 } },
+    .{ .trigger = .{ .vk = @intFromEnum(Wheel.up), .mods = ctrl_shift }, .action = .{ .increase_pane_font_size = 1 } },
+    .{ .trigger = .{ .vk = @intFromEnum(Wheel.down), .mods = ctrl_shift }, .action = .{ .decrease_pane_font_size = 1 } },
     // Only slime's tabs split; elsewhere the keys go to the child.
     .{ .trigger = .{ .vk = 'O', .mods = ctrl_shift }, .action = .{ .new_split = .right }, .performable = true },
     .{ .trigger = .{ .vk = 'E', .mods = ctrl_shift }, .action = .{ .new_split = .down }, .performable = true },
@@ -358,6 +393,7 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .next_tab => .next_tab,
         .previous_tab => .previous_tab,
         .reset_font_size => .reset_font_size,
+        .reset_pane_font_size => .reset_pane_font_size,
         .copy_mode => .copy_mode,
         .equalize_splits => .equalize_splits,
         .toggle_split_zoom => .toggle_split_zoom,
@@ -367,6 +403,8 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .navigate_search => .{ .navigate_search = argEnum(NavigateSearch, args, "direction", .next) },
         .increase_font_size => .{ .increase_font_size = argNumber(args, "amount", 1) },
         .decrease_font_size => .{ .decrease_font_size = argNumber(args, "amount", 1) },
+        .increase_pane_font_size => .{ .increase_pane_font_size = argNumber(args, "amount", 1) },
+        .decrease_pane_font_size => .{ .decrease_pane_font_size = argNumber(args, "amount", 1) },
         .new_split => .{ .new_split = argEnum(SplitDirection, args, "direction", .right) },
         .goto_split => .{ .goto_split = argEnum(GotoSplit, args, "direction", .next) },
         .resize_split => .{ .resize_split = .{
@@ -400,10 +438,10 @@ fn argEnum(comptime T: type, args: ?std.json.Value, key: []const u8, default: T)
     };
 }
 
-pub const ParseError = error{ NoKey, TwoKeys, UnknownKey, TooManyKeys };
+pub const ParseError = error{ NoKey, TwoKeys, UnknownKey, TooManyKeys, WheelInSequence };
 
 /// A key, or a sequence of them joined by `>` ("ctrl+b>c"), as init.lua
-/// writes it, into `buf`: the keys, in order.
+/// writes it, into `buf`: the keys, in order. A wheel binds alone.
 pub fn parseSequence(buf: *[max_keys]Trigger, chord: []const u8) ParseError![]Trigger {
     var n: usize = 0;
     var it = std.mem.splitScalar(u8, chord, '>');
@@ -412,6 +450,7 @@ pub fn parseSequence(buf: *[max_keys]Trigger, chord: []const u8) ParseError![]Tr
         buf[n] = try parse(key);
         n += 1;
     }
+    if (n > 1) for (buf[0..n]) |k| if (Wheel.of(k.vk) != null) return error.WheelInSequence;
     return buf[0..n];
 }
 
@@ -421,7 +460,8 @@ pub fn parseSequence(buf: *[max_keys]Trigger, chord: []const u8) ParseError![]Tr
 /// period, slash, backslash, semicolon, apostrophe, bracketleft,
 /// bracketright, grave), or one of tab, enter, escape, space,
 /// backspace, delete, insert, home, end, pageup, pagedown, up, down,
-/// left, right, f1 to f24.
+/// left, right, f1 to f24; or a notch of the wheel, wheel_up,
+/// wheel_down, wheel_left, wheel_right.
 pub fn parse(chord: []const u8) ParseError!Trigger {
     var t: Trigger = .{ .vk = 0 };
     if (chord.len == 0) return error.NoKey;
@@ -521,6 +561,14 @@ fn keyVk(name: []const u8) ?u32 {
         .{ "bracketright", win32.VK_OEM_6 },
         .{ "grave", win32.VK_OEM_3 },
         .{ "backquote", win32.VK_OEM_3 },
+        .{ "wheel_up", @intFromEnum(Wheel.up) },
+        .{ "wheelup", @intFromEnum(Wheel.up) },
+        .{ "wheel_down", @intFromEnum(Wheel.down) },
+        .{ "wheeldown", @intFromEnum(Wheel.down) },
+        .{ "wheel_left", @intFromEnum(Wheel.left) },
+        .{ "wheelleft", @intFromEnum(Wheel.left) },
+        .{ "wheel_right", @intFromEnum(Wheel.right) },
+        .{ "wheelright", @intFromEnum(Wheel.right) },
     });
     return names.get(name);
 }
@@ -599,6 +647,10 @@ fn labelKey(out: *Label, key: Trigger) bool {
         win32.VK_OEM_5 => "\\",
         win32.VK_OEM_6 => "]",
         win32.VK_OEM_7 => "'",
+        @intFromEnum(Wheel.up) => "Wheel Up",
+        @intFromEnum(Wheel.down) => "Wheel Down",
+        @intFromEnum(Wheel.left) => "Wheel Left",
+        @intFromEnum(Wheel.right) => "Wheel Right",
         else => return false,
     };
     const mods = key.mods;
@@ -630,6 +682,7 @@ const FmtKeys = struct {
         if (key.mods.shift) try w.writeAll("shift+");
         if (key.mods.alt) try w.writeAll("alt+");
         if (key.mods.super) try w.writeAll("super+");
+        if (Wheel.of(key.vk)) |wheel| return w.print("wheel_{t}", .{wheel});
         var label: Label = .{};
         if (labelKey(&label, .{ .vk = key.vk })) {
             for (label.slice()) |c| try w.writeByte(std.ascii.toLower(@intCast(c)));
@@ -643,6 +696,10 @@ test labelIn {
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+C"), labelIn(&defaults, .copy_to_clipboard).slice());
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+E"), labelIn(&defaults, .{ .new_split = .down }).slice());
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+Enter"), labelIn(&defaults, .toggle_split_zoom).slice());
+    try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+Wheel Up"), labelIn(&defaults, .{ .increase_pane_font_size = 1 }).slice());
+    // The first default: the keyboard's.
+    try std.testing.expectEqualSlices(u16, L("Ctrl+Shift++"), labelIn(&defaults, .{ .increase_font_size = 1 }).slice());
+    try std.testing.expectEqual(@as(usize, 0), labelIn(&defaults, .reset_pane_font_size).len);
     try std.testing.expectEqual(@as(usize, 0), labelIn(&.{}, .new_tab).len);
 }
 
@@ -653,6 +710,22 @@ test findIn {
     try std.testing.expectEqual(null, findIn(&defaults, win32.VK_OEM_PLUS, .{ .ctrl = true }));
     try std.testing.expectEqual(Action.reset_font_size, findIn(&defaults, '0', .{ .ctrl = true }).?.action);
     try std.testing.expectEqual(null, findIn(&defaults, '0', .{ .ctrl = true, .shift = true, .alt = true }));
+    const up = @intFromEnum(Wheel.up);
+    try std.testing.expectEqual(Action{ .increase_font_size = 1 }, findIn(&defaults, up, .{ .ctrl = true }).?.action);
+    try std.testing.expectEqual(Action{ .increase_pane_font_size = 1 }, findIn(&defaults, up, .{ .ctrl = true, .shift = true }).?.action);
+    try std.testing.expectEqual(Action{ .decrease_pane_font_size = 1 }, findIn(&defaults, @intFromEnum(Wheel.down), .{ .ctrl = true, .shift = true }).?.action);
+    // A bare wheel scrolls.
+    try std.testing.expectEqual(null, findIn(&defaults, up, .{}));
+}
+
+test Wheel {
+    try std.testing.expectEqual(Wheel.up, Wheel.fromMsg(win32.WM_MOUSEWHEEL, 120));
+    try std.testing.expectEqual(Wheel.down, Wheel.fromMsg(win32.WM_MOUSEWHEEL, -30));
+    try std.testing.expectEqual(Wheel.right, Wheel.fromMsg(win32.WM_MOUSEHWHEEL, 120));
+    try std.testing.expectEqual(Wheel.left, Wheel.fromMsg(win32.WM_MOUSEHWHEEL, -120));
+    try std.testing.expectEqual(Wheel.right, Wheel.of(@intFromEnum(Wheel.right)).?);
+    try std.testing.expectEqual(null, Wheel.of('A'));
+    try std.testing.expectEqual(null, Wheel.of(@intFromEnum(Wheel.right) + 1));
 }
 
 test parse {
@@ -672,6 +745,10 @@ test parse {
     try expectTrigger("win+[", win32.VK_OEM_4, .{ .super = true });
     try expectTrigger("enter", win32.VK_RETURN, .{});
     try expectTrigger("control+3", '3', ctrl);
+    try expectTrigger("ctrl+wheel_up", @intFromEnum(Wheel.up), ctrl);
+    try expectTrigger("Ctrl+Shift+WheelDown", @intFromEnum(Wheel.down), ctrl_shift);
+    try expectTrigger("alt+wheel_right", @intFromEnum(Wheel.right), .{ .alt = true });
+    try std.testing.expectError(error.TwoKeys, parse("wheel_up+a"));
     try std.testing.expectError(error.NoKey, parse("ctrl+shift"));
     try std.testing.expectError(error.NoKey, parse(""));
     try std.testing.expectError(error.TwoKeys, parse("ctrl+a+b"));
@@ -695,6 +772,10 @@ test parseSequence {
     try std.testing.expectError(error.NoKey, parseSequence(&buf, "ctrl+b>"));
     try std.testing.expectError(error.NoKey, parseSequence(&buf, ">c"));
     try std.testing.expectError(error.TooManyKeys, parseSequence(&buf, "a>b>c>d>e>f>g>h>i"));
+    // A wheel binds alone, at either end of a sequence or neither.
+    try std.testing.expectEqual(1, (try parseSequence(&buf, "ctrl+wheel_up")).len);
+    try std.testing.expectError(error.WheelInSequence, parseSequence(&buf, "ctrl+b>wheel_up"));
+    try std.testing.expectError(error.WheelInSequence, parseSequence(&buf, "wheel_up>c"));
 }
 
 test "a sequence runs on its last key, and a key acts or starts one, never both" {
@@ -839,4 +920,18 @@ test Keymap {
     // Applied again, the defaults come back.
     try km.apply(&.{});
     try std.testing.expectEqual(Action.new_tab, km.find('T', .{ .ctrl = true, .shift = true }).?.action);
+
+    // A wheel chord unbinds and binds as a key does, and leaves the
+    // keyboard's font keys alone; one in a sequence is skipped.
+    const up = @intFromEnum(Wheel.up);
+    try km.apply(&.{
+        .{ .key = "ctrl+wheel_up" },
+        .{ .key = "alt+wheel_down", .action = "next_tab" },
+        .{ .key = "ctrl+b>wheel_up", .action = "new_tab" },
+    });
+    try std.testing.expectEqual(null, km.find(up, .{ .ctrl = true }));
+    try std.testing.expectEqual(Action{ .increase_font_size = 1 }, km.find(win32.VK_OEM_PLUS, .{ .ctrl = true, .shift = true }).?.action);
+    try std.testing.expectEqual(Action.next_tab, km.find(@intFromEnum(Wheel.down), .{ .alt = true }).?.action);
+    try std.testing.expectEqual(Press.none, km.press('B', .{ .ctrl = true }));
+    try std.testing.expectEqualSlices(u16, L("Ctrl+Shift++"), km.label(.{ .increase_font_size = 1 }).slice());
 }

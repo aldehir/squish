@@ -313,9 +313,21 @@ so; the host's button reconnects, reattaches, and replaces them.
   redraw as it goes; ConPTY copes, but a full-screen program may flicker.
   Holding resizes until the drag ends would need the panes drawn
   scaled or cropped meanwhile.
-- **Every pane shares the window's font size.** Panes keep their own
-  cell size in slime's layout, but the window draws them all from one
-  font grid, and Ctrl+= resizes every pane.
+- **A pane's font size lives in the window** (`Session.font_delta`,
+  points on the window's): another window on the workspace draws the
+  pane at its own size, and reattaching forgets it. Keeping it in
+  slime would need a pane property and its RPC, and viewers at
+  different DPIs may want different points anyway.
+- **Splits don't inherit a pane's font size.** A new pane starts at the
+  window's: `split` arrives later through `workspace.changed`, and
+  nothing ties the new pane to the one split.
+- **No keyboard default for a pane's font size**: ctrl+alt+plus/minus
+  is AltGr+plus/minus on many layouts, which types. ctrl+shift+wheel,
+  the palette, and `slime.bind` reach it.
+- **Wheel bindings take whole chords from programs**: with the defaults,
+  ctrl+wheel and ctrl+shift+wheel never reach the program under the
+  pointer (a TUI that zooms on them) until init.lua unbinds them. A
+  wheel can't be part of a key sequence.
 - **A zoomed pane's pty takes the whole tab's size** while it's zoomed,
   so the others reflow when it's unzoomed.
 - **`SLIME_WORKSPACE` names a local workspace only.** On a host the
@@ -584,7 +596,7 @@ run Lua at a time, so a blocking call lets the others run.
   each one's own focus, so `client.queue` refuses the actions that
   change the workspace (`rpc.DaemonActions`: their methods do it once,
   for the pane named) and takes the window-local ones: clipboard and
-  font size. Sending one to a single viewer (the one that last sent
+  font size, the window's and its focused pane's. Sending one to a single viewer (the one that last sent
   input, say) would need the daemon to track that.
 - **Hooks in `init.lua` can't fall back to a window**: `slime.on` runs
   in the daemon; there's no `client.on`.
@@ -646,7 +658,7 @@ load, with the last good config kept, or settings it couldn't take.
   running: `ssh.terminfo` (the TERM a host was logged in to with), and
   a pane's `browser.idle` timer already armed.
 - **A font-size change on reload** resets what ctrl+plus/minus set,
-  as Ghostty's does.
+  as Ghostty's does; a pane's own difference stays.
 - **Watching the config polls**, so a change shows within a second or
   two; `ReadDirectoryChangesW` would be instant, at the cost of its own
   code per platform and of handling editors that rename over the file.
