@@ -107,6 +107,7 @@ const (
 	ConfigCheck     = "config.check"
 	ActionInvoke    = "action.invoke"
 	ClientQueue     = "client.queue"
+	ClientCopyKeys  = "client.copy_keys"
 	DaemonStop      = "daemon.stop"
 )
 
@@ -903,6 +904,22 @@ type ClientQueueParams struct {
 	Args      json.RawMessage `json:"args,omitempty"`
 }
 
+// ClientCopyKeysParams: client.copy_keys gives the connection's views
+// of every pane, now and later, copy mode keys of their own over the
+// daemon config's: Keys is copy mode's table (ConfigDesc.CopyKeys), ""
+// for the defaults, or null to drop the connection's for the config's.
+// A window sends its own daemon's to a host's, so a host's panes take
+// the keys of the init.lua where they're pressed.
+type ClientCopyKeysParams struct {
+	Keys json.RawMessage `json:"keys"`
+}
+
+// ClientCopyKeysResult: the lines of the table that didn't parse, which
+// were skipped; the rest apply.
+type ClientCopyKeysResult struct {
+	Skipped []string `json:"skipped"`
+}
+
 // DaemonActions are the window actions client.queue refuses, each with
 // the method that does the same for one pane, once: a window's own
 // would run in every viewer.
@@ -1125,7 +1142,10 @@ type ConfigDesc struct {
 	// CopyMode holds the bindings whose key starts with "copy-mode:",
 	// copy mode's own table, which the daemon applies to its terminals;
 	// the window ignores them.
-	CopyMode []Binding    `json:"copy_mode,omitempty"`
+	CopyMode []Binding `json:"copy_mode,omitempty"`
+	// CopyKeys is CopyMode as copy mode's table ("key\taction" lines),
+	// for a client to hand another daemon with client.copy_keys.
+	CopyKeys string       `json:"copy_keys,omitempty"`
 	Actions  []ActionDesc `json:"actions"`
 	Errors   []string     `json:"errors,omitempty"`
 }

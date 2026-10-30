@@ -58,19 +58,14 @@ func (s *Server) loadConfig() *rpc.ConfigDesc {
 	desc := s.configDescLocked()
 	s.mu.Unlock()
 	if cfg != nil {
-		// Once here, not once per pane: each line that doesn't parse,
-		// checked on its own.
-		for _, line := range strings.Split(strings.TrimSuffix(copyKeys, "\n"), "\n") {
-			if line == "" {
-				continue
-			}
-			if bad, err := vt.CheckCopyKeys(line + "\n"); err != nil {
-				s.log.Error("checking copy mode keys", "err", err)
-				break
-			} else if bad != "" {
-				key, action, _ := strings.Cut(bad, "\t")
-				s.log.Warn("copy mode binding skipped", "key", config.CopyModePrefix+key, "action", action)
-			}
+		// Once here, not once per pane.
+		skipped, err := skippedCopyKeys(copyKeys)
+		if err != nil {
+			s.log.Error("checking copy mode keys", "err", err)
+		}
+		for _, line := range skipped {
+			key, action, _ := strings.Cut(line, "\t")
+			s.log.Warn("copy mode binding skipped", "key", config.CopyModePrefix+key, "action", action)
 		}
 	}
 	if old != nil {
@@ -80,6 +75,25 @@ func (s *Server) loadConfig() *rpc.ConfigDesc {
 		s.log.Warn("config", "path", s.configPath, "err", firstLine(e))
 	}
 	return desc
+}
+
+// skippedCopyKeys is each line of a copy mode table that doesn't parse,
+// checked on its own: those a terminal skips.
+func skippedCopyKeys(keys string) ([]string, error) {
+	var skipped []string
+	for _, line := range strings.Split(strings.TrimSuffix(keys, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		bad, err := vt.CheckCopyKeys(line + "\n")
+		if err != nil {
+			return skipped, err
+		}
+		if bad != "" {
+			skipped = append(skipped, line)
+		}
+	}
+	return skipped, nil
 }
 
 // configDescLocked describes the current config, with the errors of

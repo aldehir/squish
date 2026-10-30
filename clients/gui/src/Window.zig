@@ -133,8 +133,9 @@ stats_shown: bool = build_options.stats,
 /// too, and is remembered in `hosts`. Local sessions opened later run
 /// `local_command`. `daemon` is the connection `config` and `keymap`
 /// came from, if one was made; the window owns it from here and goes
-/// on with it. `actions` are init.lua's, for the command palette.
-pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Source, keymap: []const binding.Entry, actions: []const Daemon.ConfigAction, hosts: *Hosts, shown: *Shown, command_line: []const u16, local_command: []const u16, daemon: ?*Daemon) !*Window {
+/// on with it. `actions` are init.lua's, for the command palette, and
+/// `copy_keys` its copy mode keys, for the hosts' slimes.
+pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Source, keymap: []const binding.Entry, actions: []const Daemon.ConfigAction, copy_keys: []const u8, hosts: *Hosts, shown: *Shown, command_line: []const u16, local_command: []const u16, daemon: ?*Daemon) !*Window {
     // Ours until the app has it.
     var pending = daemon;
     errdefer if (pending) |conn| conn.deinit();
@@ -199,6 +200,7 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
         .config = config,
         .keymap = keymap,
         .actions = actions,
+        .copy_keys = copy_keys,
         .daemon = pending,
         .local_command = local_command,
         .hosts = hosts,

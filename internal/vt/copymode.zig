@@ -389,6 +389,7 @@ const word_separators = [_]u21{ '!', '"', '#', '$', '%', '&', '\'', '(', ')', '*
 
 /// A terminal's copy mode: off, or on over a snapshot.
 pub const State = struct {
+    /// The daemon config's keys: those of a view that brings none.
     table: Table = .{},
     mode: ?Mode = null,
     /// The last needle searched for: the next mode's n searches up for
@@ -427,11 +428,12 @@ pub const State = struct {
 
     /// The action a key press would run, if it's bound and no jump or
     /// count is under way; for a caller that takes some keys first.
-    pub fn actionFor(self: *State, e: KeyEvent) ?Action {
+    /// `table` is the keys of the view the press came in on.
+    pub fn actionFor(self: *State, table: *const Table, e: KeyEvent) ?Action {
         const m = self.active() orelse return null;
         if (e.action == .release or m.jump != null or m.count != 0) return null;
         const trigger = Trigger.fromKey(e) orelse return null;
-        return self.table.lookup(trigger);
+        return table.lookup(trigger);
     }
 
     /// Start copy mode: snapshot `live`'s screen and its scrollback,
@@ -472,8 +474,9 @@ pub const State = struct {
     }
 
     /// A key, while the mode is on. Its text, if the key copies, goes to
-    /// `copied`. `live` is the pane's terminal, for a key that leaves.
-    pub fn key(self: *State, live: *Terminal, e: KeyEvent, copied: *std.Io.Writer) !Outcome {
+    /// `copied`. `live` is the pane's terminal, for a key that leaves;
+    /// `table` the keys of the view it came in on.
+    pub fn key(self: *State, table: *const Table, live: *Terminal, e: KeyEvent, copied: *std.Io.Writer) !Outcome {
         const m = self.active() orelse return .{};
         if (e.action == .release or e.key.modifier()) return .{};
         var out: Outcome = .{};
@@ -501,7 +504,7 @@ pub const State = struct {
         const n: usize = @max(m.count, 1);
         m.count = 0;
         const trigger = Trigger.fromKey(e) orelse return .{};
-        const action = self.table.lookup(trigger) orelse return .{};
+        const action = table.lookup(trigger) orelse return .{};
         try self.perform(live, m, action, n, copied, &out);
         return out;
     }

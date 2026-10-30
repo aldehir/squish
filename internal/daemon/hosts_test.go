@@ -543,6 +543,50 @@ func TestBridge(t *testing.T) {
 	eventually(t, "detach on the host", func() bool { return !h.remote.attached(ws.ID) })
 }
 
+// A window's copy mode keys, sent through the bridge, are what the
+// host's daemon looks its keys up in, over the host's own config.
+func TestBridgeCopyKeys(t *testing.T) {
+	h := newHostHarness(t, sshtest.Options{}, 0)
+	c := h.connect()
+	id := h.login(c, "dev1")
+	b, err := h.bridge(id, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Call(rpc.ClientCopyKeys, rpc.ClientCopyKeysParams{Keys: json.RawMessage(`"v\tbegin_selection\ny\tcopy_selection_and_cancel\n"`)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ws rpc.Workspace
+	if err := b.Call(rpc.WorkspaceNew, rpc.WorkspaceNewParams{Name: "remote"}, &ws); err != nil {
+		t.Fatal(err)
+	}
+	var created rpc.Created
+	if err := b.Call(rpc.TabNew, rpc.TabNewParams{Workspace: ws.ID, Size: Size{Cols: 40, Rows: 10}}, &created); err != nil {
+		t.Fatal(err)
+	}
+	h.remote.pty(0).emit("hello world")
+	eventually(t, "the output", func() bool { return strings.Contains(h.remote.serverText(created.Pane), "hello world") })
+
+	b.Send(created.Pane, &Event{Data: evCopyModeEnter()})
+	b.Send(created.Pane, &Event{Data: evText("0vlly0D")})
+	for {
+		pid, m, err := b.Recv()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d, ok := m.(*Draw); ok {
+			b.Send(pid, &Ack{Seq: d.Seq})
+		} else if cp, ok := m.(*Copied); ok {
+			// The defaults' v selects nothing and y does nothing, and D
+			// would copy the whole line.
+			if cp.Text != "hel" {
+				t.Errorf("v l l y on the host copied %q, want hel", cp.Text)
+			}
+			return
+		}
+	}
+}
+
 func TestBridgeUnknownHost(t *testing.T) {
 	h := newHostHarness(t, sshtest.Options{}, 0)
 	if _, err := h.bridge(99, ""); err == nil || !strings.Contains(err.Error(), "no host 99") {

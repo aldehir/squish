@@ -38,6 +38,8 @@ extern uint16_t slime_vt_key_code(const uint8_t* ptr, size_t len);
 extern SlimeView* slime_vt_view_new(SlimeSource* source);
 extern void slime_vt_view_free(SlimeView* v, GhosttyTerminal t);
 extern void slime_vt_view_reset(SlimeView* v, GhosttyTerminal t);
+extern bool slime_vt_view_copy_keys(SlimeView* v, const uint8_t* ptr, size_t len,
+	const uint8_t** bad_ptr, size_t* bad_len);
 extern uint8_t slime_vt_view_hold(SlimeView* v, GhosttyTerminal t);
 extern void slime_vt_end_sync(GhosttyTerminal t);
 extern bool slime_vt_view_frame(SlimeView* v, GhosttyTerminal t, bool full,
@@ -259,6 +261,29 @@ func (v *View) Close(t *Terminal) {
 // in progress, the wheel's remainder, the cell motion was last reported
 // in. For a new client; the frames' state stays.
 func (v *View) Reset(t *Terminal) { C.slime_vt_view_reset(v.v, t.term) }
+
+// SetCopyKeys gives this view its own copy mode keys, which it takes
+// over its source's, in Source.SetCopyKeys' format and with its result;
+// with ok false it drops them for the source's again.
+func (v *View) SetCopyKeys(table string, ok bool) (bad string, err error) {
+	var ptr *C.uint8_t
+	buf := []byte(table)
+	if ok {
+		// A null pointer drops the table, so "" (the defaults) points
+		// somewhere too.
+		buf = append(buf, 0)
+		ptr = (*C.uint8_t)(unsafe.Pointer(&buf[0]))
+	}
+	var badPtr *C.uint8_t
+	var badLen C.size_t
+	if !C.slime_vt_view_copy_keys(v.v, ptr, C.size_t(len(table)), &badPtr, &badLen) {
+		return "", errors.New("vt: out of memory")
+	}
+	if badLen > 0 {
+		bad = string(unsafe.Slice((*byte)(unsafe.Pointer(badPtr)), int(badLen)))
+	}
+	return bad, nil
+}
 
 // Hold is why the next frame of a terminal should wait.
 type Hold uint8

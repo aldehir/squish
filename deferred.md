@@ -428,6 +428,9 @@ case and wrapping, and `n N * #` go on. The frame carries copy mode's
 cursor and a flag the strip shows as a `COPY` tag, and its matches as
 the search's. init.lua rebinds its keys with
 `slime.bind("copy-mode:v", "begin-selection")`, tmux's names working.
+A host's panes take the window's keys: the window sends its daemon's
+table to each host's slime (`client.copy_keys`, again on every reload),
+which looks that connection's keys up in it over the host's init.lua.
 
 - **Regex search.** tmux treats a needle with `^$*+()?[].\` as a POSIX
   extended regex; here every needle is literal (`foo.bar` still finds

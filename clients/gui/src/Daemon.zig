@@ -212,6 +212,9 @@ pub const ConfigUpdate = struct {
     actions: []ConfigAction,
     /// slime.config's table, as JSON, for `Config.loadFrom`.
     settings: []const u8,
+    /// init.lua's copy mode bindings as client.copy_keys takes them,
+    /// for the hosts' daemons.
+    copy_keys: []const u8,
     /// Why the file failed to load, if it did (what the rest describes
     /// is then the config before).
     errors: []const []const u8,
@@ -220,6 +223,7 @@ pub const ConfigUpdate = struct {
         freeKeymap(alloc, self.keymap);
         freeActions(alloc, self.actions);
         alloc.free(self.settings);
+        alloc.free(self.copy_keys);
         for (self.errors) |e| alloc.free(e);
         alloc.free(self.errors);
     }
@@ -283,6 +287,14 @@ const Remote = struct {
     term: []const u8,
     /// What the reader attaches. Its ids are owned.
     want: Wanted,
+    /// The window's copy mode keys (`ConfigUpdate.copy_keys`), which
+    /// the host's slime takes for this connection's panes over its own
+    /// init.lua's. Owned. Guarded by `write_lock`, under which they're
+    /// sent, so a change can't pass the first send.
+    copy_keys: []const u8,
+    /// Whether the first went out: the reader sends them after the
+    /// hello, and `setCopyKeys` only from then on.
+    copy_keys_sent: bool = false,
 };
 
 /// A host's state as the daemon reports it (rpc.HostState).
@@ -853,7 +865,7 @@ pub const Json = struct {
     const HostList = struct { hosts: []const Host = &.{} };
     const WorkspaceList = struct { workspaces: []const WorkspaceDesc = &.{} };
     /// rpc.ConfigDesc: `settings` is slime.config's table.
-    pub const Config = struct { path: []const u8 = "", settings: std.json.Value = .null, keymap: []const Binding = &.{}, actions: []const ActionDesc = &.{}, errors: []const []const u8 = &.{} };
+    pub const Config = struct { path: []const u8 = "", settings: std.json.Value = .null, keymap: []const Binding = &.{}, actions: []const ActionDesc = &.{}, copy_keys: []const u8 = "", errors: []const []const u8 = &.{} };
     const Binding = struct { key: []const u8, action: []const u8 = "", args: std.json.Value = .null, lua: u32 = 0, repeat: bool = false };
     /// rpc.ActionDesc, but for its args, which the palette passes none of.
     pub const ActionDesc = struct { name: []const u8, title: []const u8 = "" };
@@ -1031,7 +1043,7 @@ pub fn begin(self: *Daemon, notify: Notify, frame_interval: u32, area: Area, siz
 /// workspace's tab running the host's shell), and posts `notify` once
 /// `state` says how that went. The panes then wait in `arrivals`. `term`
 /// is the TERM the host's panes get. UI thread.
-pub fn connectRemote(alloc: Allocator, notify: Notify, frame_interval: u32, host_id: u32, dest: []const u16, term: []const u8, area: Area, size: Size, want: Wanted) !*Daemon {
+pub fn connectRemote(alloc: Allocator, notify: Notify, frame_interval: u32, host_id: u32, dest: []const u16, term: []const u8, copy_keys: []const u8, area: Area, size: Size, want: Wanted) !*Daemon {
     var pipe: Pipe = try .open(false);
     errdefer pipe.close();
     const owned_dest = try alloc.dupe(u16, dest);
@@ -1040,13 +1052,15 @@ pub fn connectRemote(alloc: Allocator, notify: Notify, frame_interval: u32, host
     errdefer alloc.free(owned_term);
     const owned_ids = try alloc.dupe(u32, want.ids);
     errdefer alloc.free(owned_ids);
+    const owned_keys = try alloc.dupe(u8, copy_keys);
+    errdefer alloc.free(owned_keys);
     const self = try alloc.create(Daemon);
     errdefer alloc.destroy(self);
     self.* = .{
         .alloc = alloc,
         .pipe = pipe,
         .notify = notify,
-        .remote = .{ .host = host_id, .dest = owned_dest, .term = owned_term, .want = .{ .pid = want.pid, .ids = owned_ids, .make = want.make } },
+        .remote = .{ .host = host_id, .dest = owned_dest, .term = owned_term, .want = .{ .pid = want.pid, .ids = owned_ids, .make = want.make }, .copy_keys = owned_keys },
         .state = .init(.connecting),
         .area = area,
         .size = size,
@@ -1065,7 +1079,15 @@ pub fn connectRemote(alloc: Allocator, notify: Notify, frame_interval: u32, host
 /// for a pane: with none left, a new workspace, and a tab running
 /// `command` if no attached one has a pane.
 fn attachFirst(self: *Daemon, buf: []u8, area: Area, size: Size, command: []const u16, want: Wanted) !void {
-    if (self.remote != null) try self.handshake(buf);
+    if (self.remote != null) {
+        try self.handshake(buf);
+        // Before any pane attaches, so its first key in copy mode has
+        // them: the daemon serves a connection's calls in order.
+        win32.AcquireSRWLockExclusive(&self.write_lock);
+        defer win32.ReleaseSRWLockExclusive(&self.write_lock);
+        self.remote.?.copy_keys_sent = true;
+        try self.sendCopyKeysLocked();
+    }
 
     // A host's state changes reach every window, as does the local
     // config's keymap; a bridged daemon has neither to tell of.
@@ -1205,7 +1227,8 @@ pub fn isLost(self: *Daemon) bool {
 fn remoteLoop(self: *Daemon) void {
     const buf = self.alloc.alloc(u8, max_frame) catch return self.fail(error.OutOfMemory);
     defer self.alloc.free(buf);
-    const r = self.remote.?;
+    // Not a copy: `setCopyKeys` may change the keys meanwhile.
+    const r = &self.remote.?;
     var p: std.ArrayList(u8) = .empty;
     defer p.deinit(self.alloc);
     putU32(self.alloc, &p, r.host) catch return self.fail(error.OutOfMemory);
@@ -1265,6 +1288,7 @@ fn freeState(self: *Daemon) void {
         self.alloc.free(r.dest);
         self.alloc.free(r.term);
         self.alloc.free(r.want.ids);
+        self.alloc.free(r.copy_keys);
     }
 }
 
@@ -1364,6 +1388,31 @@ pub fn invoke(self: *Daemon, lua: u32, pane: PaneRef) !void {
 /// or empty) for `pane`: a key was pressed.
 pub fn invokeAction(self: *Daemon, name: []const u8, args: []const u8, pane: PaneRef) !void {
     _ = try self.call("action.invoke", .{ .name = name, .args = RawJson{ .text = args }, .pane = pane, .origin = "key" });
+}
+
+/// Give a host's slime the window's copy mode keys again: init.lua
+/// changed. UI thread.
+pub fn setCopyKeys(self: *Daemon, keys: []const u8) !void {
+    const owned = try self.alloc.dupe(u8, keys);
+    win32.AcquireSRWLockExclusive(&self.write_lock);
+    defer win32.ReleaseSRWLockExclusive(&self.write_lock);
+    const r = if (self.remote) |*r| r else {
+        self.alloc.free(owned);
+        return;
+    };
+    self.alloc.free(r.copy_keys);
+    r.copy_keys = owned;
+    if (r.copy_keys_sent) try self.sendCopyKeysLocked();
+}
+
+/// Send client.copy_keys with the remote's keys, under `write_lock`.
+/// The reply is dropped: an older host's slime has no such method, and
+/// keeps its own keys.
+fn sendCopyKeysLocked(self: *Daemon) !void {
+    const id = self.nextId();
+    const body = try encodeCall(self.alloc, id, "client.copy_keys", .{ .keys = self.remote.?.copy_keys });
+    defer self.alloc.free(body);
+    try self.pipe.send(.call, .none, body);
 }
 
 /// Have the daemon evaluate init.lua again (config.reload): what it
@@ -1801,11 +1850,13 @@ fn notified(self: *Daemon, a: Allocator, method: []const u8, params: std.json.Va
             for (c.errors) |e| try errors.append(self.alloc, try self.alloc.dupe(u8, e));
             const settings = try std.json.Stringify.valueAlloc(self.alloc, c.settings, .{});
             errdefer self.alloc.free(settings);
+            const copy_keys = try self.alloc.dupe(u8, c.copy_keys);
+            errdefer self.alloc.free(copy_keys);
             const keymap = try keymapFromJson(self.alloc, c.keymap);
             errdefer freeKeymap(self.alloc, keymap);
             const actions = try actionsFromJson(self.alloc, c.actions);
             errdefer freeActions(self.alloc, actions);
-            const update: ConfigUpdate = .{ .keymap = keymap, .actions = actions, .settings = settings, .errors = try errors.toOwnedSlice(self.alloc) };
+            const update: ConfigUpdate = .{ .keymap = keymap, .actions = actions, .settings = settings, .copy_keys = copy_keys, .errors = try errors.toOwnedSlice(self.alloc) };
             win32.AcquireSRWLockExclusive(&self.lock);
             defer win32.ReleaseSRWLockExclusive(&self.lock);
             if (self.config_update) |*old| old.deinit(self.alloc);

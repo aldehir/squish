@@ -46,6 +46,8 @@ pub fn main(init: std.process.Init) !void {
     defer Daemon.freeKeymap(init.gpa, keymap);
     var actions: []Daemon.ConfigAction = &.{};
     defer Daemon.freeActions(init.gpa, actions);
+    var copy_keys: []const u8 = "";
+    defer init.gpa.free(copy_keys);
     var source: Config.Source = .{ .dir = config_dir };
     defer init.gpa.free(source.path);
     // Why init.lua didn't load, for the window to show once it's up.
@@ -69,6 +71,7 @@ pub fn main(init: std.process.Init) !void {
         config = try Config.loadFrom(init.gpa, init.io, desc.settings, source);
         keymap = try Daemon.keymapFromJson(init.gpa, desc.keymap);
         actions = try Daemon.actionsFromJson(init.gpa, desc.actions);
+        copy_keys = try init.gpa.dupe(u8, desc.copy_keys);
     } else {
         config = .init(init.gpa);
     }
@@ -82,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(local_command);
 
     // The window owns the connection from here, failing or not.
-    const window = try Window.create(init.gpa, init.io, &config, source, keymap, actions, &hosts, &shown, command_line, local_command, daemon);
+    const window = try Window.create(init.gpa, init.io, &config, source, keymap, actions, copy_keys, &hosts, &shown, command_line, local_command, daemon);
     defer window.destroy();
     if (daemon_errors.items.len > 0 or config.errors.items.len > 0) try window.app.setNotice(daemon_errors.items);
 

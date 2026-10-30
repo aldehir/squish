@@ -31,6 +31,10 @@ type conn struct {
 	// beyond theirs. Guarded by the server's lock.
 	viewing map[uint32]*workspace
 	subs    []string
+	// copyKeys is the copy mode table the client sent
+	// (client.copy_keys), which its views of every pane take over the
+	// config's; nil for none. Guarded by the server's lock.
+	copyKeys *string
 
 	// Set by the handshake: the least time between a pane's frames.
 	interval time.Duration

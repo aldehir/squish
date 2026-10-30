@@ -241,6 +241,14 @@ const View = struct {
     /// Wheel rotation not yet turned into scrolling, vertical then
     /// horizontal, in 1/WHEEL_DELTA notches times the lines per notch.
     wheel_remainder: [2]i32 = .{ 0, 0 },
+    /// Copy mode's keys as this view's client gave them
+    /// (slime_vt_view_copy_keys), over the defaults; null takes the
+    /// source's, the daemon config's.
+    copy_keys: ?copymode.Table = null,
+
+    fn copyTable(self: *const View) *const copymode.Table {
+        return if (self.copy_keys) |*t| t else &self.source.copy.table;
+    }
 };
 
 /// What an event (or autoscroll tick) did. The bytes are the View's,
@@ -317,8 +325,35 @@ export fn slime_vt_view_free(v: ?*View, t: Terminal) void {
     self.word_boundary.deinit(alloc);
     self.changed.deinit(alloc);
     self.images.deinit(alloc);
+    if (self.copy_keys) |*keys| keys.deinit();
     if (self.image_rgba) |rgba| alloc.free(rgba);
     alloc.destroy(self);
+}
+
+/// Set the view's own copy mode keys, which it takes over the source's,
+/// as slime_vt_source_copy_keys does them; a null `ptr` drops them for
+/// the source's again. Returns false if out of memory.
+export fn slime_vt_view_copy_keys(v: ?*View, ptr: ?[*]const u8, len: usize, bad_ptr: *?[*]const u8, bad_len: *usize) bool {
+    const self = v orelse return false;
+    bad_ptr.* = null;
+    bad_len.* = 0;
+    const text = (ptr orelse {
+        if (self.copy_keys) |*t| t.deinit();
+        self.copy_keys = null;
+        return true;
+    })[0..len];
+    var table: copymode.Table = .{};
+    const bad = table.apply(text) catch {
+        table.deinit();
+        return false;
+    };
+    if (self.copy_keys) |*t| t.deinit();
+    self.copy_keys = table;
+    if (bad) |line| {
+        bad_ptr.* = line.ptr;
+        bad_len.* = line.len;
+    }
+    return true;
 }
 
 /// Forget the input state the last client left, for a new one: a
@@ -693,7 +728,7 @@ fn enterCopyMode(self: *View, live: *vt.Terminal) Error!void {
 /// a copy as one nobody asked for (tag 0), which the client takes as
 /// such, and / or ? as a request for a needle.
 fn copyModeKey(self: *View, live: *vt.Terminal, e: vt.input.KeyEvent, result: *Result) Error!void {
-    const out = self.source.copy.key(live, e, &self.copied.writer) catch return error.SelectionFailed;
+    const out = self.source.copy.key(self.copyTable(), live, e, &self.copied.writer) catch return error.SelectionFailed;
     if (out.changed) result.changed = true;
     if (out.copied) {
         result.copied = true;

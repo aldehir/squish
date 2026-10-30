@@ -371,6 +371,87 @@ func TestEvents(t *testing.T) {
 	}
 }
 
+func evCopyModeEnter() []byte { return []byte{13, 1} }
+
+// TestClientCopyKeys: copy mode's keys that a connection sends are its
+// views' own, in the panes it views and the ones it attaches later,
+// while another viewer of the same pane keeps the config's; null drops
+// them again.
+func TestClientCopyKeys(t *testing.T) {
+	h := newHarness(t)
+	a := newDrawer(t, h)
+	a.ack(a.draw(5 * time.Second))
+	h.pty(0).emit("hello world")
+	eventually(t, "the output", func() bool { return strings.Contains(h.serverText(a.pane), "hello world") })
+
+	var res rpc.ClientCopyKeysResult
+	keys := "v\tbegin_selection\ny\tcopy_selection_and_cancel\nnope\tcancel\n"
+	if err := a.c.Call(rpc.ClientCopyKeys, map[string]any{"keys": keys}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0] != "nope\tcancel" {
+		t.Errorf("skipped %q, want the line with the unknown key", res.Skipped)
+	}
+	if err := a.c.Call(rpc.ClientCopyKeys, map[string]any{}, nil); err == nil {
+		t.Error("a call without keys was taken")
+	}
+
+	// With the defaults, v toggles a rectangle and selects nothing and y
+	// is unbound, so the first copy is D's, the line from the cursor.
+	selects := func(d *drawer, pane PaneID) bool {
+		t.Helper()
+		d.c.Send(pane, &Event{Data: evCopyModeEnter()})
+		d.c.Send(pane, &Event{Data: evText("0vlly0D")})
+		c := d.copied()
+		switch c.Text {
+		case "hel":
+			return true
+		case "hello world":
+			return false
+		}
+		t.Fatalf("copy mode copied %q", c.Text)
+		return false
+	}
+	if !selects(a, a.pane) {
+		t.Error("the connection's own keys weren't taken")
+	}
+
+	// A second window on the same pane keeps the config's.
+	ab, bb := net.Pipe()
+	go h.srv.handle(ab)
+	bc, err := NewClientWith(bb, Hello{FrameInterval: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { bc.Close() })
+	b := &drawer{t: t, c: bc, conn: bb, pane: a.pane}
+	if err := bc.Call(rpc.WorkspaceAttach, rpc.WorkspaceAttachParams{ID: h.list().Workspaces[0].ID}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if selects(b, b.pane) {
+		t.Error("another connection's view took the first's keys")
+	}
+
+	// A pane the connection attaches after the call takes them too.
+	var created rpc.Created
+	if err := a.c.Call(rpc.PaneSplit, rpc.PaneSplitParams{Pane: a.pane, Direction: Right}, &created); err != nil {
+		t.Fatal(err)
+	}
+	h.pty(1).emit("hello world")
+	eventually(t, "the new pane's output", func() bool { return strings.Contains(h.serverText(created.Pane), "hello world") })
+	if !selects(a, created.Pane) {
+		t.Error("a pane attached after the call didn't take the keys")
+	}
+
+	// null: the config's again.
+	if err := a.c.Call(rpc.ClientCopyKeys, map[string]any{"keys": nil}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if selects(a, a.pane) {
+		t.Error("keys null left the connection's keys in place")
+	}
+}
+
 // TestEventAutoscroll drags a selection above the pane and checks the
 // daemon keeps scrolling it into history on its own, sending frames.
 func TestEventAutoscroll(t *testing.T) {

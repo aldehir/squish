@@ -96,6 +96,7 @@ var methods = map[string]handler{
 	rpc.ConfigCheck:     method((*Server).configCheck),
 	rpc.ActionInvoke:    method((*Server).actionInvoke),
 	rpc.ClientQueue:     method((*Server).clientQueue),
+	rpc.ClientCopyKeys:  method((*Server).clientCopyKeys),
 	rpc.DaemonStop:      method((*Server).daemonStop),
 }
 
@@ -252,6 +253,38 @@ func (c *conn) subscribedLocked(name string) bool {
 		}
 	}
 	return false
+}
+
+// clientCopyKeys gives the connection's views of every pane, and the
+// ones it attaches later, its own copy mode keys.
+func (s *Server) clientCopyKeys(cl *callCtx, p rpc.ClientCopyKeysParams) (*rpc.ClientCopyKeysResult, error) {
+	if cl.c == nil {
+		return nil, rpc.Errorf(rpc.CodeInvalidRequest, "client.copy_keys needs a connection")
+	}
+	if len(p.Keys) == 0 {
+		return nil, rpc.Errorf(rpc.CodeInvalidParams, "client.copy_keys needs keys (a string, or null)")
+	}
+	var keys *string
+	if err := json.Unmarshal(p.Keys, &keys); err != nil {
+		return nil, rpc.Errorf(rpc.CodeInvalidParams, "keys must be a string or null")
+	}
+	res := &rpc.ClientCopyKeysResult{Skipped: []string{}}
+	if keys != nil {
+		skipped, err := skippedCopyKeys(*keys)
+		if err != nil {
+			return nil, err
+		}
+		res.Skipped = append(res.Skipped, skipped...)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cl.c.copyKeys = keys
+	for _, pn := range s.panes {
+		if p, ok := pn.(*Pane); ok {
+			p.setViewCopyKeys(cl.c, keys)
+		}
+	}
+	return res, nil
 }
 
 // clientQueue asks a workspace's viewers to perform a window action:

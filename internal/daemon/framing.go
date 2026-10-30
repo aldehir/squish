@@ -154,6 +154,11 @@ func (p *Pane) attachFramesLocked(c *conn, from PaneID) (*paneViewer, error) {
 		}
 		v = &paneViewer{c: c, view: view}
 		p.fr.viewers[c] = v
+		// The connection's own copy mode keys, if it sent some: callers
+		// hold the server's lock, which guards them.
+		if c.copyKeys != nil {
+			p.applyViewCopyKeysLocked(v, c.copyKeys)
+		}
 	} else {
 		// Attaching again starts over: its drag, wheel remainder, and the
 		// like aren't kept.

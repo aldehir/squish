@@ -67,6 +67,10 @@ keymap: binding.Keymap,
 /// init.lua's actions, which the command palette lists. Owned; they
 /// follow the daemon's `config.changed` too.
 actions: []Daemon.ConfigAction = &.{},
+/// init.lua's copy mode bindings as client.copy_keys takes them, which
+/// every host's slime gets for this window's panes there. Owned; they
+/// follow `config.changed` too.
+copy_keys: []const u8 = "",
 /// What local sessions run, in CreateProcessW syntax; empty for the
 /// daemon's shell. Outlives the app.
 local_command: []const u16,
@@ -753,6 +757,8 @@ pub const Options = struct {
     keymap: []const binding.Entry = &.{},
     /// init.lua's actions, from the same; copied.
     actions: []const Daemon.ConfigAction = &.{},
+    /// init.lua's copy mode keys, from the same; copied.
+    copy_keys: []const u8 = "",
     /// The connection the config came from, if one was made: the app
     /// owns it from here, and `start` goes on with it.
     daemon: ?*Daemon = null,
@@ -776,11 +782,14 @@ pub fn init(opts: Options) !App {
     try keymap.apply(opts.keymap);
     const actions = try dupeActions(opts.alloc, opts.actions);
     errdefer Daemon.freeActions(opts.alloc, actions);
+    const copy_keys = try opts.alloc.dupe(u8, opts.copy_keys);
+    errdefer opts.alloc.free(copy_keys);
     return .{
         .alloc = opts.alloc,
         .config = opts.config,
         .keymap = keymap,
         .actions = actions,
+        .copy_keys = copy_keys,
         .pending_daemon = opts.daemon,
         .local_command = opts.local_command,
         .hosts = opts.hosts,
@@ -828,6 +837,7 @@ pub fn deinit(self: *App) void {
         else => {},
     }
     Daemon.freeActions(self.alloc, self.actions);
+    self.alloc.free(self.copy_keys);
     self.alloc.free(self.notice);
     // Hanging up detaches the workspaces; slime keeps them for the next
     // window.
@@ -2166,7 +2176,7 @@ fn bridgeHost(self: *App, e: *HostEntry, make: bool) !void {
     if (stand_in) |s| if (s.login != null) self.closeLogin(s);
     var want = self.shown.wanted(e.dest);
     want.make = make;
-    const remote = Daemon.connectRemote(self.alloc, self.notify, self.shell.frameInterval(), e.id, e.dest, Session.sshTerm(self.config), self.daemonArea(), self.daemonSize(), want) catch |err| {
+    const remote = Daemon.connectRemote(self.alloc, self.notify, self.shell.frameInterval(), e.id, e.dest, Session.sshTerm(self.config), self.copy_keys, self.daemonArea(), self.daemonSize(), want) catch |err| {
         log.err("bridging to slime on {f} failed: {}", .{ std.unicode.fmtUtf16Le(e.dest), err });
         if (stand_in) |s| s.showEnded(@errorName(err));
         return;
@@ -2229,6 +2239,11 @@ fn configReloaded(self: *App, reloaded: *Daemon.ConfigUpdate) void {
     self.actions = reloaded.actions;
     reloaded.actions = &.{};
     self.shell.reloadConfig(reloaded.settings);
+    // The hosts' panes take the window's copy mode keys, live.
+    self.alloc.free(self.copy_keys);
+    self.copy_keys = reloaded.copy_keys;
+    reloaded.copy_keys = &.{};
+    for (self.remotes.items) |r| r.conn.setCopyKeys(self.copy_keys) catch |err| log.warn("sending copy mode keys to a host failed: {}", .{err});
     self.setNotice(reloaded.errors) catch |err| log.err("showing the config's errors failed: {}", .{err});
     self.markDirty();
 }

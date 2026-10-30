@@ -474,6 +474,67 @@ func TestCopyModeKeys(t *testing.T) {
 	}
 }
 
+// TestViewCopyKeys: a view's own table wins over its source's for the
+// keys that come in on it, while another view of the same terminal, and
+// the first once it drops its own, look keys up in the source's.
+func TestViewCopyKeys(t *testing.T) {
+	term := newTerm(t, 20, 4)
+	write(t, term, "hello world")
+	src := newSource(t)
+	own := newViewOf(t, src, term)
+	other := newViewOf(t, src, term)
+	for _, v := range []*View{own, other} {
+		event(t, v, term, false, evGeometry(20, 4))
+		frame(t, v, term, true)
+	}
+
+	bad, err := own.SetCopyKeys("v\tbegin_selection\ny\tcopy_selection_and_cancel\nnope\tcancel\n", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad != "nope\tcancel" {
+		t.Errorf("bad line %q, want the one with the unknown key", bad)
+	}
+	event(t, own, term, false, evCopyMode(copyModeEnter))
+	if r := keys(t, own, term, "0", "v", "l", "l", "y"); !r.Copied || string(r.Text) != "hel" {
+		t.Errorf("v l l y on the view with its own keys copied %v %q, want hel", r.Copied, r.Text)
+	}
+
+	// The source's: tmux's defaults, where v selects nothing and y is
+	// unbound.
+	for _, tc := range []struct {
+		name string
+		v    *View
+	}{{"the other view", other}, {"the view once it dropped its keys", own}} {
+		if tc.v == own {
+			if _, err := own.SetCopyKeys("", false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		event(t, tc.v, term, false, evCopyMode(copyModeEnter))
+		keys(t, tc.v, term, "0", "v", "l", "l", "y")
+		if r := event(t, tc.v, term, false, evKeyFull(KeyCode("enter"), 0, 0, "\r")); r.Copied {
+			t.Errorf("%s: v selected, copied %q", tc.name, r.Text)
+		}
+		if src.CopyMode() {
+			t.Errorf("%s: Enter didn't leave copy mode", tc.name)
+		}
+	}
+
+	// An empty table is the defaults, not the source's.
+	if _, err := src.SetCopyKeys("v\tbegin_selection\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := own.SetCopyKeys("", true); err != nil {
+		t.Fatal(err)
+	}
+	event(t, own, term, false, evCopyMode(copyModeEnter))
+	keys(t, own, term, "0", "v", "l", "l")
+	if r := event(t, own, term, false, evKeyFull(KeyCode("enter"), 0, 0, "\r")); r.Copied {
+		t.Errorf("an empty table took the source's v: copied %q", r.Text)
+	}
+}
+
 // TestCopyModeMouse: a drag while in copy mode sets the selection and
 // puts the cursor at its end, which the keys go on from; a click moves
 // the cursor; the program hears nothing of the mouse.

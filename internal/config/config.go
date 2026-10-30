@@ -168,6 +168,7 @@ func (c *Config) describe() {
 	for _, a := range c.actions {
 		d.Actions = append(d.Actions, a.desc)
 	}
+	d.CopyKeys = c.CopyKeys()
 	c.desc = d
 }
 

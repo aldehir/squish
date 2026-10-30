@@ -192,6 +192,31 @@ func (p *Pane) applyCopyKeysLocked() {
 	}
 }
 
+// setViewCopyKeys gives c's view of the pane, if it has one, the
+// connection's copy mode keys (conn.copyKeys).
+func (p *Pane) setViewCopyKeys(c *conn, keys *string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if v := p.fr.viewers[c]; v != nil {
+		p.applyViewCopyKeysLocked(v, keys)
+	}
+}
+
+// applyViewCopyKeysLocked hands keys to v's view, or with nil drops its
+// own for the source's. A line that doesn't parse is skipped (the
+// client was told when it sent them).
+func (p *Pane) applyViewCopyKeysLocked(v *paneViewer, keys *string) {
+	var err error
+	if keys != nil {
+		_, err = v.view.SetCopyKeys(*keys, true)
+	} else {
+		_, err = v.view.SetCopyKeys("", false)
+	}
+	if err != nil {
+		p.srv.log.Error("setting copy mode keys", "pane", p.id, "err", err)
+	}
+}
+
 // mode is the state of a mode libghostty-vt leaves to us
 // (win32-input-mode), as the program last set it.
 type mode struct {
