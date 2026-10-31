@@ -423,6 +423,28 @@ pub const WIN32_FILE_ATTRIBUTE_DATA = extern struct {
 pub extern "kernel32" fn GetFileAttributesExW(LPCWSTR, i32, *WIN32_FILE_ATTRIBUTE_DATA) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CopyFileW(LPCWSTR, LPCWSTR, BOOL) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateDirectoryW(LPCWSTR, ?*anyopaque) callconv(.winapi) BOOL;
+pub const OPEN_ALWAYS = 4;
+pub const FILE_SHARE_READ = 0x1;
+pub const FILE_SHARE_WRITE = 0x2;
+pub const FILE_SHARE_DELETE = 0x4;
+/// Alone (no FILE_WRITE_DATA), every write goes to the end, whole.
+pub const FILE_APPEND_DATA = 0x4;
+pub const FILE_ATTRIBUTE_NORMAL = 0x80;
+pub const FILE_BEGIN = 0;
+pub extern "kernel32" fn GetFileSizeEx(HANDLE, *i64) callconv(.winapi) BOOL;
+pub extern "kernel32" fn SetFilePointerEx(HANDLE, i64, ?*i64, u32) callconv(.winapi) BOOL;
+pub extern "kernel32" fn SetEndOfFile(HANDLE) callconv(.winapi) BOOL;
+pub const SYSTEMTIME = extern struct {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+};
+pub extern "kernel32" fn GetLocalTime(*SYSTEMTIME) callconv(.winapi) void;
 pub const OVERLAPPED = extern struct {
     Internal: usize = 0,
     InternalHigh: usize = 0,

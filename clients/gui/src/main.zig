@@ -8,15 +8,18 @@ const Daemon = @import("Daemon.zig");
 const Hosts = @import("Hosts.zig");
 const Shown = @import("Shown.zig");
 const binding = @import("binding.zig");
+const log_file = @import("log_file.zig");
 
 pub const std_options: std.Options = .{
     .log_scope_levels = &.{
         // libghostty-vt logs every grapheme cluster it builds at debug.
         .{ .scope = .terminal, .level = .info },
     },
+    .logFn = log_file.log,
 };
 
 pub fn main(init: std.process.Init) !void {
+    log_file.open();
     // Per-monitor v2 gives us WM_DPICHANGED and unscaled client sizes.
     // This should eventually move to the application manifest.
     _ = win32.SetProcessDpiAwarenessContext(win32.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -179,6 +182,7 @@ test {
     _ = @import("Tab.zig");
     _ = @import("Placement.zig");
     _ = @import("messages.zig");
+    _ = log_file;
     _ = @import("ProgramStatus.zig");
     _ = @import("Login.zig");
     _ = @import("view.zig");

@@ -711,7 +711,10 @@ scripts run in it act on it by default:
                    slime pane.
   SLIME_INSTANCE   set only under a daemon of its own (one started with it
                    set), so that the CLI reaches that daemon and not the
-                   user's.
+                   user's. A slime-gui started with it logs to
+                   %LOCALAPPDATA%\slime\slime-gui-<instance>.log, not
+                   slime-gui.log, as the daemon it starts logs to
+                   slime-<instance>.log.
 
 The variables are set when the pane starts; a shell keeps them if the
 pane moves, and the ids stay valid.`
