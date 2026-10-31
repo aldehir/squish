@@ -68,6 +68,9 @@ next_title_len: usize = 0,
 /// Set while a WM_APP_TITLE_CHANGED is queued, so a program that
 /// retitles rapidly posts one message rather than flooding the queue.
 title_pending: std.atomic.Value(bool) = .init(false),
+/// The daemon's connection is being made again (a takeover, or a
+/// restart after a crash): the strip says so in place of the title.
+reconnecting: std.atomic.Value(bool) = .init(false),
 
 lock: win32.SRWLOCK = .{},
 
@@ -410,6 +413,7 @@ pub fn create(alloc: Allocator, wake: Wake, env: Env, id: u32, launch: Launch, c
                 .copied = daemonCopied,
                 .url = daemonUrl,
                 .ended = daemonEnded,
+                .link = daemonLink,
             });
         },
         .waiting => |w| {
@@ -779,6 +783,14 @@ fn daemonEnded(ctx: *anyopaque, why: ?[]const u8) void {
     _ = win32.PostMessageW(self.wake.hwnd, messages.WM_APP_CHILD_EXITED, self.id, 0);
 }
 
+/// Sink for the connection going and coming back: the strip shows it
+/// in place of the title meanwhile. Reader thread.
+fn daemonLink(ctx: *anyopaque, reconnecting: bool) void {
+    const self: *Session = @ptrCast(@alignCast(ctx));
+    self.reconnecting.store(reconnecting, .release);
+    self.postTitle();
+}
+
 /// Why the daemon pane was lost to us, once WM_APP_CHILD_EXITED says
 /// it ended, if its program didn't exit.
 pub fn daemonLoss(self: *const Session) ?*const DaemonLoss {
@@ -874,6 +886,7 @@ pub fn unlockTerminal(self: *Session) void {
 /// The program's title, or its name if it set none. A browser's page
 /// title, or with none its url's host.
 pub fn title(self: *const Session) []const u16 {
+    if (self.reconnecting.load(.acquire)) return std.unicode.utf8ToUtf16LeStringLiteral("reconnecting to slime\u{2026}");
     if (self.title_len > 0) return self.title_buf[0..self.title_len];
     return switch (self.content) {
         .terminal => self.default_title,

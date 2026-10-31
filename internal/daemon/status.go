@@ -54,6 +54,16 @@ func (s *programStatus) report(r vt.Status) {
 	s.recs[oldest] = statusRecord{rec, s.clock}
 }
 
+// restore takes records a model kept, oldest first, as records gave
+// them.
+func (s *programStatus) restore(recs []StatusRecord) {
+	s.recs = s.recs[:0]
+	for _, r := range recs {
+		s.clock++
+		s.recs = append(s.recs, statusRecord{r, s.clock})
+	}
+}
+
 // clear removes the record id and those under it, or all with no id.
 func (s *programStatus) clear(id string) {
 	if id == "" {

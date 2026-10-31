@@ -111,6 +111,10 @@ const (
 	ClientQueue     = "client.queue"
 	ClientCopyKeys  = "client.copy_keys"
 	DaemonStop      = "daemon.stop"
+	DaemonInfo      = "daemon.info"
+	HostUpgrade     = "host.upgrade"
+	WorkspaceOpen   = "workspace.open"
+	WorkspaceExport = "workspace.export"
 )
 
 // Notifications. A workspace's viewers get their workspace's without
@@ -144,6 +148,7 @@ const (
 	EvScriptDone            = "script.done"
 	EvConfigChanged         = "config.changed"
 	EvClientAction          = "client.action"
+	EvDaemonRestarting      = "daemon.restarting"
 )
 
 // MatchEvent says whether event name is one pattern asks for: the name
@@ -1074,6 +1079,10 @@ type Host struct {
 	State HostState `json:"state"`
 	Text  string    `json:"text,omitempty"`
 	Proxy string    `json:"proxy,omitempty"`
+	// Build is the id of the build of slime this daemon installed on
+	// the host, while connected: a window compares it with the host
+	// daemon's own to offer an upgrade (host.upgrade).
+	Build string `json:"build,omitempty"`
 }
 
 // HostConnectParams logs in to Dest (ssh://[user@]host[:port],
@@ -1248,7 +1257,9 @@ type ConfigDesc struct {
 	// for a client to hand another daemon with client.copy_keys.
 	CopyKeys string       `json:"copy_keys,omitempty"`
 	Actions  []ActionDesc `json:"actions"`
-	Errors   []string     `json:"errors,omitempty"`
+	// Workspaces is what slime.workspace.define set, in order.
+	Workspaces []WorkspaceDef `json:"workspaces,omitempty"`
+	Errors     []string       `json:"errors,omitempty"`
 }
 
 // Binding is one slime.bind: Key as it was written (a chord such as
@@ -1294,4 +1305,71 @@ type ActionInvokeParams struct {
 	Args   json.RawMessage `json:"args,omitempty"`
 	Pane   PaneID          `json:"pane,omitzero"`
 	Origin string          `json:"origin,omitempty"`
+}
+
+// Build identifies the executable a daemon runs: ID is its build
+// directory's name when it sits in one (bin/<id>/slime, as slime-gui
+// copies it and hosts install it), else "<size>-<mtime>" as slime-gui
+// names its copies; Time is the executable's mtime in unix seconds,
+// which orders takeovers: later is newer.
+type Build struct {
+	ID   string `json:"id"`
+	Time int64  `json:"time"`
+}
+
+// DaemonInfoResult answers daemon.info: the process, its build, when
+// it started, and where it keeps its state (model.json).
+type DaemonInfoResult struct {
+	PID      uint32 `json:"pid"`
+	Build    Build  `json:"build"`
+	Started  int64  `json:"started"` // unix milliseconds
+	StateDir string `json:"state_dir"`
+	// Args are the daemon's command line after `serve`, for the daemon
+	// replacing it to run with the same.
+	Args []string `json:"args,omitempty"`
+}
+
+// DaemonStopParams: with Save, the daemon writes model.json as things
+// are and keeps it, so the daemon that starts next restores the
+// workspaces (each pane relaunched: the programs end), and tells every
+// client daemon.restarting (with Build, the one replacing it) before
+// hanging up, so they reconnect. slime upgrade stops a daemon so.
+type DaemonStopParams struct {
+	Save  bool  `json:"save,omitempty"`
+	Build Build `json:"build,omitzero"`
+}
+
+// DaemonRestartingParams is daemon.restarting: the build replacing
+// the daemon (daemon.stop with save). A client that gets EOF after it
+// reconnects rather than reporting the daemon lost; the workspaces
+// come back under the same ids.
+type DaemonRestartingParams struct {
+	Build Build `json:"build"`
+}
+
+// WorkspaceOpenNamedParams is the workspace.open method: the workspace
+// named Name if one exists, else one made from the config's definition
+// of that name (slime.workspace.define). With Attach, a connection
+// calling it becomes a viewer. (WorkspaceOpenParams is the event's.)
+type WorkspaceOpenNamedParams struct {
+	Name   string `json:"name"`
+	Attach bool   `json:"attach,omitempty"`
+	// Beside names a workspace whose viewers are to open it too, as
+	// workspace.new's attach does.
+	Beside uint32 `json:"beside,omitempty"`
+}
+
+// WorkspaceExportResult is workspace.export's: the workspace as a
+// slime.workspace.define call for init.lua.
+type WorkspaceExportResult struct {
+	Lua string `json:"lua"`
+}
+
+// WorkspaceDef is one slime.workspace.define: a workspace by name and
+// the tabs to make it with, opened by workspace.open, or at a daemon
+// start with nothing to restore when Autostart.
+type WorkspaceDef struct {
+	Name      string    `json:"name"`
+	Tabs      []*Layout `json:"tabs"`
+	Autostart bool      `json:"autostart,omitempty"`
 }

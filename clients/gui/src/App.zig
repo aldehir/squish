@@ -67,6 +67,10 @@ keymap: binding.Keymap,
 /// init.lua's actions, which the command palette lists. Owned; they
 /// follow the daemon's `config.changed` too.
 actions: []Daemon.ConfigAction = &.{},
+/// The names of init.lua's workspace definitions
+/// (slime.workspace.define), which the palette opens. Owned; they
+/// follow `config.changed` too.
+workspace_defs: []const []const u16 = &.{},
 /// init.lua's copy mode bindings as client.copy_keys takes them, which
 /// every host's slime gets for this window's panes there. Owned; they
 /// follow `config.changed` too.
@@ -316,6 +320,9 @@ pub const Confirm = struct {
         kill: u32,
         /// The pane's session's id.
         permission: u32,
+        /// Replacing a daemon with a newer build: the host's id, or
+        /// null for the local one.
+        upgrade: ?u32,
     },
     dialog: Dialog,
     title: [TextField.max_len + 32]u16 = undefined,
@@ -475,6 +482,9 @@ const HostEntry = struct {
     /// Its daemon's SOCKS proxy while it's connected, which its browser
     /// panes browse through; empty without one. Owned.
     proxy: []const u16 = &.{},
+    /// The id of the build the daemon installed there, while connected;
+    /// a host daemon of another build can be upgraded. Owned.
+    build: []const u8 = &.{},
     /// This window asked the daemon to connect it, so its prompts come
     /// here.
     ours: bool = false,
@@ -794,6 +804,9 @@ pub const Options = struct {
     keymap: []const binding.Entry = &.{},
     /// init.lua's actions, from the same; copied.
     actions: []const Daemon.ConfigAction = &.{},
+    /// The names of init.lua's workspace definitions, from the same;
+    /// copied.
+    workspace_defs: []const []const u16 = &.{},
     /// init.lua's copy mode keys, from the same; copied.
     copy_keys: []const u8 = "",
     /// The connection the config came from, if one was made: the app
@@ -819,11 +832,14 @@ pub fn init(opts: Options) !App {
     try keymap.apply(opts.keymap);
     const actions = try dupeActions(opts.alloc, opts.actions);
     errdefer Daemon.freeActions(opts.alloc, actions);
+    const workspace_defs = try dupeNames(opts.alloc, opts.workspace_defs);
+    errdefer Daemon.freeWorkspaceDefs(opts.alloc, workspace_defs);
     const copy_keys = try opts.alloc.dupe(u8, opts.copy_keys);
     errdefer opts.alloc.free(copy_keys);
     return .{
         .alloc = opts.alloc,
         .config = opts.config,
+        .workspace_defs = workspace_defs,
         .keymap = keymap,
         .actions = actions,
         .copy_keys = copy_keys,
@@ -874,6 +890,7 @@ pub fn deinit(self: *App) void {
         else => {},
     }
     Daemon.freeActions(self.alloc, self.actions);
+    Daemon.freeWorkspaceDefs(self.alloc, self.workspace_defs);
     self.alloc.free(self.copy_keys);
     self.alloc.free(self.notice);
     // Hanging up detaches the workspaces; slime keeps them for the next
@@ -888,6 +905,7 @@ pub fn deinit(self: *App) void {
         self.alloc.free(e.dest);
         self.alloc.free(e.text);
         self.alloc.free(e.proxy);
+        self.alloc.free(e.build);
     }
     self.host_states.deinit(self.alloc);
     self.arena.deinit();
@@ -1531,6 +1549,69 @@ fn askKillWorkspace(self: *App, key: u32) void {
     self.markDirty();
 }
 
+/// Whether a newer build than the daemon's is waiting: the local
+/// daemon runs an older build than the slime.exe beside us, or host
+/// `host`'s daemon another build than the one the local daemon
+/// installed there. The sidebar shows an upgrade button then.
+pub fn upgradeWaiting(self: *App, host: ?usize) bool {
+    const conn = self.daemon orelse return false;
+    if (conn.isLost()) return false;
+    const h = host orelse return conn.olderBuild();
+    if (conn.upgrade_never) return false;
+    const e = self.hostEntry(self.hosts.items.items[h]) orelse return false;
+    if (e.state != .connected or e.build.len == 0) return false;
+    const r = self.remoteOn(e.dest) orelse return false;
+    if (r.conn.attachState() != .attached) return false;
+    const theirs = r.conn.buildId();
+    return theirs.len > 0 and !std.mem.eql(u8, theirs, e.build);
+}
+
+/// Ask before replacing the daemon (host `host`'s, or the local one)
+/// with the newer build: the programs in its panes end; the layout and
+/// shells come back.
+fn askUpgrade(self: *App, host: ?u32) void {
+    self.cancelConnect();
+    self.cancelRename();
+    self.closeConfirm();
+    self.closePalette();
+    self.closeMenu();
+    self.mode = .{ .confirm = .{ .about = .{ .upgrade = host }, .dialog = undefined } };
+    const c = &self.mode.confirm;
+    const where: []const u16 = if (host) |id| (if (self.hostEntryById(id)) |e| Hosts.label(e.dest) else L("the host")) else L("this machine");
+    const prefix = L("Upgrade slime on ");
+    const suffix = L("?");
+    const name = where[0..@min(where.len, c.title.len - prefix.len - suffix.len)];
+    @memcpy(c.title[0..prefix.len], prefix);
+    @memcpy(c.title[prefix.len..][0..name.len], name);
+    @memcpy(c.title[prefix.len + name.len ..][0..suffix.len], suffix);
+    const text = L("Its panes come back where they were, but the programs running in them end.");
+    @memcpy(c.text[0..text.len], text);
+    c.dialog = .{
+        .icon = .warning,
+        .danger = true,
+        .title = c.title[0 .. prefix.len + name.len + suffix.len],
+        .text = c.text[0..text.len],
+    };
+    c.dialog.addButton(.{ .label = L("Cancel"), .action = .cancel, .style = .primary });
+    c.dialog.addButton(.{ .label = L("Upgrade"), .action = .accept, .style = .danger });
+    c.dialog.focus = .{ .button = 0 };
+    _ = self.ui.setHover(.none);
+    self.resetBlink();
+    self.markDirty();
+}
+
+/// Replace the daemon (host `host`'s, or the local one) with the newer
+/// build, as the dialog agreed.
+fn upgradeNow(self: *App, host: ?u32) void {
+    const conn = self.daemon orelse return;
+    if (conn.isLost()) return;
+    if (host) |id| {
+        conn.hostUpgrade(id) catch |err| log.err("upgrading slime on host {d} failed: {}", .{ id, err });
+    } else {
+        conn.relaunch() catch |err| log.err("replacing slime failed: {}", .{err});
+    }
+}
+
 /// Browser pane `s`'s page at `site` asks to `what`: ask the user, unless
 /// a dialog is up already. Returns false if not asked.
 pub fn askPermission(self: *App, s: *Session, site: []const u16, what: []const u8) bool {
@@ -1572,6 +1653,7 @@ fn confirmAction(self: *App, action: Dialog.Action) void {
     };
     switch (about) {
         .kill => |ws| if (action == .accept) if (self.workspaceEntry(ws)) |w| w.conn.killWorkspace(w.id),
+        .upgrade => |host| if (action == .accept) self.upgradeNow(host),
         .permission => |id| {
             // Closed first, which would deny.
             self.mode = .terminal;
@@ -1593,7 +1675,7 @@ fn closeConfirm(self: *App) void {
     };
     self.mode = .terminal;
     switch (c.about) {
-        .kill => {},
+        .kill, .upgrade => {},
         .permission => |id| if (self.findSession(id)) |f| self.shell.webAnswer(f.s, .dismiss),
     }
     _ = self.ui.setHover(.none);
@@ -1608,7 +1690,7 @@ fn confirmStillAsks(self: *App) bool {
         else => return true,
     };
     const id = switch (c.about) {
-        .kill => return true,
+        .kill, .upgrade => return true,
         .permission => |id| id,
     };
     const f = self.findSession(id) orelse return false;
@@ -2400,6 +2482,9 @@ fn configReloaded(self: *App, reloaded: *Daemon.ConfigUpdate) void {
     Daemon.freeActions(self.alloc, self.actions);
     self.actions = reloaded.actions;
     reloaded.actions = &.{};
+    Daemon.freeWorkspaceDefs(self.alloc, self.workspace_defs);
+    self.workspace_defs = reloaded.workspaces;
+    reloaded.workspaces = &.{};
     self.shell.reloadConfig(reloaded.settings);
     // The hosts' panes take the window's copy mode keys, live.
     self.alloc.free(self.copy_keys);
@@ -2652,6 +2737,10 @@ fn hostState(self: *App, h: Daemon.HostInfo) void {
     if (!std.mem.eql(u16, e.proxy, h.proxy)) if (self.alloc.dupe(u16, h.proxy)) |proxy| {
         self.alloc.free(e.proxy);
         e.proxy = proxy;
+    } else |_| {};
+    if (!std.mem.eql(u8, e.build, h.build)) if (self.alloc.dupe(u8, h.build)) |build| {
+        self.alloc.free(e.build);
+        e.build = build;
     } else |_| {};
     self.markDirty();
     self.shell.webHost(h.host);
@@ -4167,6 +4256,11 @@ fn choosePalette(self: *App, i: usize) void {
         .tab => |key| if (self.tabIndexOf(.{ .tab = key })) |t| self.activate(t),
         .float_tab => |key| if (self.tabIndexOf(.{ .tab = key })) |t| self.floatTabOver(self.tabs.items[t]),
         .show_workspace => |key| self.showWorkspace(key),
+        .upgrade => |h| self.askUpgrade(if (h == std.math.maxInt(u32)) null else h),
+        .open_workspace => |def| if (self.daemon) |conn| if (!conn.isLost() and def < self.workspace_defs.len) {
+            conn.openDefined(self.workspace_defs[def]) catch |err| log.err("opening workspace {f} failed: {}", .{ std.unicode.fmtUtf16Le(self.workspace_defs[def]), err });
+            self.activate_new = conn;
+        },
         .binding => |b| _ = self.runAction(b),
         .part => |id| self.widgetClick(id),
         .host => |h| self.openOnHost(h) catch |err| log.err("connect failed: {}", .{err}),
@@ -4272,8 +4366,28 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .section = .command,
         .action = .toggle_stats,
     });
+    if (self.upgradeWaiting(null)) {
+        try p.add(.{ .label = L("Upgrade slime"), .detail = L("a newer build is waiting"), .icon = .circle_arrow_up, .section = .command, .action = .{ .upgrade = std.math.maxInt(u32) } });
+    }
+    for (self.hosts.items.items, 0..) |dest, h| {
+        if (!self.upgradeWaiting(h)) continue;
+        const e = self.hostEntry(dest) orelse continue;
+        var n = appendUnits(&buf, 0, L("Upgrade slime on "));
+        n = appendUnits(&buf, n, Hosts.label(dest));
+        try p.add(.{ .label = buf[0..n], .detail = L("a newer build is waiting"), .icon = .circle_arrow_up, .section = .command, .action = .{ .upgrade = e.id } });
+    }
     if (self.daemon) |conn| if (!conn.isLost()) {
         try p.add(.{ .label = L("Reload config"), .icon = .rotate_cw, .section = .command, .action = .reload_config });
+        // init.lua's workspaces not open on the local daemon.
+        for (self.workspace_defs, 0..) |name, i| {
+            const open = for (self.workspaces.items) |w| {
+                if (w.conn == conn and std.mem.eql(u16, w.name, name)) break true;
+            } else false;
+            if (open) continue;
+            var n = appendUnits(&buf, 0, L("Open workspace: "));
+            n = appendUnits(&buf, n, name);
+            try p.add(.{ .label = buf[0..n], .detail = L("init.lua"), .icon = .layers, .section = .command, .action = .{ .open_workspace = @intCast(i) } });
+        }
     };
     for (self.actions) |a| {
         const key = self.keymap.label(.{ .invoke = .{ .name = a.name } });
@@ -4337,6 +4451,17 @@ fn appendUnits(buf: []u16, n: usize, text: []const u16) usize {
 }
 
 /// init.lua's actions, copied.
+fn dupeNames(alloc: Allocator, names: []const []const u16) Allocator.Error![]const []const u16 {
+    const out = try alloc.alloc([]const u16, names.len);
+    var made: usize = 0;
+    errdefer Daemon.freeWorkspaceDefs(alloc, out[0..made]);
+    for (out, names) |*o, n| {
+        o.* = try alloc.dupe(u16, n);
+        made += 1;
+    }
+    return out;
+}
+
 fn dupeActions(alloc: Allocator, actions: []const Daemon.ConfigAction) Allocator.Error![]Daemon.ConfigAction {
     const copy = try alloc.alloc(Daemon.ConfigAction, actions.len);
     var made: usize = 0;
@@ -5148,6 +5273,11 @@ fn widgetClick(self: *App, hit: Id) void {
         },
         .forget => switch (hit.target) {
             .host => |h| self.forgetHost(h),
+            else => {},
+        },
+        .upgrade => switch (hit.target) {
+            .local => self.askUpgrade(null),
+            .host => |h| if (self.hostEntry(self.hosts.items.items[h])) |e| self.askUpgrade(e.id),
             else => {},
         },
         .disconnect => switch (hit.target) {

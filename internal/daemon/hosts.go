@@ -90,7 +90,68 @@ type host struct {
 }
 
 func (h *host) info() rpc.Host {
-	return rpc.Host{ID: h.id, Dest: h.dest, State: h.state, Text: h.text, Proxy: h.proxyURL}
+	info := rpc.Host{ID: h.id, Dest: h.dest, State: h.state, Text: h.text, Proxy: h.proxyURL}
+	if h.conn != nil {
+		info.Build = h.conn.DaemonBuild()
+	}
+	return info
+}
+
+// hostUpgrade runs `slime upgrade` on a connected host: its daemon, if
+// of an older build than the one this daemon installed there, stops
+// keeping its layout, and the installed build starts and restores it.
+// The bridges to it end; windows reconnect.
+func (s *Server) hostUpgrade(_ *callCtx, m rpc.HostParams) (rpc.Empty, error) {
+	s.mu.Lock()
+	h := s.hosts.byID[m.Host]
+	var conn *sshbridge.Conn
+	if h != nil && h.state == HostConnected {
+		conn = h.conn
+	}
+	s.mu.Unlock()
+	if h == nil {
+		return rpc.Empty{}, errNoHost
+	}
+	if conn == nil {
+		return rpc.Empty{}, rpc.Errorf(rpc.CodeFailed, "%s isn't connected", h.dest)
+	}
+	out, err := conn.Upgrade()
+	if err != nil {
+		return rpc.Empty{}, rpc.Errorf(rpc.CodeFailed, "upgrading slime on %s: %v", h.dest, err)
+	}
+	s.log.Info("host upgraded", "dest", h.dest, "said", strings.TrimSpace(out))
+	return rpc.Empty{}, nil
+}
+
+// hostsModelLocked is the hosts as model.json keeps them: ids and
+// destinations, and their proxy ports, so a restart keeps a window's
+// grouping and a browser's proxy address; the connections don't cross.
+func (s *Server) hostsModelLocked() []ModelHost {
+	var out []ModelHost
+	for _, h := range s.hosts.byID {
+		out = append(out, ModelHost{ID: h.id, Dest: h.dest, Port: s.hosts.ports[h.dest]})
+	}
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j].ID < out[j-1].ID; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
+}
+
+// restoreHostsLocked puts a model's hosts back, each lost: a window
+// that wants one logs in again.
+func (s *Server) restoreHostsLocked(hs []ModelHost) {
+	for _, mh := range hs {
+		if mh.ID == 0 || mh.Dest == "" {
+			continue
+		}
+		s.hosts.nextID = max(s.hosts.nextID, mh.ID)
+		s.hosts.byID[mh.ID] = &host{id: mh.ID, dest: mh.Dest, state: HostLost, text: "slime restarted"}
+		if mh.Port != 0 {
+			s.hosts.ports[mh.Dest] = mh.Port
+		}
+	}
 }
 
 // hostsActiveLocked counts the hosts that keep the daemon alive: those

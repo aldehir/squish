@@ -82,6 +82,19 @@ reader: ?std.Thread = null,
 write_lock: win32.SRWLOCK = .{},
 /// The daemon's process id, from its hello.
 pid: u32 = 0,
+/// The daemon's build, from its hello (rpc.Build): its id (owned), and
+/// its executable's mtime in unix seconds, 0 from a daemon too old to
+/// say. A local daemon older than the slime.exe beside us can be
+/// replaced (`olderBuild`, `relaunch`).
+build_id: []const u8 = &.{},
+build_time: i64 = 0,
+/// The daemon's init.lua says daemon.upgrade = "never": don't offer.
+upgrade_never: bool = false,
+/// The daemon said it's stopping to be replaced (daemon.restarting) by
+/// the build whose time is `restart_to`: the hangup that follows is a
+/// restart, and the reader reconnects.
+restarting: std.atomic.Value(bool) = .init(false),
+restart_to: i64 = 0,
 /// Ids for calls, from the UI thread and, while a host's attaches, its
 /// reader.
 next_id: std.atomic.Value(u32) = .init(0),
@@ -210,6 +223,9 @@ pub const ConfigUpdate = struct {
     keymap: []binding.Entry,
     /// init.lua's actions, for the command palette.
     actions: []ConfigAction,
+    /// The names of init.lua's workspace definitions
+    /// (slime.workspace.define), for the palette to open.
+    workspaces: []const []const u16,
     /// slime.config's table, as JSON, for `Config.loadFrom`.
     settings: []const u8,
     /// init.lua's copy mode bindings as client.copy_keys takes them,
@@ -222,6 +238,7 @@ pub const ConfigUpdate = struct {
     pub fn deinit(self: *ConfigUpdate, alloc: Allocator) void {
         freeKeymap(alloc, self.keymap);
         freeActions(alloc, self.actions);
+        freeWorkspaceDefs(alloc, self.workspaces);
         alloc.free(self.settings);
         alloc.free(self.copy_keys);
         for (self.errors) |e| alloc.free(e);
@@ -319,6 +336,9 @@ pub const HostInfo = struct {
     text: []const u16,
     /// `socks5://127.0.0.1:<port>`, or empty. Owned.
     proxy: []const u16,
+    /// The id of the build the daemon installed on the host, while
+    /// connected; empty otherwise. Owned.
+    build: []const u8,
 
     fn fromJson(alloc: Allocator, h: Json.Host) !HostInfo {
         const dest = try toUtf16(alloc, h.dest);
@@ -326,6 +346,8 @@ pub const HostInfo = struct {
         const text = try toUtf16(alloc, h.text);
         errdefer alloc.free(text);
         const proxy = try toUtf16(alloc, h.proxy);
+        errdefer alloc.free(proxy);
+        const build = try alloc.dupe(u8, h.build);
         return .{
             .host = h.id,
             .dest = dest,
@@ -333,6 +355,7 @@ pub const HostInfo = struct {
             .state = std.meta.stringToEnum(HostStatus, h.state) orelse @fromBackingInt(@intCast(0xff)),
             .text = text,
             .proxy = proxy,
+            .build = build,
         };
     }
 
@@ -340,6 +363,7 @@ pub const HostInfo = struct {
         alloc.free(self.dest);
         alloc.free(self.text);
         alloc.free(self.proxy);
+        alloc.free(self.build);
     }
 };
 
@@ -481,6 +505,9 @@ pub const Sink = struct {
     /// The pane is gone from us: its child exited (`why` null), or the
     /// workspace or connection was lost (why says how).
     ended: *const fn (ctx: *anyopaque, why: ?[]const u8) void,
+    /// The connection ended and is being made again (true), or is back
+    /// (false): the pane stays, and a full frame follows.
+    link: *const fn (ctx: *anyopaque, reconnecting: bool) void,
 };
 
 /// A piece of a kitty image (wire.go's Image): `data` goes at `offset`
@@ -877,7 +904,8 @@ pub const Json = struct {
     const WorkspaceCreated = struct { id: u32, name: []const u8 = "" };
     const WorkspaceDestroyed = struct { id: u32 };
     const WorkspaceViewers = struct { id: u32, viewers: usize = 0 };
-    const Host = struct { id: u32, dest: []const u8 = "", state: []const u8 = "", text: []const u8 = "", proxy: []const u8 = "" };
+    const Host = struct { id: u32, dest: []const u8 = "", state: []const u8 = "", text: []const u8 = "", proxy: []const u8 = "", build: []const u8 = "" };
+    const Restarting = struct { build: struct { id: []const u8 = "", time: i64 = 0 } = .{} };
     const HostPrompt = struct {
         host: u32,
         kind: []const u8 = "",
@@ -891,7 +919,9 @@ pub const Json = struct {
     const HostList = struct { hosts: []const Host = &.{} };
     const WorkspaceList = struct { workspaces: []const WorkspaceDesc = &.{} };
     /// rpc.ConfigDesc: `settings` is slime.config's table.
-    pub const Config = struct { path: []const u8 = "", settings: std.json.Value = .null, keymap: []const Binding = &.{}, actions: []const ActionDesc = &.{}, copy_keys: []const u8 = "", errors: []const []const u8 = &.{} };
+    pub const Config = struct { path: []const u8 = "", settings: std.json.Value = .null, keymap: []const Binding = &.{}, actions: []const ActionDesc = &.{}, workspaces: []const WorkspaceDef = &.{}, copy_keys: []const u8 = "", errors: []const []const u8 = &.{} };
+    /// A slime.workspace.define, as config.get lists it (rpc.WorkspaceDef).
+    pub const WorkspaceDef = struct { name: []const u8 = "", autostart: bool = false };
     const Binding = struct { key: []const u8, action: []const u8 = "", args: std.json.Value = .null, lua: u32 = 0, repeat: bool = false };
     /// rpc.ActionDesc, but for its args, which the palette passes none of.
     pub const ActionDesc = struct { name: []const u8, title: []const u8 = "" };
@@ -1023,6 +1053,38 @@ pub fn actionsFromJson(alloc: Allocator, descs: []const Json.ActionDesc) ![]Conf
     return actions;
 }
 
+/// The names of a config's workspace definitions, owned.
+pub fn workspaceDefsFromJson(alloc: Allocator, defs: []const Json.WorkspaceDef) ![]const []const u16 {
+    const names = try alloc.alloc([]const u16, defs.len);
+    var made: usize = 0;
+    errdefer freeWorkspaceDefs(alloc, names[0..made]);
+    for (names, defs) |*n, d| {
+        n.* = try toUtf16(alloc, d.name);
+        made += 1;
+    }
+    return names;
+}
+
+pub fn freeWorkspaceDefs(alloc: Allocator, names: []const []const u16) void {
+    for (names) |n| alloc.free(n);
+    alloc.free(names);
+}
+
+/// Open the workspace init.lua defines as `name` (workspace.open), or
+/// the one of that name already open, attached here: it comes as a new
+/// workspace does. UI thread.
+pub fn openDefined(self: *Daemon, name: []const u16) !void {
+    const utf8 = try commandUtf8(self.alloc, name);
+    defer self.alloc.free(utf8);
+    win32.AcquireSRWLockExclusive(&self.lock);
+    try self.attach_calls.ensureUnusedCapacity(self.alloc, 1);
+    win32.ReleaseSRWLockExclusive(&self.lock);
+    const id = try self.call("workspace.open", .{ .name = utf8, .attach = true });
+    win32.AcquireSRWLockExclusive(&self.lock);
+    defer win32.ReleaseSRWLockExclusive(&self.lock);
+    self.attach_calls.appendAssumeCapacity(.{ .id = id, .ws = 0 });
+}
+
 pub fn freeActions(alloc: Allocator, actions: []ConfigAction) void {
     for (actions) |a| {
         alloc.free(a.name);
@@ -1057,9 +1119,90 @@ pub fn connect(alloc: Allocator, notify: Notify, frame_interval: u32, area: Area
 pub fn begin(self: *Daemon, notify: Notify, frame_interval: u32, area: Area, size: Size, command: []const u16, want: Wanted) !void {
     self.notify = notify;
     self.frame_interval = frame_interval;
+    self.area = area;
+    self.size = size;
     const buf = try self.alloc.alloc(u8, max_frame);
     defer self.alloc.free(buf);
+    self.readUpgradePolicy(buf);
     try self.attachFirst(buf, area, size, command, want);
+}
+
+/// How long a reader keeps trying to reconnect, and how long a window
+/// of an older build than the one announced leaves it to start the
+/// daemon before starting its own.
+const reconnect_ms = 10_000;
+const yield_ms = 3_000;
+
+/// Read whether the daemon's init.lua says not to offer upgrades.
+fn readUpgradePolicy(self: *Daemon, buf: []u8) void {
+    const id = self.call("config.get", no_params) catch return;
+    var cfg = self.awaitReply(buf, id, Json.Config) catch return;
+    defer cfg.deinit();
+    self.upgrade_never = upgradeNever(cfg.value.settings);
+}
+
+/// Whether the local daemon runs an older build than the slime.exe
+/// beside us, and its config doesn't say never: the window then offers
+/// to replace it.
+pub fn olderBuild(self: *const Daemon) bool {
+    if (self.remote != null or self.upgrade_never or self.build_time == 0) return false;
+    const ours = ourBuildTime() catch return false;
+    return self.build_time < ours;
+}
+
+/// The daemon's build id, from its hello; empty from one too old to say.
+pub fn buildId(self: *const Daemon) []const u8 {
+    return self.build_id;
+}
+
+/// Replace the local daemon with the slime.exe beside us, keeping its
+/// layout: it stops with its model saved (daemon.stop with save), the
+/// reader sees it go and starts the new build as it reconnects, and
+/// that one restores the workspaces under the same ids, each pane
+/// relaunched. UI thread.
+pub fn relaunch(self: *Daemon) !void {
+    _ = try self.call("daemon.stop", .{ .save = true, .build = .{ .id = "", .time = ourBuildTime() catch 0 } });
+}
+
+/// Have the local daemon run slime upgrade on host `host_id`
+/// (host.upgrade): the host's daemon stops keeping its layout and the
+/// build installed there starts in its place; the bridge to it ends
+/// and reconnects. UI thread.
+pub fn hostUpgrade(self: *Daemon, host_id: u32) !void {
+    _ = try self.call("host.upgrade", .{ .host = host_id });
+}
+
+/// Whether a config's settings say daemon.upgrade = "never".
+fn upgradeNever(settings: std.json.Value) bool {
+    const daemon = switch (settings) {
+        .object => |o| o.get("daemon") orelse return false,
+        else => return false,
+    };
+    const policy = switch (daemon) {
+        .object => |o| o.get("upgrade") orelse return false,
+        else => return false,
+    };
+    return switch (policy) {
+        .string => |s| std.mem.eql(u8, s, "never"),
+        else => false,
+    };
+}
+
+/// The mtime of the slime.exe beside us, in unix seconds: what the
+/// daemon reports as its build time when it runs a copy of it
+/// (CopyFileW keeps the time).
+fn ourBuildTime() !i64 {
+    var dir_buf: [max_path]u16 = undefined;
+    const dir = try exeDir(&dir_buf);
+    var src: WideBuf = .{};
+    try src.put(dir);
+    try src.put(L("\\"));
+    try src.put(daemon_name);
+    var attrs: win32.WIN32_FILE_ATTRIBUTE_DATA = undefined;
+    if (win32.GetFileAttributesExW(try src.z(), win32.GetFileExInfoStandard, &attrs) == 0) return win32.lastError("GetFileAttributesExW(slime.exe)");
+    // FILETIME counts 100 ns since 1601.
+    const ft: i64 = @bitCast(@as(u64, attrs.ftLastWriteTime));
+    return @divFloor(ft - 116444736000000000, 10_000_000);
 }
 
 /// Connect to the slime on host `host` (the daemon's id for it, which it
@@ -1288,6 +1431,7 @@ fn fail(self: *Daemon, err: anyerror) void {
 }
 
 fn freeState(self: *Daemon) void {
+    self.alloc.free(self.build_id);
     var it = self.panes.valueIterator();
     while (it.next()) |slot| switch (slot.state) {
         .pending => |*pend| pend.deinit(self.alloc),
@@ -1604,6 +1748,7 @@ pub fn resize(self: *Daemon, pane: PaneRef, size: Size) void {
 /// here, for sizing panes it lays out while the window is away. UI
 /// thread.
 pub fn resizeWorkspaces(self: *Daemon, area: Area) void {
+    self.area = area;
     var ids: [64]u32 = undefined;
     var n: usize = 0;
     win32.AcquireSRWLockExclusive(&self.lock);
@@ -1832,13 +1977,145 @@ fn readLoop(self: *Daemon) void {
 /// for a host's, why the daemon ended the bridge, if it said.
 fn route(self: *Daemon, buf: []u8) void {
     while (true) {
-        const f = self.pipe.readFrame(buf) catch break;
+        const f = self.pipe.readFrame(buf) catch {
+            if (self.closing.load(.acquire)) return;
+            if (self.reconnect(buf)) continue;
+            break;
+        };
         self.handle(f) catch |err| {
             log.warn("bad message {d} from slime: {}", .{ @backingInt(f.type), err });
         };
     }
     if (self.closing.load(.acquire)) return;
     self.loseAll(if (self.lost_reason.len > 0) self.lost_reason.text() else "lost slime");
+}
+
+/// The connection ended: for a while, try to open one to the daemon in
+/// its place (the one a takeover put there, or one started again after
+/// a crash, which restores the same ids) and attach the same workspaces
+/// again. Their panes keep their sessions, which the full frames that
+/// follow repaint; a workspace the new daemon doesn't have is dropped.
+/// False if nothing answers in time, or what answers can't serve us:
+/// the panes are then lost as before.
+fn reconnect(self: *Daemon, buf: []u8) bool {
+    const announced = self.restarting.swap(false, .acq_rel);
+    log.info("connection to slime on {f} ended{s}; reconnecting", .{ std.unicode.fmtUtf16Le(self.hostLabel()), if (announced) " for a restart" else "" });
+    self.tellLinks(true);
+    defer self.tellLinks(false);
+    // A restart announced: wait for the old daemon's pipe to go, so what
+    // we open is the new one's. A local daemon is started if none comes
+    // (a crash, or a restart nobody else starts the new build for),
+    // from the slime.exe beside us, and restores; a window of an older
+    // build than the one announced gives that one a moment first.
+    if (announced) self.waitGone();
+    const ours = ourBuildTime() catch 0;
+    const patient = announced and self.remote == null and self.restart_to > ours;
+    const began = win32.GetTickCount64();
+    const deadline = began + reconnect_ms;
+    while (true) {
+        if (self.closing.load(.acquire)) return false;
+        const may_start = self.remote == null and (!patient or win32.GetTickCount64() > began + yield_ms);
+        if (self.tryReconnect(buf, may_start)) |ok| {
+            return ok;
+        } else |err| {
+            if (win32.GetTickCount64() > deadline) {
+                log.info("giving up on slime: {}", .{err});
+                return false;
+            }
+            win32.Sleep(200);
+        }
+    }
+}
+
+/// Wait, briefly, for the local daemon's pipe to be gone.
+fn waitGone(self: *Daemon) void {
+    if (self.remote != null) return;
+    const deadline = win32.GetTickCount64() + 5000;
+    while (win32.GetTickCount64() < deadline) {
+        if (self.closing.load(.acquire)) return;
+        var p: Pipe = Pipe.open(false) catch return;
+        p.close();
+        win32.Sleep(100);
+    }
+}
+
+/// One try at reconnecting: a new pipe in place of the old (starting a
+/// daemon if none serves and `may_start`), the bridge for a host's, the
+/// handshake, and the attaches. An error means try again; false means a
+/// daemon answered but we can't go on with it.
+fn tryReconnect(self: *Daemon, buf: []u8, may_start: bool) !bool {
+    const pipe: Pipe = try .open(may_start);
+    {
+        win32.AcquireSRWLockExclusive(&self.write_lock);
+        defer win32.ReleaseSRWLockExclusive(&self.write_lock);
+        var old = self.pipe;
+        self.pipe = pipe;
+        old.close();
+    }
+    if (self.remote) |r| {
+        var p: std.ArrayList(u8) = .empty;
+        defer p.deinit(self.alloc);
+        try putU32(self.alloc, &p, r.host);
+        try putStr(self.alloc, &p, r.term);
+        try self.send(.bridge, .none, p.items);
+    }
+    self.handshake(buf) catch |err| switch (err) {
+        // Another build's protocol, or a host the new daemon isn't
+        // connected to: the host's header reconnects, as before.
+        error.VersionMismatch, error.Refused => return false,
+        else => return err,
+    };
+    if (self.remote != null) {
+        win32.AcquireSRWLockExclusive(&self.write_lock);
+        defer win32.ReleaseSRWLockExclusive(&self.write_lock);
+        try self.sendCopyKeysLocked();
+    }
+    if (self.remote == null) {
+        var sub = try self.awaitReply(buf, try self.call("subscribe", .{ .events = .{ "host.*", "workspace.*", "config.*" } }), struct {});
+        sub.deinit();
+    } else {
+        var sub = try self.awaitReply(buf, try self.call("subscribe", .{ .events = .{"workspace.*"} }), struct {});
+        sub.deinit();
+    }
+    var ids: std.ArrayList(u32) = .empty;
+    defer ids.deinit(self.alloc);
+    {
+        win32.AcquireSRWLockExclusive(&self.lock);
+        defer win32.ReleaseSRWLockExclusive(&self.lock);
+        var it = self.attached.keyIterator();
+        while (it.next()) |k| try ids.append(self.alloc, k.*);
+    }
+    var kept: usize = 0;
+    for (ids.items) |ws| {
+        const call_id = try self.call("workspace.attach", .{ .id = ws, .area = self.area });
+        var reply = self.awaitReply(buf, call_id, std.json.Value) catch |err| switch (err) {
+            error.Refused => {
+                win32.AcquireSRWLockExclusive(&self.lock);
+                defer win32.ReleaseSRWLockExclusive(&self.lock);
+                _ = self.attached.remove(ws);
+                self.dropWorkspaceLocked(ws, "gone with slime's restart");
+                continue;
+            },
+            else => return err,
+        };
+        defer reply.deinit();
+        _ = try self.applyWorkspace(reply.value);
+        kept += 1;
+    }
+    log.info("reconnected to slime (pid {d}) on {f}: {d} of {d} workspace(s) attached", .{ self.pid, std.unicode.fmtUtf16Le(self.hostLabel()), kept, ids.items.len });
+    if (self.posting.load(.acquire)) _ = win32.PostMessageW(self.notify.hwnd, self.notify.msg, 0, 0);
+    return true;
+}
+
+/// Tell every live pane the connection is being made again, or is back.
+fn tellLinks(self: *Daemon, reconnecting: bool) void {
+    win32.AcquireSRWLockExclusive(&self.lock);
+    defer win32.ReleaseSRWLockExclusive(&self.lock);
+    var it = self.panes.valueIterator();
+    while (it.next()) |slot| switch (slot.state) {
+        .pending => {},
+        .live => |sink| sink.link(sink.ctx, reconnecting),
+    };
 }
 
 /// Act on one frame.
@@ -1893,9 +2170,16 @@ fn notified(self: *Daemon, a: Allocator, method: []const u8, params: std.json.Va
         @"host.prompt",
         @"config.changed",
         @"client.action",
+        @"daemon.restarting",
     };
     const ev = std.meta.stringToEnum(Event, method) orelse return;
     switch (ev) {
+        .@"daemon.restarting" => {
+            const p = std.json.parseFromValueLeaky(Json.Restarting, a, params, json_opts) catch Json.Restarting{};
+            log.info("slime is stopping to be replaced by build {s}", .{p.build.id});
+            self.restart_to = p.build.time;
+            self.restarting.store(true, .release);
+        },
         .@"client.action" => {
             const p = try std.json.parseFromValueLeaky(Json.ClientActionJson, a, params, json_opts);
             const name = try self.alloc.dupe(u8, p.name);
@@ -1924,7 +2208,9 @@ fn notified(self: *Daemon, a: Allocator, method: []const u8, params: std.json.Va
             errdefer freeKeymap(self.alloc, keymap);
             const actions = try actionsFromJson(self.alloc, c.actions);
             errdefer freeActions(self.alloc, actions);
-            const update: ConfigUpdate = .{ .keymap = keymap, .actions = actions, .settings = settings, .copy_keys = copy_keys, .errors = try errors.toOwnedSlice(self.alloc) };
+            const workspaces = try workspaceDefsFromJson(self.alloc, c.workspaces);
+            errdefer freeWorkspaceDefs(self.alloc, workspaces);
+            const update: ConfigUpdate = .{ .keymap = keymap, .actions = actions, .workspaces = workspaces, .settings = settings, .copy_keys = copy_keys, .errors = try errors.toOwnedSlice(self.alloc) };
             win32.AcquireSRWLockExclusive(&self.lock);
             defer win32.ReleaseSRWLockExclusive(&self.lock);
             if (self.config_update) |*old| old.deinit(self.alloc);
@@ -1955,7 +2241,15 @@ fn notified(self: *Daemon, a: Allocator, method: []const u8, params: std.json.Va
             const gop = try self.panes.getOrPut(self.alloc, p.id);
             if (gop.found_existing) switch (gop.value_ptr.state) {
                 .pending => |*old| old.deinit(self.alloc),
-                .live => {},
+                // Attached again, after a reconnect: its session stays,
+                // and the full frame that follows repaints it.
+                .live => {
+                    self.alloc.free(command);
+                    self.alloc.free(url);
+                    self.alloc.free(title);
+                    freeStatus(self.alloc, status);
+                    return;
+                },
             };
             gop.value_ptr.* = .{ .state = .{ .pending = .{
                 .kind = .parse(p.kind),
@@ -2321,6 +2615,12 @@ fn handshake(self: *Daemon, buf: []u8) !void {
     self.pid = try r.readU32();
     // A daemon too old to say draws no frames.
     const frame_layout = r.readU64() catch 0;
+    // Appended later: a daemon too old to say has no build.
+    const build_id = r.readStr() catch "";
+    self.build_time = @bitCast(r.readU64() catch 0);
+    const owned = try self.alloc.dupe(u8, build_id);
+    self.alloc.free(self.build_id);
+    self.build_id = owned;
     if (version != protocol_version) {
         log.err("slime speaks protocol {d}, we speak {d}", .{ version, protocol_version });
         return error.VersionMismatch;
@@ -3071,6 +3371,7 @@ test "a browser pane arrives with its url and title, and what comes before it's 
         fn image(_: *anyopaque, _: ImagePiece) void {}
         fn copied(_: *anyopaque, _: u32, _: []const u8) void {}
         fn ended(_: *anyopaque, _: ?[]const u8) void {}
+        fn link(_: *anyopaque, _: bool) void {}
     };
     var got: Got = .{};
     defer {
@@ -3085,6 +3386,7 @@ test "a browser pane arrives with its url and title, and what comes before it's 
         .copied = Got.copied,
         .url = Got.url,
         .ended = Got.ended,
+        .link = Got.link,
     });
     try std.testing.expectEqual(@as(usize, 1), got.n_urls);
     try std.testing.expectEqualStrings("https://example.org/b", got.urls[0]);

@@ -322,6 +322,12 @@ const Builder = struct {
         try items.append(self.arena, .{ .kind = .{ .spacer = 2 } });
         try items.append(self.arena, .{ .kind = .{ .label = .{ .text = label, .font = .section, .color = t.text_muted, .upper = true } } });
         try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
+        // A newer build is waiting for the section's daemon.
+        if (app.upgradeWaiting(if (kind == .local) null else target.host)) {
+            // Lucide's circle spans 20 of its 24 units: 13 DIPs in this box.
+            try items.append(self.arena, .{ .id = id.with(.upgrade), .kind = .{ .icon_button = .{ .icon = .circle_arrow_up, .size = 16, .tip = L("Upgrade slime") } } });
+            try items.append(self.arena, .{ .kind = .{ .spacer = button_gap } });
+        }
         // A host nothing uses can be dropped from the list.
         if (kind != .local and !app.hostInUse(target.host) and self.ui.hover.on(target)) {
             // Lucide's x spans 12 of its 24 units: 8 DIPs in this box.

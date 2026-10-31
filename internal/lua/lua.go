@@ -333,6 +333,14 @@ func (r *Runner) Define(name string, fn glua.LGFunction) {
 	r.slime.RawSetString(name, r.L.NewFunction(fn))
 }
 
+// DefineIn adds slime.<group>.<name>: a function beside a namespace's
+// methods (slime.workspace.define beside slime.workspace.new).
+func (r *Runner) DefineIn(group, name string, fn glua.LGFunction) {
+	if t, ok := r.slime.RawGetString(group).(*glua.LTable); ok {
+		t.RawSetString(name, r.L.NewFunction(fn))
+	}
+}
+
 // IDs is what a task runs for, as slime.workspace_id, tab_id, and
 // pane_id hold it while it runs (a script may have changed them).
 type IDs struct{ Workspace, Tab, Pane glua.LValue }

@@ -100,6 +100,10 @@ var methods = map[string]handler{
 	rpc.ClientQueue:     method((*Server).clientQueue),
 	rpc.ClientCopyKeys:  method((*Server).clientCopyKeys),
 	rpc.DaemonStop:      method((*Server).daemonStop),
+	rpc.DaemonInfo:      method((*Server).daemonInfo),
+	rpc.HostUpgrade:     method((*Server).hostUpgrade),
+	rpc.WorkspaceOpen:   method((*Server).workspaceOpen),
+	rpc.WorkspaceExport: method((*Server).workspaceExport),
 }
 
 // Methods lists the control plane's methods.
@@ -202,6 +206,9 @@ func notify(name string, params any) *Notify {
 // process (scripts and the config), whose hooks pick what they want.
 // Under the server's lock.
 func (s *Server) emitLocked(name string, params any, ws *workspace, skip ...*conn) {
+	if modelEvent(name) {
+		s.markDirty()
+	}
 	n := notify(name, params)
 	for _, sc := range s.scripts {
 		if sc.runner != nil {

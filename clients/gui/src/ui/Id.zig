@@ -94,6 +94,8 @@ pub const Part = enum {
     /// a section's header, or connects a host first).
     new_tab,
     forget,
+    /// A header's button that replaces its daemon with a newer build.
+    upgrade,
     /// A host's menu entry that hangs up on it.
     disconnect,
     kill,

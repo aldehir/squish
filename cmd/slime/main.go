@@ -61,7 +61,7 @@ func newCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&jsonOut, "json", false, "print results as JSON, as the daemon replies")
 	root.AddCommand(serveCommand(), stopCommand(), connectCommand(), lsCommand(), wsCommand(), tabCommand(),
 		paneCommand(), doCommand(), actionsCommand(), scriptsCommand(), configCommand(), callCommand(), skillCommand(),
-		shellIntegrationCommand())
+		shellIntegrationCommand(), upgradeCommand())
 	root.AddCommand(hostCommands()...)
 	root.AddCommand(topicCommands()...)
 	root.SetHelpCommand(helpCommand(root))
@@ -76,11 +76,17 @@ func serveCommand() *cobra.Command {
 		conptyDir string
 		remoteDir string
 		termName  string
+		stateDir  string
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the daemon (the other commands start it when needed)",
-		Args:  cobra.NoArgs,
+		Long: "Runs the daemon. It keeps model.json in its state directory: the workspaces,\n" +
+			"tabs, and what each pane runs and where. A daemon that starts and finds one\n" +
+			"(after a crash, or after slime upgrade stopped the last one) restores it under\n" +
+			"the same ids, each pane relaunched: its command in the directory its shell\n" +
+			"last reported. The programs don't come back; the pane's first line says so.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := os.Stderr
 			if logPath != "" {
@@ -107,9 +113,13 @@ func serveCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return serve(logger, idle, hosts)
+			if stateDir == "" {
+				stateDir = defaultStateDir()
+			}
+			return serve(logger, serveOptions{idle: idle, hosts: hosts, stateDir: stateDir, args: os.Args[2:]})
 		},
 	}
+	cmd.Flags().StringVar(&stateDir, "state", "", "directory for model.json (default: slime/state/<instance> in the user's cache)")
 	cmd.Flags().StringVar(&conptyDir, "conpty", "", "directory holding conpty.dll (default: next to slime.exe, else the system's)")
 	cmd.Flags().StringVar(&remoteDir, "remote", "", "directory holding the builds of slime for hosts and their manifest (default: remote/ next to slime.exe)")
 	cmd.Flags().StringVar(&termName, "term", "", "TERM for panes on Unix (default xterm-256color)")
@@ -119,7 +129,15 @@ func serveCommand() *cobra.Command {
 	return cmd
 }
 
-func serve(logger *slog.Logger, idle time.Duration, hosts daemon.HostOptions) error {
+// serveOptions are serve's flags.
+type serveOptions struct {
+	idle     time.Duration
+	hosts    daemon.HostOptions
+	stateDir string
+	args     []string
+}
+
+func serve(logger *slog.Logger, o serveOptions) error {
 	name, err := daemon.Address()
 	if err != nil {
 		return err
@@ -134,12 +152,27 @@ func serve(logger *slog.Logger, idle time.Duration, hosts daemon.HostOptions) er
 		return err
 	}
 	defer rt.Close(ctx)
-	srv, err := daemon.NewServer(rt, daemon.Options{Log: logger, Idle: idle, Hosts: hosts, Config: config.Path(), Watch: time.Second})
+	opts := daemon.Options{Log: logger, Idle: o.idle, Hosts: o.hosts, Config: config.Path(), Watch: time.Second, Args: o.args, StateDir: o.stateDir}
+	srv, err := daemon.NewServer(rt, opts)
 	if err != nil {
 		return err
 	}
-	logger.Info("serving", "pipe", name, "pid", os.Getpid(), "config", config.Path())
+	logger.Info("serving", "pipe", name, "pid", os.Getpid(), "build", daemon.CurrentBuild().ID, "config", config.Path(), "state", opts.StateDir)
 	return srv.Serve(l)
+}
+
+// defaultStateDir is slime/state/<instance or default> in the user's
+// cache directory, beside the logs.
+func defaultStateDir() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	inst := os.Getenv("SLIME_INSTANCE")
+	if inst == "" {
+		inst = "default"
+	}
+	return filepath.Join(dir, "slime", "state", inst)
 }
 
 func stopCommand() *cobra.Command {
@@ -223,6 +256,11 @@ func lsCommand() *cobra.Command {
 				panes[p.ID] = p
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			// A daemon too old for daemon.info gets no header.
+			var info rpc.DaemonInfoResult
+			if err := c.Call(rpc.DaemonInfo, nil, &info); err == nil {
+				fmt.Fprintf(w, "slime\tbuild %s\tpid %d\n", info.Build.ID, info.PID)
+			}
 			for _, ws := range l.Workspaces {
 				fmt.Fprintf(w, "workspace %d\t%s\t%s\n", ws.ID, ws.Name, workspaceState(ws))
 				for _, t := range ws.Tabs {
@@ -343,7 +381,67 @@ func wsCommand() *cobra.Command {
 		},
 	}
 	newWs.Flags().Uint32Var(&attach, "attach", envWorkspace(), "open it in the windows on this workspace (default $SLIME_WORKSPACE; 0 for none)")
-	ws.AddCommand(newWs, &cobra.Command{
+	var openAttach bool
+	open := &cobra.Command{
+		Use:   "open <name>",
+		Short: "Open a workspace init.lua defines (slime.workspace.define), or find the one of that name",
+		Long: "Prints the id of the workspace named name: the one open under that name, else\n" +
+			"one made from init.lua's slime.workspace.define of it. --attach shows it in\n" +
+			"the windows on this console's workspace ($SLIME_WORKSPACE).",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p := rpc.WorkspaceOpenNamedParams{Name: args[0]}
+			if openAttach {
+				p.Beside = envWorkspace()
+			}
+			var w rpc.Workspace
+			if err := call(rpc.WorkspaceOpen, p, &w); err != nil {
+				return err
+			}
+			if jsonOut {
+				return printJSON(w)
+			}
+			fmt.Println(w.ID)
+			return nil
+		},
+	}
+	open.Flags().BoolVar(&openAttach, "attach", false, "show it in the windows on this console's workspace")
+	var exportTo string
+	export := &cobra.Command{
+		Use:   "export <workspace>",
+		Short: "Print a workspace as a slime.workspace.define call for init.lua",
+		Long: "Prints the workspace as slime.workspace.define{...}: its tabs' layouts with\n" +
+			"their shares, each terminal pane's command (none for the shell) and the\n" +
+			"directory its shell last reported, and browsers' urls. A running program\n" +
+			"isn't captured: a shell comes back as a shell. -o appends it to a file.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := parseID(args[0])
+			if err != nil {
+				return err
+			}
+			var r rpc.WorkspaceExportResult
+			if err := call(rpc.WorkspaceExport, rpc.WorkspaceParams{ID: id}, &r); err != nil {
+				return err
+			}
+			if jsonOut {
+				return printJSON(r)
+			}
+			if exportTo != "" {
+				f, err := os.OpenFile(exportTo, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+				if err != nil {
+					return err
+				}
+				defer f.Close()
+				_, err = f.WriteString("\n" + r.Lua)
+				return err
+			}
+			fmt.Print(r.Lua)
+			return nil
+		},
+	}
+	export.Flags().StringVarP(&exportTo, "out", "o", "", "append the definition to this file (init.lua)")
+	ws.AddCommand(newWs, open, export, &cobra.Command{
 		Use:   "focus <tab|pane>",
 		Short: "Show a tab in every window on its workspace, or a pane's tab with the pane focused",
 		Args:  cobra.ExactArgs(1),

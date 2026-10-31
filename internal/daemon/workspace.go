@@ -584,6 +584,11 @@ type started struct {
 	spec *rpc.PaneSpec
 	// command is what runs: the spec's, or the default shell.
 	command string
+	// run is the command as asked ("" for the shell); title and created
+	// are a restored pane's, from the model.
+	run     string
+	title   string
+	created time.Time
 	size    Size
 	pty     pty.Pty
 	term    *vt.Terminal
@@ -693,6 +698,10 @@ func (s *Server) addPaneLocked(t *tab, st *started) pane {
 	if st.spec.Kind == rpc.PaneBrowser {
 		b := newBrowserPane(s, st.id, st.spec.URL)
 		b.tab = t
+		b.title = st.title
+		if !st.created.IsZero() {
+			b.created = st.created
+		}
 		s.panes[b.id] = b
 		s.log.Info("pane started", "pane", b.id, "kind", rpc.PaneBrowser, "url", b.url)
 		s.emitLocked(rpc.EvPaneCreated, rpc.PaneCreatedParams{ID: b.id}, nil, nil)
@@ -703,6 +712,10 @@ func (s *Server) addPaneLocked(t *tab, st *started) pane {
 	}
 	p := newPane(s, st.id, st.command, st.size, st.pty, st.term)
 	p.tab = t
+	p.asked, p.env = st.run, st.spec.Env
+	if !st.created.IsZero() {
+		p.created = st.created
+	}
 	p.copyKeys = s.copyKeysLocked()
 	s.panes[p.id] = p
 	ws := t.ws

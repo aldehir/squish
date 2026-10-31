@@ -38,6 +38,15 @@ type Server struct {
 	spawn func(pty.Options) (pty.Pty, error)
 	log   *slog.Logger
 	idle  time.Duration
+	// The state directory keeps model.json (state.go), which a stop
+	// with save leaves for the next daemon (keepState); build is this
+	// executable's, args what it was started with.
+	stateDir  string
+	build     rpc.Build
+	args      []string
+	started   time.Time
+	model     modelWriter
+	keepState bool
 
 	mu sync.Mutex
 	// Ids are paths (rpc.TabID, rpc.PaneID): the daemon numbers
@@ -85,6 +94,12 @@ type Options struct {
 	// Watch is how often Serve looks at the config's files for a change
 	// that reloads it (watch.go); zero never looks.
 	Watch time.Duration
+	// StateDir is where model.json goes (state.go), and what a daemon
+	// starting there restores; empty keeps no state.
+	StateDir string
+	// Args are the arguments the daemon was started with, for the
+	// daemon replacing it to run with the same.
+	Args []string
 }
 
 // defaultSize is a pane's size when nothing says otherwise.
@@ -113,6 +128,10 @@ func NewServer(rt *vt.Runtime, opts Options) (*Server, error) {
 		stopC:      make(chan struct{}),
 		configPath: opts.Config,
 		watch:      opts.Watch,
+		stateDir:   opts.StateDir,
+		build:      CurrentBuild(),
+		args:       opts.Args,
+		started:    time.Now(),
 	}
 	if opts.Config != "" {
 		s.loadConfig()
@@ -124,6 +143,18 @@ func NewServer(rt *vt.Runtime, opts Options) (*Server, error) {
 // Options.Idle, or daemon.stop is called, when it closes l and returns
 // nil; after a stop it kills every terminal first.
 func (s *Server) Serve(l net.Listener) error {
+	// Restore what the last daemon left, if anything, before serving
+	// anyone: a client then finds the workspaces there.
+	if s.stateDir != "" {
+		m, err := readModel(s.stateDir)
+		if err != nil {
+			s.log.Error("not restoring", "err", err)
+		} else if m != nil {
+			s.restore(m)
+		}
+		s.autostartWorkspaces(m != nil && len(m.Workspaces) > 0)
+		go s.cleanBuilds()
+	}
 	s.mu.Lock()
 	s.checkIdleLocked()
 	s.mu.Unlock()
@@ -149,25 +180,46 @@ func (s *Server) Serve(l net.Listener) error {
 	case <-s.idleC:
 		s.log.Info("idle; exiting")
 		l.Close()
+		s.clearState()
 		return nil
 	case <-s.stopC:
-		s.log.Info("stopped; exiting")
+		s.log.Info("stopped; exiting", "keeping state", s.keepState)
 		l.Close()
 		s.Close()
+		if !s.keepState {
+			s.clearState()
+		}
 		return nil
 	}
 }
 
 // daemonStop ends the daemon. The reply goes out first, and Serve
 // returns once the caller's connection has written it (or a second has
-// passed), so `slime stop` hears back before the pipe goes away.
-func (s *Server) daemonStop(cl *callCtx, _ rpc.Empty) (rpc.Empty, error) {
+// passed), so `slime stop` hears back before the pipe goes away. With
+// save, model.json is written as things are and kept for the daemon
+// that starts next (an upgrade), and every client is told
+// daemon.restarting first, so it reconnects rather than giving up.
+func (s *Server) daemonStop(cl *callCtx, p rpc.DaemonStopParams) (rpc.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cl.reply(rpc.Empty{})
 	if s.stopped {
+		cl.reply(rpc.Empty{})
 		return rpc.Empty{}, nil
 	}
+	if p.Save && s.stateDir != "" {
+		if err := s.writeModel(s.modelLocked()); err != nil {
+			return rpc.Empty{}, rpc.Errorf(rpc.CodeFailed, "saving the model: %v", err)
+		}
+		s.keepState = true
+		restarting := notify(rpc.EvDaemonRestarting, rpc.DaemonRestartingParams{Build: p.Build})
+		for c := range s.conns {
+			if c != cl.c {
+				c.sendForce(NoPane, restarting)
+			}
+		}
+		s.log.Info("stopping to be replaced", "by", p.Build.ID, "panes", len(s.panes))
+	}
+	cl.reply(rpc.Empty{})
 	s.stopped = true
 	if cl.c == nil {
 		close(s.stopC)
@@ -276,6 +328,7 @@ func (s *Server) handshake(c *conn, m Message, err error) bool {
 		Version:     Version,
 		PID:         uint32(os.Getpid()),
 		FrameLayout: vt.FrameLayout(),
+		Build:       s.build,
 	})
 	if hello.Version != Version {
 		c.sendForce(NoPane, &Error{Message: fmt.Sprintf("slime speaks version %d, not %d", Version, hello.Version)})
@@ -371,7 +424,7 @@ func (s *Server) startPane(id PaneID, spec *rpc.PaneSpec, size Size) (*started, 
 		term.Close()
 		return nil, err
 	}
-	p, err := s.spawn(pty.Options{
+	opts := pty.Options{
 		Command: run,
 		Dir:     spec.Cwd,
 		Env:     paneEnv(id, spec),
@@ -379,12 +432,15 @@ func (s *Server) startPane(id PaneID, spec *rpc.PaneSpec, size Size) (*started, 
 		Rows:    size.Rows,
 		Width:   uint32(size.Cols) * size.CellW,
 		Height:  uint32(size.Rows) * size.CellH,
-	})
+	}
+	st := &started{id: id, spec: spec, command: command, run: run, size: size, term: term}
+	p, err := s.spawn(opts)
 	if err != nil {
 		term.Close()
 		return nil, err
 	}
-	return &started{id: id, spec: spec, command: command, size: size, pty: p, term: term}, nil
+	st.pty = p
+	return st, nil
 }
 
 func (s *Server) list() *rpc.WorkspaceListResult {
@@ -405,7 +461,8 @@ func (s *Server) list() *rpc.WorkspaceListResult {
 	return out
 }
 
-// Close kills every terminal.
+// Close kills every terminal, at once: a holder's Close waits for its
+// child to go.
 func (s *Server) Close() {
 	s.mu.Lock()
 	ps := make([]*Pane, 0, len(s.panes))
@@ -415,7 +472,9 @@ func (s *Server) Close() {
 		}
 	}
 	s.mu.Unlock()
+	var wg sync.WaitGroup
 	for _, p := range ps {
-		p.pty.Close()
+		wg.Go(func() { p.pty.Close() })
 	}
+	wg.Wait()
 }

@@ -1,7 +1,6 @@
 package sshbridge
 
 import (
-	"context"
 	"io"
 	"os"
 	osexec "os/exec"
@@ -144,7 +143,7 @@ func TestDaemonOnLinux(t *testing.T) {
 
 // waitText draws pane's frames (those the calls set aside first) until
 // its screen holds want.
-func waitText(t *testing.T, c *daemon.Client, pane uint32, want string) {
+func waitText(t *testing.T, c *daemon.Client, pane rpc.PaneID, want string) {
 	t.Helper()
 	got := make(chan string, 1)
 	go func() {

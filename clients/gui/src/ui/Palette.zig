@@ -50,6 +50,12 @@ pub const Action = union(enum) {
     tab: u32,
     /// Show a hidden workspace, by `App.Workspace.key`.
     show_workspace: u32,
+    /// Open a workspace init.lua defines, by its place in the
+    /// definitions (`App.workspace_defs`).
+    open_workspace: u32,
+    /// Replace a daemon with the newer build waiting: the host's id
+    /// (the daemon's), or maxInt for the local daemon.
+    upgrade: u32,
     /// Run a key binding's action on the focused pane.
     binding: binding.Action,
     /// Click a control, as the row's button of that part would.

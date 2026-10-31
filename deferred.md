@@ -297,8 +297,16 @@ connecting fails and the stand-in says why; ssh.exe in a local tab
 still reaches the host. A dropped connection leaves its panes saying
 so; the host's button reconnects, reattaches, and replaces them.
 
-- **Losing the local slime** leaves its panes saying so, and new local
-  tabs say so too until the next window, which starts a new daemon.
+- **A daemon that goes** (a crash, or `slime upgrade` replacing it)
+  comes back from `model.json`: the same workspaces, tabs, and ids,
+  each pane relaunched with its command in the directory its shell
+  last reported. The programs that ran in them are gone; the pane's
+  first line says so. A crashed daemon restarts only when a window or
+  command next connects (a window already attached starts one as it
+  reconnects); hosts drop to lost and are logged in to again by the
+  next window that wants them, 2FA included. Keeping the programs
+  themselves alive across daemons (a holder process per pane) was
+  built and parked on branch `pane-holders` as not worth its cost.
 - **Frames pace to the display the window started on**, when built with
   `-Dmax-fps=0` (the default caps at 300 fps regardless of display). The
   refresh period goes to slime when connecting, not when the window moves
@@ -365,9 +373,6 @@ so; the host's button reconnects, reattaches, and replaces them.
 - **An empty shown workspace goes when the window hides it** or closes:
   the daemon drops a workspace with no tabs once no window views it, so
   one emptied by closing its tabs lives only while shown.
-- **Daemon copies pile up.** slime-gui runs slime from a copy in
-  `%LOCALAPPDATA%\slime\bin\<build>\slime.exe`, so a running daemon
-  doesn't block the next install, and never deletes old ones.
 
 - **New panes take slime's environment**, from whichever slime-gui started
   it, not the window's (`SLIME_PANE`, `SLIME_WORKSPACE`, `SLIME_EXE`,
@@ -381,11 +386,11 @@ so; the host's button reconnects, reattaches, and replaces them.
 - **Nothing shows while a host's slime starts.** The stand-in is blank
   between logging in and the panes coming, which on a first install
   includes sending about 3 MiB.
-- **Builds pile up on hosts**, one `~/.cache/slime/bin/<build>/slime` per
-  slime-gui build, never removed.
-- **A host's daemon from an older build keeps serving.** A slime-gui whose
-  protocol or frame layout differs can't attach there until that daemon
-  exits, which is when its panes have all ended.
+- **Old builds go at the next daemon start**, locally
+  (`%LOCALAPPDATA%\slime\bin\<build>\`) and on hosts
+  (`~/.cache/slime/bin/<build>/`), all but the daemon's own; one a
+  daemon of another instance still runs from survives on Windows (in
+  use) and is removed under it on Unix, where that's harmless.
 
 - **Hosts can still end the daemon.** It runs in a session of its own,
   but systemd-logind with `KillUserProcesses=yes` ends it with the

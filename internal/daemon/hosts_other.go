@@ -20,6 +20,10 @@ func newHostTable(HostOptions) hostTable { return hostTable{} }
 
 func (s *Server) hostsActiveLocked() int { return 0 }
 
+func (s *Server) hostsModelLocked() []ModelHost { return nil }
+
+func (s *Server) restoreHostsLocked([]ModelHost) {}
+
 func (s *Server) hostClientGoneLocked(*conn) {}
 
 const noHosts = "this slime connects to no hosts (not Windows)"
@@ -35,6 +39,10 @@ func (s *Server) hostAnswer(*callCtx, rpc.HostAnswerParams) (rpc.Empty, error) {
 }
 
 func (s *Server) hostDisconnect(*callCtx, rpc.HostParams) (rpc.Empty, error) {
+	return rpc.Empty{}, noHostsError()
+}
+
+func (s *Server) hostUpgrade(*callCtx, rpc.HostParams) (rpc.Empty, error) {
 	return rpc.Empty{}, noHostsError()
 }
 

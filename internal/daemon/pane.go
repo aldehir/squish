@@ -29,6 +29,8 @@ type pane interface {
 	write(b []byte) error
 	text(asVT bool) (string, error)
 	desc() rpc.PaneDesc
+	// model describes it for model.json (state.go).
+	model() ModelPane
 }
 
 // Pane is a pty and the terminal its output is fed to. Its viewers are
@@ -42,6 +44,11 @@ type Pane struct {
 	command string
 	created time.Time
 	pty     pty.Pty
+	// What was asked for: the command as given ("" for the shell) and
+	// the environment added, which model.json keeps to start the pane
+	// again (state.go).
+	asked string
+	env   map[string]string
 
 	// The tab it's in. Guarded by the server's lock.
 	tab *tab

@@ -135,6 +135,10 @@ type HelloReply struct {
 	// FrameLayout is the daemon's vt.FrameLayout. A client whose own
 	// differs can't draw its frames.
 	FrameLayout uint64
+	// Build is the daemon's executable (rpc.Build), appended later: a
+	// client that finds it older than its own can have it replaced
+	// (slime upgrade). Decoders of the first layout ignore it.
+	Build rpc.Build
 }
 
 // Error answers a connection's first frame when it can't be served: a
@@ -266,12 +270,19 @@ func (m *HelloReply) encode(e *encoder) {
 	e.u32(m.Version)
 	e.u32(m.PID)
 	e.u64(m.FrameLayout)
+	e.str(m.Build.ID)
+	e.u64(uint64(m.Build.Time))
 }
 
 func (m *HelloReply) decode(d *decoder) {
 	m.Version = d.u32()
 	m.PID = d.u32()
 	m.FrameLayout = d.u64()
+	// A daemon too old to say has no build.
+	if len(d.buf) > 0 {
+		m.Build.ID = d.str()
+		m.Build.Time = int64(d.u64())
+	}
 }
 
 func (m *Error) encode(e *encoder) { e.str(m.Message) }

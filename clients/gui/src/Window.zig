@@ -151,7 +151,7 @@ stats_shown: bool = build_options.stats,
 /// came from, if one was made; the window owns it from here and goes
 /// on with it. `actions` are init.lua's, for the command palette, and
 /// `copy_keys` its copy mode keys, for the hosts' slimes.
-pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Source, keymap: []const binding.Entry, actions: []const Daemon.ConfigAction, copy_keys: []const u8, hosts: *Hosts, shown: *Shown, command_line: []const u16, local_command: []const u16, daemon: ?*Daemon) !*Window {
+pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Source, keymap: []const binding.Entry, actions: []const Daemon.ConfigAction, workspace_defs: []const []const u16, copy_keys: []const u8, hosts: *Hosts, shown: *Shown, command_line: []const u16, local_command: []const u16, daemon: ?*Daemon) !*Window {
     // Ours until the app has it.
     var pending = daemon;
     errdefer if (pending) |conn| conn.deinit();
@@ -218,6 +218,7 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
         .config = config,
         .keymap = keymap,
         .actions = actions,
+        .workspace_defs = workspace_defs,
         .copy_keys = copy_keys,
         .daemon = pending,
         .local_command = local_command,

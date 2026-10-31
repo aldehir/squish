@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -29,7 +30,39 @@ const (
 	// daemonConnect bridges the session to the daemon, starting it if
 	// needed with panes on TERM $1.
 	daemonConnect = `exec "$0" connect --term "$1"`
+	// daemonUpgrade replaces a daemon of an older build with $0's,
+	// keeping its layout (slime upgrade).
+	daemonUpgrade = `exec "$0" upgrade`
 )
+
+// daemonUpgradeTimeout bounds an upgrade: the old daemon stops and the
+// new one starts and restores.
+const daemonUpgradeTimeout = 2 * time.Minute
+
+// DaemonBuild is the id of the build of slime installed on the host
+// (EnsureDaemon), "" before it's known.
+func (c *Conn) DaemonBuild() string {
+	c.mu.Lock()
+	exe := c.daemonExe
+	c.mu.Unlock()
+	if exe == "" {
+		return ""
+	}
+	return path.Base(path.Dir(exe))
+}
+
+// Upgrade runs `slime upgrade` on the host with the build installed
+// there: a daemon of an older build stops keeping its layout and the
+// installed one starts in its place. It returns what the command
+// printed; a failure says why.
+func (c *Conn) Upgrade() (string, error) {
+	exe, err := c.EnsureDaemon(nil)
+	if err != nil {
+		return "", err
+	}
+	out, err := run(c.client, shCommand(daemonUpgrade, exe), nil, daemonUpgradeTimeout)
+	return string(out), err
+}
 
 // The probe bounds how long a host has to answer; the install, to take
 // a build (a few MiB) over a slow link.

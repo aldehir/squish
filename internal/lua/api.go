@@ -45,6 +45,11 @@ THE SLIME TABLE
                              pane, the rest id from pane_id: so
                              slime.pane.navigate{url = "..."} sends this
                              script's browser pane there
+  slime.workspace.open{name, attach?, beside?}
+                             the workspace named name, open or made from
+                             init.lua's slime.workspace.define of it (below)
+  slime.workspace.export{id} {lua}: the workspace as a slime.workspace.define
+                             call, for init.lua (slime ws export)
   slime.id.parse(id)         {workspace, tab, pane} from 1, "1.2", or "1.2.3"
                              (the parts it has); nil, err for anything else
   slime.id.tab(w, t)         "w.t" and "w.t.p" from numbers
@@ -149,7 +154,12 @@ which are for the top level only:
                              each window takes what it understands and ignores
                              the rest (slime-gui: font, theme, colors, window,
                              chrome, pane, selection, clipboard, ssh,
-                             browser).
+                             browser). daemon = {upgrade = "ask"|"never"}
+                             says whether a window offers to replace this
+                             daemon when it runs an older build than the
+                             window's (an icon by the host; the layout comes
+                             back, the programs end); slime upgrade always
+                             can.
                              Values must be JSON: no functions.
   slime.bind(key, action[, args])
                              key (a chord: "ctrl+shift+d"; modifiers ctrl,
@@ -257,6 +267,16 @@ which are for the top level only:
                              what it returns. args is a spec for listing and
                              for converting the CLI's strings: {n = "number",
                              on = "boolean", file = "string"}.
+  slime.workspace.define{name, tabs, autostart}
+                             a workspace by name: tabs is a list of layouts as
+                             workspace.new takes them (slime.layout.pane and
+                             the rest), which workspace.open{name = ...} (slime
+                             ws open, the palette's "Open workspace") makes
+                             when none of that name is open; with autostart
+                             = true it opens when the daemon starts with
+                             nothing to restore. A later define of the name
+                             replaces the earlier. slime ws export writes an
+                             open workspace back as one.
 
 ctx is {workspace_id, tab_id, pane_id, origin}: the pane the action runs
 for (a window's focused pane, slime do's SLIME_PANE, a script's own),
@@ -276,6 +296,18 @@ one without applying it.
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     shell = { command = "pwsh -NoLogo" },
     host = { proxy = true },         -- a SOCKS proxy per connected host (slime host ls)
+    daemon = { upgrade = "ask" },    -- "never": windows don't offer to replace an older daemon
+  }
+
+  slime.workspace.define{
+    name = "dev",
+    autostart = true,
+    tabs = {
+      slime.layout.horizontal(0.7,
+        slime.layout.pane{ command = "nvim", cwd = "~/src/app" },
+        slime.layout.pane{ cwd = "~/src/app" }),
+      slime.layout.pane{ command = "tail -f /var/log/app.log" },
+    },
   }
   slime.bind("ctrl+shift+d", "new_split", { direction = "right" })
   slime.bind("ctrl+shift+t", "new_tab")

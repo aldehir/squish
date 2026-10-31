@@ -49,6 +49,8 @@ pub fn main(init: std.process.Init) !void {
     defer Daemon.freeKeymap(init.gpa, keymap);
     var actions: []Daemon.ConfigAction = &.{};
     defer Daemon.freeActions(init.gpa, actions);
+    var workspace_defs: []const []const u16 = &.{};
+    defer Daemon.freeWorkspaceDefs(init.gpa, workspace_defs);
     var copy_keys: []const u8 = "";
     defer init.gpa.free(copy_keys);
     var source: Config.Source = .{ .dir = config_dir };
@@ -74,6 +76,7 @@ pub fn main(init: std.process.Init) !void {
         config = try Config.loadFrom(init.gpa, init.io, desc.settings, source);
         keymap = try Daemon.keymapFromJson(init.gpa, desc.keymap);
         actions = try Daemon.actionsFromJson(init.gpa, desc.actions);
+        workspace_defs = try Daemon.workspaceDefsFromJson(init.gpa, desc.workspaces);
         copy_keys = try init.gpa.dupe(u8, desc.copy_keys);
     } else {
         config = .init(init.gpa);
@@ -88,7 +91,7 @@ pub fn main(init: std.process.Init) !void {
     defer init.gpa.free(local_command);
 
     // The window owns the connection from here, failing or not.
-    const window = try Window.create(init.gpa, init.io, &config, source, keymap, actions, copy_keys, &hosts, &shown, command_line, local_command, daemon);
+    const window = try Window.create(init.gpa, init.io, &config, source, keymap, actions, workspace_defs, copy_keys, &hosts, &shown, command_line, local_command, daemon);
     defer window.destroy();
     if (daemon_errors.items.len > 0 or config.errors.items.len > 0) try window.app.setNotice(daemon_errors.items);
 

@@ -91,7 +91,9 @@ type Config struct {
 	// known by on the wire) and actions run (by name) alive.
 	funcs    *glua.LTable
 	nextFunc uint32
-	desc     rpc.ConfigDesc
+	// workspaces is what slime.workspace.define set, in order.
+	workspaces []rpc.WorkspaceDef
+	desc       rpc.ConfigDesc
 }
 
 // action is one slime.action: its spec as given, and run.
@@ -169,8 +171,13 @@ func (c *Config) describe() {
 		d.Actions = append(d.Actions, a.desc)
 	}
 	d.CopyKeys = c.CopyKeys()
+	d.Workspaces = c.workspaces
 	c.desc = d
 }
+
+// Workspaces is what slime.workspace.define set, in order: the
+// workspaces workspace.open makes by name, and autostart opens.
+func (c *Config) Workspaces() []rpc.WorkspaceDef { return c.workspaces }
 
 // CopyModePrefix marks a binding as copy mode's: slime.bind("copy-mode:v",
 // "begin_selection"). The key after it is the character the key types,
@@ -201,6 +208,18 @@ func (c *Config) Shell() string {
 		}
 	}
 	return ""
+}
+
+// Upgrade is settings.daemon.upgrade: "ask" (the default), a window
+// shows that a newer build can replace this daemon and asks before it
+// does; "never", it doesn't offer (slime upgrade still can).
+func (c *Config) Upgrade() string {
+	if d, ok := c.settings.RawGetString("daemon").(*glua.LTable); ok {
+		if s, ok := d.RawGetString("upgrade").(glua.LString); ok && s != "" {
+			return string(s)
+		}
+	}
+	return "ask"
 }
 
 // HostProxy is settings.host.proxy: whether the daemon runs a SOCKS
@@ -403,6 +422,45 @@ func (c *Config) install() {
 	c.r.Define("bind", c.luaBind)
 	c.r.Define("unbind", c.luaUnbind)
 	c.r.Define("action", c.luaAction)
+	c.r.DefineIn("workspace", "define", c.luaWorkspaceDefine)
+}
+
+// luaWorkspaceDefine is slime.workspace.define{name, tabs, autostart}:
+// a workspace by name, for workspace.open and autostart, replacing one
+// of the same name. tabs are layouts as workspace.new takes them.
+func (c *Config) luaWorkspaceDefine(L *glua.LState) int {
+	c.topLevel(L, "workspace.define")
+	t := L.CheckTable(1)
+	name, ok := t.RawGetString("name").(glua.LString)
+	if !ok || name == "" {
+		L.ArgError(1, "a workspace definition needs a name")
+	}
+	tabs, ok := t.RawGetString("tabs").(*glua.LTable)
+	if !ok || tabs.Len() == 0 {
+		L.ArgError(1, "a workspace definition needs tabs, a list of layouts")
+	}
+	raw, err := lua.ToJSON(tabs)
+	if err != nil {
+		L.ArgError(1, "tabs must be JSON: "+err.Error())
+	}
+	var layouts []*rpc.Layout
+	if err := json.Unmarshal(raw, &layouts); err != nil {
+		L.ArgError(1, "tabs: "+err.Error())
+	}
+	for _, l := range layouts {
+		if err := l.Validate(); err != nil {
+			L.ArgError(1, "tabs: "+err.Error())
+		}
+	}
+	def := rpc.WorkspaceDef{Name: string(name), Tabs: layouts, Autostart: t.RawGetString("autostart") == glua.LTrue}
+	for i, old := range c.workspaces {
+		if old.Name == def.Name {
+			c.workspaces[i] = def
+			return 0
+		}
+	}
+	c.workspaces = append(c.workspaces, def)
+	return 0
 }
 
 // resolve is a file named in the config, relative to its directory.
