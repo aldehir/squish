@@ -84,6 +84,16 @@ pub const Layout = struct {
 
 /// The box for `pal` in `frame`: centered under the title bar, with
 /// the rows from `pal.scroll` that fit above the window's bottom.
+
+/// The chip a step after the first shows before the query: what it's for.
+fn stepChip(step: Palette.Step) ?struct { label: []const u16, icon: Painter.Lucide } {
+    return switch (step) {
+        .commands => null,
+        .host => .{ .label = L("Connect to host"), .icon = .plug },
+        .float_tab => .{ .label = L("Float over this tab"), .icon = .app_window },
+    };
+}
+
 pub fn layoutIn(ui: *const Ui, frame: *const Ui.Frame, pal: *const Palette) Layout {
     const f = &ui.fonts;
     const window = frame.window;
@@ -107,8 +117,8 @@ pub fn layoutIn(ui: *const Ui, frame: *const Ui.Frame, pal: *const Palette) Layo
     const icon = ui.px(search_icon);
     l.icon = .{ .x = left, .y = top + @round((search_h - icon) / 2), .w = icon, .h = icon };
     var field_x = l.icon.right() + ui.px(search_gap);
-    if (pal.step == .host) {
-        const label = L("Connect to host");
+    if (stepChip(pal.step)) |chip| {
+        const label = chip.label;
         const chip_w = 2 * ui.px(chip_pad_x) + ui.px(chip_icon) + ui.px(6) + @ceil(f.measure(label, f.get(.section)));
         const chip_h = ui.px(chip_height);
         l.chip = .{ .x = field_x, .y = top + @round((search_h - chip_h) / 2), .w = chip_w, .h = chip_h };
@@ -216,18 +226,19 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
 
     // The search row.
     ui.drawIcon(p, .search, l.icon, t.text_muted);
-    if (pal.step == .host) {
+    if (stepChip(pal.step)) |chip| {
         const c = l.chip;
         p.fillRounded(c, ui.px(5), withAlpha(t.accent, 0.14));
         const ci = ui.px(chip_icon);
-        ui.drawIcon(p, .plug, .{ .x = c.x + ui.px(chip_pad_x), .y = c.y + @round((c.h - ci) / 2), .w = ci, .h = ci }, t.accent);
+        ui.drawIcon(p, chip.icon, .{ .x = c.x + ui.px(chip_pad_x), .y = c.y + @round((c.h - ci) / 2), .w = ci, .h = ci }, t.accent);
         const label_x = c.x + ui.px(chip_pad_x) + ci + ui.px(6);
-        p.text(L("Connect to host"), f.get(.section), .{ .x = label_x, .y = c.y, .w = c.right() - label_x, .h = c.h }, t.accent);
+        p.text(chip.label, f.get(.section), .{ .x = label_x, .y = c.y, .w = c.right() - label_x, .h = c.h }, t.accent);
     }
     if (pal.query.len == 0) {
         const placeholder = switch (pal.step) {
             .commands => L("Type a command or a tab name…"),
             .host => L("[user@]host[:port]"),
+            .float_tab => L("Type a tab name…"),
         };
         p.text(placeholder, f.get(.body), l.field, t.text_inactive);
     }
@@ -278,6 +289,7 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
         p.text(switch (pal.step) {
             .commands => L("Nothing matches"),
             .host => L("No hosts match"),
+            .float_tab => L("No tabs match"),
         }, f.get(.body), l.empty.inset(ui.px(row_pad_x) + ui.px(icon_column), 0), t.text_inactive);
     }
 
@@ -290,6 +302,7 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
     const hints: []const u16 = switch (pal.step) {
         .commands => L("↑↓ move   ↵ run   Esc close"),
         .host => L("↑↓ move   ↵ connect   Esc back"),
+        .float_tab => L("↑↓ move   ↵ float   Esc back"),
     };
     p.text(hints, f.get(.tip), foot, t.text_muted);
     var buf: [32]u8 = undefined;

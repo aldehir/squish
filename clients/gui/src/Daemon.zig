@@ -657,6 +657,23 @@ pub const Child = struct {
 /// rpc.Whole: what a split's shares sum to.
 const whole_share = 10000;
 
+/// A floating tab's place over its host (rpc.Float): the host, where in
+/// basis points of the host's area, whether it's down to a chip, and its
+/// stacking among the host's floats (higher is on top).
+pub const Float = struct {
+    over: TabRef,
+    rect: FloatRect,
+    minimized: bool = false,
+    z: u32 = 0,
+};
+
+pub const FloatRect = struct { x: u16, y: u16, w: u16, h: u16 };
+
+/// The least a float spans each way, and a new one's place: rpc's
+/// MinFloat and DefaultFloat.
+pub const min_float = 1500;
+pub const default_float: FloatRect = .{ .x = 2000, .y = 2000, .w = 6000, .h = 6000 };
+
 /// Ids are paths (internal/rpc id.go): the daemon numbers workspaces, a
 /// workspace its tabs, and a tab its panes, each from a counter that
 /// never reuses a number while its owner lives, so a path is never
@@ -791,6 +808,8 @@ pub const Structure = struct {
         /// The pane that gets input, and the one zoomed (none for none).
         focus: PaneRef,
         zoomed: PaneRef,
+        /// Set while the tab floats over another of the workspace's.
+        float: ?Float = null,
     };
 
     fn destroy(self: *Structure, alloc: Allocator) void {
@@ -836,7 +855,7 @@ pub const Json = struct {
     };
     const RpcError = struct { code: i64 = 0, message: []const u8 = "" };
     const Workspace = struct { id: u32, name: []const u8 = "", active_tab: TabRef = .none, tabs: []const Tab = &.{} };
-    const Tab = struct { id: TabRef, name: []const u8 = "", tree: Node, focus: PaneRef = .none, zoomed: PaneRef = .none };
+    const Tab = struct { id: TabRef, name: []const u8 = "", tree: Node, focus: PaneRef = .none, zoomed: PaneRef = .none, float: ?Float = null };
     const Created = struct { pane: PaneRef = .none };
     /// `moved_from` is the id the pane had, if it just moved tabs.
     const PaneAttached = struct {
@@ -1658,6 +1677,36 @@ pub fn layout(self: *Daemon, tab: TabRef, root: Node) !void {
     _ = try self.call("tab.layout", .{ .id = tab, .tree = root });
 }
 
+/// Float tab `tab` over tab `over`, at the default place; one floating
+/// already moves there. Its own floats move onto `over`. UI thread.
+pub fn floatTab(self: *Daemon, tab: TabRef, over: TabRef) !void {
+    _ = try self.call("tab.float", .{ .id = tab, .over = over });
+}
+
+/// Move floating tab `tab` to `rect`, in basis points of its host's
+/// area: it was dragged. UI thread.
+pub fn floatRect(self: *Daemon, tab: TabRef, rect: FloatRect) !void {
+    _ = try self.call("tab.float", .{ .id = tab, .rect = rect });
+}
+
+/// Make floating tab `tab` a chip, or show it again. UI thread.
+pub fn floatMinimized(self: *Daemon, tab: TabRef, minimized: bool) !void {
+    _ = try self.call("tab.float", .{ .id = tab, .minimized = minimized });
+}
+
+/// Make floating tab `tab` an ordinary tab again, after its host. UI
+/// thread.
+pub fn dockTab(self: *Daemon, tab: TabRef) !void {
+    _ = try self.call("tab.dock", .{ .id = tab });
+}
+
+/// Move pane `pane` into a new tab floating over its own (or over what
+/// that one floats over). It comes back under a new id, focused, as
+/// `split`'s does. UI thread.
+pub fn floatPane(self: *Daemon, pane: PaneRef) !void {
+    _ = try self.call("pane.move", .{ .pane = pane, .float = true });
+}
+
 /// Tell the daemon the focus moved here: `f.tab` is shown in its
 /// workspace, with `f.pane` focused and `f.zoomed` zoomed (none for
 /// none). Every other window on the workspace follows; this one doesn't
@@ -2094,7 +2143,7 @@ fn applyWorkspace(self: *Daemon, value: std.json.Value) !u32 {
     const a = st.arena.allocator();
     const ws = try std.json.parseFromValueLeaky(Json.Workspace, a, value, json_opts);
     const tabs = try a.alloc(Structure.TabLayout, ws.tabs.len);
-    for (tabs, ws.tabs) |*out, t| out.* = .{ .id = t.id, .root = t.tree, .focus = t.focus, .zoomed = t.zoomed };
+    for (tabs, ws.tabs) |*out, t| out.* = .{ .id = t.id, .root = t.tree, .focus = t.focus, .zoomed = t.zoomed, .float = t.float };
     st.id = ws.id;
     st.name = try toUtf16(a, ws.name);
     st.tabs = tabs;

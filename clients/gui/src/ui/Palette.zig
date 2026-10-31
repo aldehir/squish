@@ -28,6 +28,8 @@ pub const Step = enum {
     commands,
     /// "Connect to host…": the hosts, and what's typed.
     host,
+    /// "Float tab…": the tabs that can float over the one shown.
+    float_tab,
 };
 
 /// Listed in this order, under a caption each, while the query is empty.
@@ -58,6 +60,8 @@ pub const Action = union(enum) {
     host: u32,
     /// Connect to the host typed in the query.
     typed_host,
+    /// Float the tab, by `Tab.key`, over the one shown.
+    float_tab: u32,
     toggle_stats,
     reload_config,
     /// Run one of init.lua's actions by name, in the daemon.

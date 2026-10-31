@@ -38,6 +38,21 @@ zoom: ?*Session = null,
 sent_focus: ?Daemon.Focus = null,
 /// Its panes aren't listed under it in the sidebar.
 folded: bool = false,
+/// Set while the tab floats over another, from slime's structure: shown
+/// over its host rather than in a row of its own. The host is linked
+/// anew with each structure (`App.applyStructure`), and a host freed
+/// first unlinks its floats (`App.destroyTab`), so it never dangles.
+float: ?Floating = null,
+
+/// A floating tab's host and place: `Daemon.Float` with the host found.
+pub const Floating = struct {
+    host: *Tab,
+    /// In basis points of the host's area.
+    rect: Daemon.FloatRect,
+    minimized: bool = false,
+    /// Stacking among the host's floats: higher is on top.
+    z: u32 = 0,
+};
 
 pub const Axis = Daemon.Axis;
 
@@ -470,18 +485,25 @@ fn insertEdge(alloc: Allocator, root: *Node, s: *Session, side: Daemon.Direction
 /// caller's to fill.
 pub fn place(self: *Tab, alloc: Allocator, p: *Placement, area: Rect, gap: f32, grip: f32) !void {
     p.clear();
+    try self.placeInto(alloc, p, area, gap, grip);
+}
+
+/// `place`, adding to what `p` holds: a float's panes after its host's.
+/// Corners are found among this tab's dividers alone.
+pub fn placeInto(self: *Tab, alloc: Allocator, p: *Placement, area: Rect, gap: f32, grip: f32) !void {
     if (self.zoom) |z| {
-        try p.panes.append(alloc, .{ .session = z, .frame = area });
+        try p.panes.append(alloc, .{ .session = z, .tab = self, .frame = area });
         return;
     }
     const g = @max(gap, grip);
-    try placeNode(alloc, p, &self.root, area, gap, g);
-    try p.findCorners(alloc, g);
+    const first_divider = p.dividers.items.len;
+    try placeNode(alloc, p, self, &self.root, area, gap, g);
+    try p.findCorners(alloc, first_divider, g);
 }
 
-fn placeNode(alloc: Allocator, p: *Placement, node: *Node, r: Rect, gap: f32, grip: f32) !void {
+fn placeNode(alloc: Allocator, p: *Placement, tab: *Tab, node: *Node, r: Rect, gap: f32, grip: f32) !void {
     const sp = switch (node.*) {
-        .pane => |s| return p.panes.append(alloc, .{ .session = s, .frame = r }),
+        .pane => |s| return p.panes.append(alloc, .{ .session = s, .tab = tab, .frame = r }),
         .split => |*sp| sp,
     };
     const row = sp.axis == .row;
@@ -503,7 +525,7 @@ fn placeNode(alloc: Allocator, p: *Placement, node: *Node, r: Rect, gap: f32, gr
             .{ .x = start, .y = r.y, .w = @max(0, end - start), .h = r.h }
         else
             .{ .x = r.x, .y = start, .w = r.w, .h = @max(0, end - start) };
-        try placeNode(alloc, p, &c.node, child, gap, grip);
+        try placeNode(alloc, p, tab, &c.node, child, gap, grip);
         // The grip, widened about the gap's middle.
         const grab = end + @round((gap - grip) / 2);
         if (!last) try p.dividers.append(alloc, .{

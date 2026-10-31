@@ -2,9 +2,10 @@
 //! has (workspaces, tabs, panes, hosts) and what the UI draws (`ui/Tree`).
 //! `build` makes a tree each frame, in an arena: the title bar, the
 //! sidebar as a tree of sections, workspaces, tabs, and panes, the
-//! terminal area's pane strips, a dialog over it, and a context menu or
-//! the command palette over everything. What a row shows under the
-//! mouse (the buttons that appear) is decided here, from the UI's hover.
+//! terminal area's pane strips, the floats over them (the minimized ones
+//! listed at the sidebar's bottom), a dialog over it, and a context menu
+//! or the command palette over everything. What a row shows under the mouse (the buttons that
+//! appear) is decided here, from the UI's hover.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -14,6 +15,7 @@ const App = @import("App.zig");
 const Hosts = @import("Hosts.zig");
 const Tab = @import("Tab.zig");
 const Session = @import("Session.zig");
+const Placement = @import("Placement.zig");
 const ProgramStatus = @import("ProgramStatus.zig");
 const Painter = @import("renderer/Painter.zig");
 const Ui = @import("ui/Ui.zig");
@@ -103,6 +105,10 @@ const Builder = struct {
         if (self.frame.notice.h > 0) try regions.append(self.arena, try self.notice());
         if (self.ui.sidebar_shown) try regions.append(self.arena, try self.sidebar());
         try regions.append(self.arena, try self.terminal());
+        // Each float over the panes, bottom to top.
+        if (self.app.hasTabs()) {
+            for (0..self.app.placed().floats.items.len) |k| try regions.append(self.arena, try self.floatNode(k));
+        }
         // Over both, so the edge is taken hold of before anything under it.
         if (self.ui.sidebar_shown) try regions.append(self.arena, self.sidebarEdge());
         if (self.dialog()) |d| try regions.append(self.arena, d);
@@ -195,6 +201,10 @@ const Builder = struct {
             .kind = .{ .tree = .{ .rows = try self.sections(), .scroll = self.ui.sidebar_scroll, .gutter = scrollbar_gutter } },
             .clip = true,
         });
+        if (try self.minimized()) |m| {
+            try children.append(self.arena, .{ .kind = .{ .spacer = stats_gap } });
+            try children.append(self.arena, m);
+        }
         const stats = app.shell.stats();
         if (stats.len > 0) {
             try children.append(self.arena, .{ .kind = .{ .spacer = stats_gap } });
@@ -211,6 +221,47 @@ const Builder = struct {
             .pad = .{ .left = sidebar_pad_x, .right = sidebar_pad_x - scrollbar_gutter, .top = sidebar_pad_top, .bottom = sidebar_pad_bottom },
             .bg = t.ground,
         } }, .rect = self.frame.sidebar };
+    }
+
+    /// The minimized floats, under a header of their own at the sidebar's
+    /// bottom: each a row like a tab's, set in as a workspace's tabs are,
+    /// its title after a window icon, which shows it again. Null for none.
+    fn minimized(self: *const Builder) Allocator.Error!?Node {
+        const app = self.app;
+        const t = &self.ui.theme;
+        var rows: std.ArrayList(Node) = .empty;
+        for (app.tabs.items) |tab| {
+            const f = tab.float orelse continue;
+            if (!f.minimized) continue;
+            const target: Id.Target = .{ .float = tab.key };
+            const hovered = self.ui.hover.on(target);
+            // The icon where a tab row's is, past its fold arrow.
+            const items = try self.nodes(&.{
+                .{ .kind = .{ .row = .{
+                    .w = TreeList.fold_width + 24,
+                    .children = try self.nodes(&.{
+                        .{ .kind = .{ .spacer = TreeList.fold_width } },
+                        .{ .kind = .{ .icon = .{ .icon = .app_window, .size = 16, .color = if (hovered) t.text_strong else t.text_muted } } },
+                    }),
+                } } },
+                .{ .kind = .{ .label = .{ .text = tab.focus.title(), .color = if (hovered) t.text_strong else t.text_muted } } },
+                .{ .kind = .{ .spacer = 8 } },
+            });
+            try rows.append(self.arena, .{
+                .id = .{ .target = target, .part = .chip },
+                .kind = .{ .row = .{ .children = items, .h = tab_height, .bg = if (hovered) t.row_hover else null, .radius = 6 } },
+            });
+        }
+        if (rows.items.len == 0) return null;
+        const head: Node = .{ .kind = .{ .row = .{
+            .children = try self.nodes(&.{
+                .{ .kind = .{ .spacer = 2 } },
+                .{ .kind = .{ .label = .{ .text = L("Minimized"), .font = .section, .color = t.text_muted, .upper = true } } },
+            }),
+            .h = header_height,
+        } } };
+        const list: Node = .{ .kind = .{ .column = .{ .children = rows.items, .gap = TreeList.row_gap, .pad = .{ .left = TreeList.indent } } } };
+        return .{ .kind = .{ .column = .{ .children = try self.nodes(&.{ head, list }), .gap = TreeList.row_gap, .pad = .{ .right = scrollbar_gutter } } } };
     }
 
     /// The strip astride the sidebar's edge that drags its width: over
@@ -246,7 +297,7 @@ const Builder = struct {
         }
         const none = app.noneGroup(s);
         for (app.tabs.items) |t| {
-            if (app.groupOf(t) == none) try rows.append(self.arena, try self.tabRow(t));
+            if (t.float == null and app.groupOf(t) == none) try rows.append(self.arena, try self.tabRow(t));
         }
         return rows.items;
     }
@@ -325,8 +376,10 @@ const Builder = struct {
         const id: Id = .{ .target = target };
         const group = app.workspaceGroup(w.key);
         var tabs: std.ArrayList(TreeRow) = .empty;
+        // Floating tabs aren't listed: they're over the tab they float
+        // over, or its chips, and in the palette.
         for (app.tabs.items) |tab| {
-            if (app.groupOf(tab) == group) try tabs.append(self.arena, try self.tabRow(tab));
+            if (tab.float == null and app.groupOf(tab) == group) try tabs.append(self.arena, try self.tabRow(tab));
         }
 
         if (app.mode == .rename and app.mode.rename.ws == w.key) {
@@ -395,7 +448,7 @@ const Builder = struct {
         const t = &self.ui.theme;
         const target: Id.Target = .{ .tab = tab.key };
         const id: Id = .{ .target = target };
-        const active = app.hasTabs() and app.activeTab() == tab;
+        const active = app.hasTabs() and app.shownHost() == tab;
         const hovered = self.ui.hover.on(target);
         var items: std.ArrayList(Node) = .empty;
         // The fold arrow and the icon in a row of their own, so the title
@@ -447,7 +500,8 @@ const Builder = struct {
         }
         var panes: std.ArrayList(TreeRow) = .empty;
         var it = tab.iterator();
-        while (it.next()) |s| try panes.append(self.arena, try self.paneRow(tab, s, active));
+        const keys = app.hasTabs() and app.activeTab() == tab;
+        while (it.next()) |s| try panes.append(self.arena, try self.paneRow(tab, s, keys));
         return .{
             .node = .{
                 .id = id,
@@ -507,33 +561,10 @@ const Builder = struct {
         const t = &self.ui.theme;
         var items: std.ArrayList(Node) = .empty;
         if (app.hasTabs()) {
-            const tab = app.activeTab();
-            const several = tab.count() > 1;
-            for (app.placed().panes.items) |p| {
-                const s = p.session;
-                const id: Id = .{ .target = .{ .pane = s.id } };
-                const focused = s == tab.focus;
-                const buttons = try self.paneButtons(id, s, tab, p.frame.w, several);
-                try items.append(self.arena, .{ .id = id.with(.terminal), .kind = .{ .pane = .{
-                    .title = s.title(),
-                    .badge = if (s.inCopyMode()) L("COPY") else &.{},
-                    .focused = focused,
-                    .dot = several and focused,
-                    .dimmed = several and !focused,
-                    .bg = toColor(s.background()),
-                    .buttons = buttons.nodes,
-                    .nav = buttons.nav,
-                    .browser = try self.browserPane(s, p.rect),
-                    .search = self.searchView(s),
-                } }, .rect = p.frame });
-            }
-            for (app.placed().dividers.items, 0..) |d, i| {
-                try items.append(self.arena, .{ .id = .{ .target = .{ .divider = @intCast(i) } }, .kind = .hit_area, .rect = d.grip });
-            }
-            // Over the dividers' ends, so they win there.
-            for (app.placed().corners.items, 0..) |c, i| {
-                try items.append(self.arena, .{ .id = .{ .target = .{ .corner = @intCast(i) } }, .kind = .hit_area, .rect = c.rect });
-            }
+            const placed = app.placed();
+            const end = placed.hostEnd();
+            try self.paneNodes(&items, placed.panes.items[0..end.panes]);
+            try self.gripNodes(&items, .{ 0, end.dividers }, .{ 0, end.corners });
         } else {
             const area = self.frame.terminal;
             const h = self.ui.px(20);
@@ -544,6 +575,81 @@ const Builder = struct {
             } }, .rect = .{ .x = area.x, .y = area.y + @round((area.h - h) / 2), .w = area.w, .h = h } });
         }
         return .{ .kind = .{ .canvas = items.items }, .rect = self.frame.terminal, .clip = true };
+    }
+
+    /// Panes where the placement put them, each with its buttons: dimmed
+    /// but the one with the keys, while more than one is shown.
+    fn paneNodes(self: *const Builder, items: *std.ArrayList(Node), panes: []const Placement.Pane) Allocator.Error!void {
+        const app = self.app;
+        const keys = app.activeTab();
+        const shown = app.placed().panes.items.len > 1;
+        for (panes) |p| {
+            const s = p.session;
+            const tab = p.tab;
+            const id: Id = .{ .target = .{ .pane = s.id } };
+            const focused = tab == keys and s == tab.focus;
+            const buttons = try self.paneButtons(id, s, tab, p.frame.w, tab.count() > 1);
+            try items.append(self.arena, .{ .id = id.with(.terminal), .kind = .{ .pane = .{
+                .title = s.title(),
+                .badge = if (s.inCopyMode()) L("COPY") else &.{},
+                .focused = focused,
+                .dot = shown and focused,
+                .dimmed = shown and !focused,
+                .bg = toColor(s.background()),
+                .buttons = buttons.nodes,
+                .nav = buttons.nav,
+                .browser = try self.browserPane(s, p),
+                .search = self.searchView(s),
+            } }, .rect = p.frame });
+        }
+    }
+
+    /// The placement's dividers and corners in these ranges, where the
+    /// mouse takes hold of them: the corners over the dividers' ends, so
+    /// they win there.
+    fn gripNodes(self: *const Builder, items: *std.ArrayList(Node), dividers: [2]usize, corners: [2]usize) Allocator.Error!void {
+        const placed = self.app.placed();
+        for (placed.dividers.items[dividers[0]..dividers[1]], dividers[0]..) |d, i| {
+            try items.append(self.arena, .{ .id = .{ .target = .{ .divider = @intCast(i) } }, .kind = .hit_area, .rect = d.grip });
+        }
+        for (placed.corners.items[corners[0]..corners[1]], corners[0]..) |c, i| {
+            try items.append(self.arena, .{ .id = .{ .target = .{ .corner = @intCast(i) } }, .kind = .hit_area, .rect = c.rect });
+        }
+    }
+
+    /// Float `k` of the placement: its box and header with its buttons,
+    /// its panes in it, and around it the band that resizes it, kept in
+    /// the terminal area.
+    fn floatNode(self: *const Builder, k: usize) Allocator.Error!Node {
+        const app = self.app;
+        const placed = app.placed();
+        const f = placed.floats.items[k];
+        const parts = placed.floatParts(k);
+        var items: std.ArrayList(Node) = .empty;
+        try self.paneNodes(&items, parts.panes);
+        try self.gripNodes(&items, parts.dividers, parts.corners);
+        const id: Id = .{ .target = .{ .float = f.tab.key } };
+        // Lucide's minus spans 14 of its 24 units, the square 18, and the
+        // cross 12: about 9, 11, and 8 DIPs in these boxes.
+        const buttons = try self.nodes(&.{
+            .{ .id = id.with(.minimize), .kind = .{ .icon_button = .{ .icon = .minus, .size = 15, .style = .faint, .tip = L("Minimize") } } },
+            .{ .id = id.with(.dock), .kind = .{ .icon_button = .{ .icon = .square_arrow_down_left, .size = 14, .style = .faint, .tip = L("Dock as a tab") } } },
+            .{ .id = id.with(.close), .kind = .{ .icon_button = .{ .icon = .x, .size = 16, .style = .faint, .tip = L("Close tab") } } },
+        });
+        const grip = app.geometry.grip;
+        const area = self.frame.terminal;
+        const out = f.frame.inset(-grip, -grip);
+        const x0 = @max(out.x, area.x);
+        const y0 = @max(out.y, area.y);
+        const x1 = @min(out.right(), area.right());
+        const y1 = @min(out.bottom(), area.bottom());
+        return .{ .id = id, .kind = .{ .float = .{
+            .box = f.frame,
+            .title = f.tab.focus.title(),
+            .focused = f.tab == app.activeTab(),
+            .buttons = buttons,
+            .children = items.items,
+        } }, .rect = .{ .x = x0, .y = y0, .w = @max(0, x1 - x0), .h = @max(0, y1 - y0) } };
     }
 
     const PaneButtons = struct {
@@ -630,9 +736,11 @@ const Builder = struct {
         };
     }
 
-    /// A browser pane's URL bar, and what stands in for its page in
-    /// `page`, under its strip. Null for a terminal.
-    fn browserPane(self: *const Builder, s: *Session, page: Rect) Allocator.Error!?tree.BrowserPane {
+    /// A browser pane's URL bar, and what stands in for its page under
+    /// its strip: a picture of it while a float covers it. Null for a
+    /// terminal.
+    fn browserPane(self: *const Builder, s: *Session, placed: Placement.Pane) Allocator.Error!?tree.BrowserPane {
+        const page = placed.rect;
         const url = s.pageUrl() orelse return null;
         const app = self.app;
         const editing = app.mode == .url and app.mode.url.pane == s.id;
@@ -656,6 +764,7 @@ const Builder = struct {
             .ended = ended,
             .live = b.live(),
             .favicon = b.favicon,
+            .still = if (app.pageCovered(placed)) b.preview else null,
         };
     }
 

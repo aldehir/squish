@@ -41,6 +41,10 @@ pub const Target = union(enum) {
     /// A corner where the active tab's dividers meet, by its place in the
     /// tab's corners from the last layout.
     corner: u16,
+    /// A floating tab's box over the tab shown, by its `Tab.key`: its
+    /// header, the header's buttons, the band around it that resizes it,
+    /// or its row in the sidebar while minimized.
+    float: u32,
     /// A dialog's field or button, by its index.
     dialog: u8,
     /// A context menu's entry, by its index into the menu's items.
@@ -111,6 +115,16 @@ pub const Part = enum {
     field,
     /// A dialog's button.
     button,
+    /// A floating tab's header button that makes it an ordinary tab
+    /// again; a pane's or tab's menu entry that floats it, over the tab
+    /// shown.
+    dock,
+    float,
+    /// The band around a float's box, which resizes it.
+    edge,
+    /// A minimized float's row at the sidebar's bottom, which shows it
+    /// again; its menu entry that does.
+    chip,
     /// A pane's search card: its field (or the pill), and its previous,
     /// next, and close buttons.
     search,

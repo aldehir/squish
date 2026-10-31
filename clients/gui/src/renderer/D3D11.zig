@@ -227,6 +227,11 @@ const GpuFonts = struct {
 /// What to draw: terminals, each at its font grid's size.
 pub const Frame = struct {
     panes: []const Pane,
+    /// Where each float's panes start in `panes`, bottom to top: the
+    /// panes before the first are the tab's under them. Each float's are
+    /// drawn over the UI's ground, between its box and its strips
+    /// (`ui.paintFloat`). Empty for none.
+    floats: []const usize = &.{},
     /// Behind the panes, where none is.
     background: [4]f32,
     /// How each pane's box looks.
@@ -670,8 +675,50 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
     ctx.clearState();
     ctx.omSetRenderTargets(&.{rtv});
     ctx.clearRenderTargetView(rtv, &f.background);
+    try self.drawPanes(alloc, f, f.panes[0..if (f.floats.len > 0) f.floats[0] else f.panes.len]);
+    if (f.floats.len > 0) {
+        // The ground under the floats, then each float's box, terminals,
+        // and strips, then the ground over them.
+        try self.paintUi(ui, .ground);
+        for (f.floats, 0..) |start, k| {
+            const end = if (k + 1 < f.floats.len) f.floats[k + 1] else f.panes.len;
+            try self.paintFloat(ui, k, .box);
+            ctx.clearState();
+            ctx.omSetRenderTargets(&.{rtv});
+            try self.drawPanes(alloc, f, f.panes[start..end]);
+            try self.paintFloat(ui, k, .panes);
+        }
+        try self.paintAbove(ui);
+    }
+    if (self.overlay) |*o| {
+        if (f.floats.len == 0) try self.paintUi(ui, .ground);
+        const capture = ui.capture();
+        const img = if (capture) |region| self.captureRegion(region) catch |err| img: {
+            log.warn("capturing the frame failed: {}", .{err});
+            break :img null;
+        } else null;
+        try self.presentGround();
+        try self.drawOverlay(o, ui, capture != null, img);
+    } else {
+        if (f.floats.len > 0) try self.paintUi(ui, .over) else try self.paintUi(ui, .all);
+        if (ui.capture()) |region| {
+            const img = self.captureRegion(region) catch |err| img: {
+                log.warn("capturing the frame failed: {}", .{err});
+                break :img null;
+            };
+            try self.paintOver(ui, img);
+        }
+        try self.presentGround();
+    }
+    if (self.comp.dirty) try self.commit();
+}
+
+/// Draw `panes`' shadows, then their boxes and terminals, over what the
+/// target has.
+fn drawPanes(self: *D3D11, alloc: std.mem.Allocator, f: Frame, panes: []const Pane) error{ DeviceLost, HResult }!void {
+    const ctx = self.context;
     // Every shadow before any pane, so none falls on a neighbor.
-    for (f.panes) |pane| for (f.box.shadows) |shadow| {
+    for (panes) |pane| for (f.box.shadows) |shadow| {
         const b = pane.frame;
         const reach = 3 * shadow.sigma;
         const box_rect: Painter.Rect = .{ .x = b.x, .y = b.y + shadow.offset, .w = b.w, .h = b.h };
@@ -689,7 +736,7 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
     };
     // Each pane's data replaces the last's in the same buffers, which
     // discarding maps rename, so draws already queued keep theirs.
-    for (f.panes) |pane| {
+    for (panes) |pane| {
         const v = pane.viewport;
         if (pane.frame.w < 1 or pane.frame.h < 1) continue;
         try self.drawBox(self.pipeline.box_ps, .{
@@ -715,27 +762,6 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
         ctx.unmap(self.uniforms.resource());
         try self.drawGrid(pane);
     }
-    if (self.overlay) |*o| {
-        try self.paintUi(ui, .ground);
-        const capture = ui.capture();
-        const img = if (capture) |region| self.captureRegion(region) catch |err| img: {
-            log.warn("capturing the frame failed: {}", .{err});
-            break :img null;
-        } else null;
-        try self.presentGround();
-        try self.drawOverlay(o, ui, capture != null, img);
-    } else {
-        try self.paintUi(ui, .all);
-        if (ui.capture()) |region| {
-            const img = self.captureRegion(region) catch |err| img: {
-                log.warn("capturing the frame failed: {}", .{err});
-                break :img null;
-            };
-            try self.paintOver(ui, img);
-        }
-        try self.presentGround();
-    }
-    if (self.comp.dirty) try self.commit();
 }
 
 fn presentGround(self: *D3D11) error{ DeviceLost, HResult }!void {
@@ -958,6 +984,24 @@ fn createCapture(self: *D3D11, w: u32, h: u32) Error!Capture {
         .bitmapOptions = 0,
     }, &bitmap), "ID2D1DeviceContext::CreateBitmapFromDxgiSurface(capture)");
     return .{ .texture = texture.?, .bitmap = bitmap.?, .width = w, .height = h };
+}
+
+/// Float `k`'s box, or its panes' strips (`Ui.paintFloat`).
+fn paintFloat(self: *D3D11, ui: anytype, k: usize, part: anytype) Error!void {
+    const d2d = self.d2d_context;
+    d2d.beginDraw();
+    var p = self.painter();
+    ui.paintFloat(&p, k, part);
+    try com.check(d2d.endDraw(), "ID2D1DeviceContext::EndDraw(float)");
+}
+
+/// The UI's ground over the floats (`Ui.paintAbove`).
+fn paintAbove(self: *D3D11, ui: anytype) Error!void {
+    const d2d = self.d2d_context;
+    d2d.beginDraw();
+    var p = self.painter();
+    ui.paintAbove(&p);
+    try com.check(d2d.endDraw(), "ID2D1DeviceContext::EndDraw(above)");
 }
 
 fn paintUi(self: *D3D11, ui: anytype, layer: anytype) Error!void {

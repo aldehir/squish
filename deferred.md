@@ -57,6 +57,15 @@ is attached.
   a tooltip; nor are records other than the most pressing, and `done`
   stays until the program replaces or clears it, with no notion of the
   user having seen it.
+- **Floating tabs** (a tab with `float {over, rect}`: `tab.float`,
+  `tab.dock`, `pane.move` with `float`) stop at what the window's
+  placement can do in one tab area. A pane can't be dragged between a
+  float and the tab under it (a pane drag stays in its tab), floats
+  don't float over floats (floating a host moves its floats onto the
+  new one), a tab of a session not run in slime can't float (no daemon
+  tab to keep it), and a float stays in its workspace. A float over a
+  browser pane hides its page for a still picture of it while it
+  covers any of it.
 
 ## Needs app chrome
 

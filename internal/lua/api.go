@@ -162,7 +162,10 @@ which are for the top level only:
                              args (slime-gui's: new_tab, new_split {direction},
                              close_surface, next_tab, previous_tab, goto_split
                              {direction}, resize_split {direction, amount},
-                             equalize_splits, toggle_split_zoom,
+                             equalize_splits, toggle_split_zoom, the floating
+                             tabs' float_pane, float_tab (picks a tab in the
+                             palette), dock_float, toggle_floats, and
+                             focus_float, which have no keys by default,
                              toggle_command_palette, start_search,
                              navigate_search {direction = "next"|"previous"},
                              end_search, copy_mode, copy_to_clipboard,
@@ -372,6 +375,14 @@ A browser beside this pane, following where its windows go (pane.url):
     if ev.id == b.pane then slime.log("browser at", ev.url) end
   end)
   slime.pane.navigate{ pane = b.pane, url = "http://localhost:8080/docs" }
+
+Float this pane over its tab, as a window inside it, then minimize it
+(slime.tab.dock{id = ...} makes it an ordinary tab again):
+
+  local f = assert(slime.pane.move{ float = true })  -- or float = { over = "1.2", rect = { x = 0, y = 0, w = 5000, h = 10000 } }
+  local id = slime.id.parse(f.pane)
+  slime.tab.float{ id = slime.id.tab(id.workspace, id.tab), minimized = true }
+  slime.on("tab.docked", function(ctx, ev) slime.log(ev.id, "docked") end)
 
 Shell out (on the daemon's host):
 

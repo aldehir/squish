@@ -57,6 +57,7 @@ const widgets = struct {
     const Popup = @import("widgets/Popup.zig");
     const PaletteView = @import("widgets/PaletteView.zig");
     const CaptionButton = @import("widgets/CaptionButton.zig");
+    const FloatBox = @import("widgets/FloatBox.zig");
     const Tooltip = @import("widgets/Tooltip.zig");
 };
 
@@ -234,6 +235,7 @@ fn Widget(comptime tag: std.meta.Tag(Kind)) type {
         .menu => widgets.Popup,
         .palette => widgets.PaletteView,
         .caption_button => widgets.CaptionButton,
+        .float => widgets.FloatBox,
     };
 }
 
@@ -271,6 +273,7 @@ pub fn children(node: *const Node) []Node {
         .row => |r| r.children,
         .stack, .canvas => |nodes| nodes,
         .pane => |p| p.buttons,
+        .float => |f| f.children,
         else => &.{},
     };
 }
@@ -316,9 +319,11 @@ pub fn findIn(node: *const Node, id: Id) ?*const Node {
 }
 
 /// What a paint pass draws: the whole tree into one target, or, while
-/// the renderer has content of its own over the ground (a browser pane's),
-/// the ground and what must be over that content (dialogs, the menu, the
-/// tooltip) in two.
+/// the renderer has content of its own over the ground (a browser pane's)
+/// or a float's terminals to draw over the tab shown, the ground and what
+/// must be over that content (dialogs, the menu, the tooltip) in two.
+/// With floats, the ground is what's under the first; `paintFloat` draws
+/// each, and `paintAbove` the rest of the ground.
 pub const Layer = enum { all, ground, over };
 
 /// Draw `tree`'s `layer`, then the tooltip over it if that's in the layer.
@@ -331,9 +336,55 @@ pub fn paint(self: *const Ui, p: *Painter, tree: *const Tree, layer: Layer) void
         const root = &tree.root;
         if (root.clip) p.pushClip(root.rect);
         defer if (root.clip) p.popClip();
-        for (children(root)) |*child| if (isOver(child) == (layer == .over)) self.paintNode(p, child);
+        for (children(root)) |*child| {
+            if (layer == .ground and child.kind == .float) break;
+            if (isOver(child) == (layer == .over)) self.paintNode(p, child);
+        }
     }
     if (layer != .ground) widgets.Tooltip.paint(self, p, tree);
+}
+
+/// How many floats the tree has, which the renderer draws one by one over
+/// the ground's first part (`paintFloat`).
+pub fn floatCount(tree: *const Tree) usize {
+    var n: usize = 0;
+    for (children(&tree.root)) |*child| {
+        if (child.kind == .float) n += 1;
+    }
+    return n;
+}
+
+/// Float `i`'s box under its terminals (`.box`), or what goes over them:
+/// its panes' strips, in the terminal area.
+pub fn paintFloat(self: *const Ui, p: *Painter, tree: *const Tree, i: usize, part: enum { box, panes }) void {
+    var n: usize = 0;
+    for (children(&tree.root)) |*child| {
+        if (child.kind != .float) continue;
+        if (n != i) {
+            n += 1;
+            continue;
+        }
+        p.pushClip(tree.frame.terminal);
+        defer p.popClip();
+        switch (part) {
+            .box => widgets.FloatBox.paintBox(self, p, child),
+            .panes => self.paintChildren(p, child),
+        }
+        return;
+    }
+}
+
+/// The ground after the floats, over them: what's not over the browsers'
+/// content (`paint`'s `.over`) and comes after the first float.
+pub fn paintAbove(self: *const Ui, p: *Painter, tree: *const Tree) void {
+    var past = false;
+    for (children(&tree.root)) |*child| {
+        if (child.kind == .float) {
+            past = true;
+            continue;
+        }
+        if (past and !isOver(child)) self.paintNode(p, child);
+    }
 }
 
 /// Whether `paint`'s `.over` layer draws anything.
@@ -847,6 +898,7 @@ test {
     _ = Palette;
     _ = Scrollbar;
     _ = widgets.CaptionButton;
+    _ = widgets.FloatBox;
     _ = widgets.Tooltip;
     _ = Menu;
 }

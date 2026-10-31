@@ -101,6 +101,10 @@ pub const Kind = union(enum) {
     palette: PaletteView,
     /// The title bar's minimize, maximize, and close.
     caption_button: CaptionButton,
+    /// A floating tab over the tab shown: its box, its header, and its
+    /// panes in it. The renderer draws its terminals between the box and
+    /// what's in it (`Ui.paintFloat`).
+    float: FloatView,
 };
 
 pub const Column = struct {
@@ -301,6 +305,21 @@ pub const SearchView = struct {
     hint: []const u16 = &.{},
 };
 
+/// A floating tab's box (`widgets/FloatBox.zig`), raised on a shadow
+/// over the tab shown: a header that moves it, with its title and its
+/// buttons at the right, over its panes. The node's rect reaches past
+/// the box by the band that resizes it.
+pub const FloatView = struct {
+    box: Rect,
+    title: []const u16,
+    /// It has the keys: its outline is lit.
+    focused: bool,
+    /// The header's buttons, left to right: minimize, dock, close.
+    buttons: []Node,
+    /// Its panes, dividers, and corners, where the builder put them.
+    children: []Node,
+};
+
 pub const BrowserPane = struct {
     /// Where the page is, shown in the bar while it isn't edited.
     url: []const u16,
@@ -317,6 +336,9 @@ pub const BrowserPane = struct {
     ended: []const u16 = &.{},
     /// Its browser draws the page, over the stand-in, which isn't drawn.
     live: bool = false,
+    /// A picture of the page in its place: its browser is hidden, a
+    /// float over it.
+    still: ?Painter.Image = null,
     /// The site's icon, at the bar's left; null for a globe.
     favicon: ?Painter.Image = null,
 };

@@ -279,6 +279,19 @@ func mark(on bool) string {
 	return ""
 }
 
+// floatString says what a floating tab floats over: "\tfloating over
+// 1.2", or "" for an ordinary tab.
+func floatString(f *rpc.Float) string {
+	if f == nil {
+		return ""
+	}
+	s := "\tfloating over " + f.Over.String()
+	if f.Minimized {
+		s += ", minimized"
+	}
+	return s
+}
+
 // layoutString shows a tree compactly: row(60% 1.1.3, 40% col(50% 1.1.4,
 // 50% 1.1.5)).
 func layoutString(n *rpc.Node) string {
@@ -391,7 +404,7 @@ func wsCommand() *cobra.Command {
 			}
 			fmt.Printf("workspace %d\t%s\t%s\n", d.ID, d.Name, workspaceState(d))
 			for _, t := range d.Tabs {
-				fmt.Printf("  tab %s%s\t%s\t%s\n", t.ID, mark(t.ID == d.ActiveTab), t.Name, layoutString(t.Tree))
+				fmt.Printf("  tab %s%s\t%s\t%s%s\n", t.ID, mark(t.ID == d.ActiveTab), t.Name, layoutString(t.Tree), floatString(t.Float))
 			}
 			return nil
 		},
@@ -471,8 +484,63 @@ func tabCommand() *cobra.Command {
 	newTab.Flags().StringVar(&split, "split", "right", "how several commands share the tab: right (side by side) or down (stacked)")
 	newTab.Flags().StringVar(&browser, "browser", "", "a browser pane showing this url, rather than a command's")
 
-	tab := &cobra.Command{Use: "tab", Short: "Start, rename, close, and describe tabs"}
-	tab.AddCommand(newTab, &cobra.Command{
+	var (
+		rect              string
+		minimize, restore bool
+	)
+	float := &cobra.Command{
+		Use:   "float <tab> [over-tab]",
+		Short: "Float a tab over another (the active one, by default), or change how it floats",
+		Long: "Shows a tab floating over another, rather than in a slot of its own: over\n" +
+			"over-tab, else (for a tab not floating yet) over the workspace's active tab.\n" +
+			"--rect places it, in basis points of the other tab's area (x,y,w,h; w and h\n" +
+			"at least 1500, x+w and y+h at most 10000); --minimize takes it down to the\n" +
+			"window's Minimized list, --restore shows it again. Its panes keep their ids.",
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if minimize && restore {
+				return fmt.Errorf("--minimize and --restore are one or the other")
+			}
+			p := rpc.TabFloatParams{}
+			var err error
+			if p.ID, err = rpc.ParseTabID(args[0]); err != nil {
+				return err
+			}
+			if len(args) == 2 {
+				if p.Over, err = rpc.ParseTabID(args[1]); err != nil {
+					return err
+				}
+			}
+			if rect != "" {
+				var r rpc.FloatRect
+				if _, err := fmt.Sscanf(rect, "%d,%d,%d,%d", &r.X, &r.Y, &r.W, &r.H); err != nil {
+					return fmt.Errorf("--rect is x,y,w,h in basis points, not %q", rect)
+				}
+				p.Rect = &r
+			}
+			if minimize || restore {
+				p.Minimized = &minimize
+			}
+			return call(rpc.TabFloat, p, nil)
+		},
+	}
+	float.Flags().StringVar(&rect, "rect", "", "where: x,y,w,h in basis points of the area (2000,2000,6000,6000 is centered)")
+	float.Flags().BoolVar(&minimize, "minimize", false, "take it down to the sidebar's Minimized list")
+	float.Flags().BoolVar(&restore, "restore", false, "show a minimized float again")
+
+	tab := &cobra.Command{Use: "tab", Short: "Start, rename, close, float, and describe tabs"}
+	tab.AddCommand(newTab, float, &cobra.Command{
+		Use:   "dock <tab>",
+		Short: "Make a floating tab an ordinary one again, after the tab it floated over",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := rpc.ParseTabID(args[0])
+			if err != nil {
+				return err
+			}
+			return call(rpc.TabDock, rpc.TabParams{ID: id}, nil)
+		},
+	}, &cobra.Command{
 		Use:   "rename <tab> <name>",
 		Short: "Rename a tab",
 		Args:  cobra.ExactArgs(2),
@@ -510,7 +578,7 @@ func tabCommand() *cobra.Command {
 			if jsonOut {
 				return printJSON(t)
 			}
-			fmt.Printf("tab %s\t%s\t%s\n", t.ID, t.Name, layoutString(t.Tree))
+			fmt.Printf("tab %s\t%s\t%s%s\n", t.ID, t.Name, layoutString(t.Tree), floatString(t.Float))
 			return nil
 		},
 	})
@@ -594,10 +662,11 @@ func paneCommand() *cobra.Command {
 		},
 	}
 	move := &cobra.Command{
-		Use:   "move [pane] <tab|new> [right|down|left|up]",
+		Use:   "move [pane] <tab|new|float> [right|down|left|up|over-tab]",
 		Short: "Move a pane along a side of another tab, or into a new tab of its own, and print its new id",
 		Long: "Moves a pane (this console's, without one) into tab along the side given,\n" +
-			"or into a new tab of its own. The pane gets a new id there, printed; its old\n" +
+			"or into a new tab of its own; with float, into a new tab floating over the\n" +
+			"pane's tab (or over-tab). The pane gets a new id there, printed; its old\n" +
 			"ids keep finding it.",
 		Args: cobra.RangeArgs(1, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -609,7 +678,17 @@ func paneCommand() *cobra.Command {
 				return fmt.Errorf("a tab or new, then at most a side: %s", cmd.UseLine())
 			}
 			p := rpc.PaneMoveParams{Pane: pane}
-			if args[0] != "new" {
+			switch args[0] {
+			case "new":
+			case "float":
+				p.Float = &rpc.FloatTarget{}
+				if len(args) == 2 {
+					if p.Float.Over, err = rpc.ParseTabID(args[1]); err != nil {
+						return err
+					}
+					args = args[:1]
+				}
+			default:
 				if p.Tab, err = rpc.ParseTabID(args[0]); err != nil {
 					return err
 				}

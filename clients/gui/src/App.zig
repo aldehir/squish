@@ -196,6 +196,9 @@ drag: ?Drag = null,
 /// A pane pressed on its title strip, which drags it once the mouse moves
 /// far enough, until the button's up.
 pane_drag: ?PaneDrag = null,
+/// A float's header (moving it) or edge (resizing it) being dragged,
+/// which has the mouse until the button's up.
+float_drag: ?FloatDrag = null,
 /// The sidebar's edge being dragged, which has the mouse until the
 /// button's up.
 sidebar_drag: ?SidebarDrag = null,
@@ -387,6 +390,32 @@ const Drop = struct {
     rect: Rect,
 };
 
+/// A float being moved or resized. Its rect changes here as the mouse
+/// moves, and slime hears the last on release.
+const FloatDrag = struct {
+    tab: *Tab,
+    /// The edges that follow the mouse: all four to move it.
+    edges: Edges,
+    /// The mouse then, and the float's rect.
+    origin: win32.POINT,
+    from: Daemon.FloatRect,
+
+    const Edges = struct { left: bool = false, top: bool = false, right: bool = false, bottom: bool = false };
+
+    const all: Edges = .{ .left = true, .top = true, .right = true, .bottom = true };
+
+    fn cursor(e: Edges) Cursor {
+        if (e.left and e.right) return .size_all;
+        if ((e.left and e.top) or (e.right and e.bottom)) return .size_nwse;
+        if ((e.right and e.top) or (e.left and e.bottom)) return .size_nesw;
+        if (e.left or e.right) return .size_we;
+        return .size_ns;
+    }
+};
+
+/// At most this many floats over a tab are shown.
+pub const max_floats = 32;
+
 const SidebarDrag = struct {
     /// The sidebar's width (DIPs) and the mouse's x when the button went
     /// down.
@@ -519,6 +548,9 @@ pub const Cursor = union(enum) {
     size_we,
     size_ns,
     size_all,
+    /// A float's corners: top left to bottom right, and the other way.
+    size_nwse,
+    size_nesw,
     /// A pane's, as its program set it (OSC 22).
     shape: ghostty_vt.MouseShape,
     /// A browser pane's, as its page set it.
@@ -864,15 +896,20 @@ pub fn deinit(self: *App) void {
 /// Free every tab and its sessions, which hold GPU resources: before the
 /// renderer goes.
 pub fn destroyTabs(self: *App) void {
-    for (self.tabs.items) |t| self.destroyTab(t);
+    while (self.tabs.pop()) |t| self.destroyTab(t);
     self.tabs.clearAndFree(self.alloc);
     self.active = 0;
 }
 
-/// Free a tab and its sessions, which only lets go of daemon panes.
+/// Free a tab and its sessions, which only lets go of daemon panes. Its
+/// floats, if it's listed no longer, show as tabs of their own until
+/// slime says otherwise.
 fn destroyTab(self: *App, t: *Tab) void {
     // Its panes may be placed.
     self.placement_stale = true;
+    for (self.tabs.items) |o| if (o.float) |f| if (f.host == t) {
+        o.float = null;
+    };
     var it = t.iterator();
     while (it.next()) |s| s.destroy();
     t.destroy(self.alloc);
@@ -972,6 +1009,7 @@ fn sessionEvent(self: *App, id: u32, what: @FieldType(@FieldType(Msg, "session")
 /// Losing the capture mid-drag (alt+tab, a modal window) ends it.
 fn captureLost(self: *App) void {
     if (self.drag != null) self.endDrag();
+    if (self.float_drag != null) self.endFloatDrag();
     if (self.sidebar_drag != null) self.endSidebarDrag();
     if (self.palette_scroll != null) self.endPaletteScroll();
     if (self.sidebar_scroll != null) self.endSidebarScroll();
@@ -1032,10 +1070,93 @@ fn tabIndex(self: *const App, t: *const Tab) ?usize {
     return std.mem.indexOfScalar(*Tab, self.tabs.items, @constCast(t));
 }
 
-/// The place of the tab `target` names, if it's listed.
+/// The tab shown under the active one: the tab it floats over, else
+/// itself. Only while there are tabs.
+pub fn shownHost(self: *const App) *Tab {
+    const t = self.activeTab();
+    return if (t.float) |f| f.host else t;
+}
+
+/// Whether tab `t`'s panes are on screen: it's the tab shown, or a float
+/// over that one that isn't down to a chip.
+pub fn isShown(self: *const App, t: *const Tab) bool {
+    if (self.active >= self.tabs.items.len) return false;
+    const host = self.shownHost();
+    if (t == host) return true;
+    const f = t.float orelse return false;
+    return f.host == host and !f.minimized;
+}
+
+/// The floats over `host`, bottom to top, in `buf`.
+pub fn floatsOver(self: *const App, host: *const Tab, buf: *[max_floats]*Tab) []*Tab {
+    var n: usize = 0;
+    for (self.tabs.items) |t| {
+        const f = t.float orelse continue;
+        if (f.host != host or n == buf.len) continue;
+        buf[n] = t;
+        n += 1;
+    }
+    std.sort.insertion(*Tab, buf[0..n], {}, struct {
+        fn lower(_: void, a: *Tab, b: *Tab) bool {
+            return a.float.?.z < b.float.?.z;
+        }
+    }.lower);
+    return buf[0..n];
+}
+
+/// Put float `t` on top of its host's others, restored, as slime does
+/// when the focus goes to it: this window doesn't hear its own change.
+fn raiseFloat(self: *App, t: *Tab) void {
+    const f = if (t.float) |*f| f else return;
+    var top: u32 = 0;
+    for (self.tabs.items) |o| if (o != t) if (o.float) |of| if (of.host == f.host) {
+        top = @max(top, of.z);
+    };
+    f.minimized = false;
+    if (f.z <= top) f.z = top + 1;
+    self.placement_stale = true;
+}
+
+/// Where float `f` is in the pane area: its rect's share of it, on whole
+/// pixels.
+fn floatFrame(self: *const App, f: Tab.Floating) Rect {
+    const a = self.geometry.pane_area;
+    const whole: f32 = 10000;
+    const x0 = @round(a.w * @as(f32, @floatFromInt(f.rect.x)) / whole);
+    const y0 = @round(a.h * @as(f32, @floatFromInt(f.rect.y)) / whole);
+    const x1 = @round(a.w * @as(f32, @floatFromInt(@as(u32, f.rect.x) + f.rect.w)) / whole);
+    const y1 = @round(a.h * @as(f32, @floatFromInt(@as(u32, f.rect.y) + f.rect.h)) / whole);
+    return .{ .x = a.x + x0, .y = a.y + y0, .w = @max(0, x1 - x0), .h = @max(0, y1 - y0) };
+}
+
+/// The area tab `t`'s panes tile: the pane area, or a float's box under
+/// its header, a gap in from its header, sides, and bottom: the gap
+/// between its panes.
+fn tabArea(self: *const App, t: *const Tab) Rect {
+    const f = t.float orelse return self.geometry.pane_area;
+    const box = self.floatFrame(f);
+    const g = &self.geometry;
+    const pad = g.gap;
+    const top = @min(box.h, g.title_height + pad);
+    return .{ .x = box.x + pad, .y = box.y + top, .w = @max(0, box.w - 2 * pad), .h = @max(0, box.h - top - pad) };
+}
+
+/// The tab whose divider (or corner) `i` of the placement is: the shown
+/// one's come first, then each float's.
+fn layerOf(self: *App, comptime field: []const u8, i: usize) *Tab {
+    const p = self.placed();
+    var t = self.shownHost();
+    for (p.floats.items) |f| {
+        if (i >= @field(f, field)) t = f.tab;
+    }
+    return t;
+}
+
+/// The place of the tab `target` names, if it's listed: a tab's row, or
+/// a float's box or sidebar row.
 fn tabIndexOf(self: *const App, target: Id.Target) ?usize {
     const key = switch (target) {
-        .tab => |k| k,
+        .tab, .float => |k| k,
         else => return null,
     };
     for (self.tabs.items, 0..) |t, i| {
@@ -1588,7 +1709,23 @@ fn openMenu(self: *App, target: Id.Target, anchor: Menu.Anchor) void {
             m.add(.{ .label = L("Forget host"), .icon = .x, .action = .{ .part = .forget }, .disabled = self.hostInUse(h) });
         },
         .tab => {
-            if (self.tabIndexOf(target) == null) return;
+            const i = self.tabIndexOf(target) orelse return;
+            if (self.canFloatOver(self.tabs.items[i])) {
+                m.add(.{ .label = L("Float over current tab"), .icon = .app_window, .action = .{ .part = .float } });
+                m.separator();
+            }
+            m.add(.{ .label = L("Close tab"), .icon = .x, .action = .{ .part = .close }, .danger = true });
+        },
+        // A float's header, or its row in the sidebar while minimized.
+        .float => {
+            const i = self.tabIndexOf(target) orelse return;
+            const f = self.tabs.items[i].float orelse return;
+            if (f.minimized)
+                m.add(.{ .label = L("Restore"), .icon = .maximize_2, .action = .{ .part = .chip } })
+            else
+                m.add(.{ .label = L("Minimize"), .icon = .minimize_2, .action = .{ .part = .minimize } });
+            m.add(.{ .label = L("Dock tab"), .icon = .square_arrow_down_left, .action = .{ .part = .dock } });
+            m.separator();
             m.add(.{ .label = L("Close tab"), .icon = .x, .action = .{ .part = .close }, .danger = true });
         },
         .pane => {
@@ -1608,6 +1745,11 @@ fn openMenu(self: *App, target: Id.Target, anchor: Menu.Anchor) void {
             }
             m.separator();
             m.add(.{ .label = L("Open browser"), .icon = .globe, .action = .{ .part = .open_browser }, .disabled = !in_slime });
+            if (t.float != null) {
+                m.add(.{ .label = L("Dock tab"), .icon = .square_arrow_down_left, .action = .{ .part = .dock } });
+            } else if (in_slime and self.canFloatPane(t)) {
+                m.add(.{ .label = L("Float"), .icon = .app_window, .action = .{ .part = .float } });
+            }
             m.separator();
             m.add(.{ .label = L("Close pane"), .icon = .x, .action = .{ .binding = .close_surface }, .danger = true });
         },
@@ -1644,7 +1786,7 @@ fn menuTargetExists(self: *App) bool {
         .local => true,
         .host => |h| h < self.hosts.items.items.len,
         .workspace => |key| self.workspaceEntry(key) != null,
-        .tab => self.tabIndexOf(target) != null,
+        .tab, .float => self.tabIndexOf(target) != null,
         .pane => self.sessionOf(target) != null,
         else => false,
     };
@@ -1661,7 +1803,7 @@ fn contextMenu(self: *App, pos: win32.POINT) void {
     if (hit.part == .field) return;
     if (hit.part == .terminal) if (self.shownPane(hit.target)) |s| if (s.browser()) |b| if (b.live()) return;
     switch (hit.target) {
-        .local, .host, .workspace, .tab, .pane => {},
+        .local, .host, .workspace, .tab, .pane, .float => {},
         else => return,
     }
     self.openMenu(hit.target, .{ .point = .{ .x = @floatFromInt(pos.x), .y = @floatFromInt(pos.y) } });
@@ -1848,6 +1990,21 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
         const from = at orelse self.groupEnd(self.groupOf(ordered.items[0]));
         for (ordered.items, 0..) |t, k| self.tabs.insertAssumeCapacity(from + k, t);
     }
+    // Floats find their hosts among the workspace's tabs, one level deep.
+    for (st.tabs) |lt| {
+        const t = for (ordered.items) |o| {
+            if (o.id.eql(lt.id)) break o;
+        } else continue;
+        t.float = null;
+        const f = lt.float orelse continue;
+        const host = for (ordered.items) |o| {
+            if (o.id.eql(f.over)) break o;
+        } else continue;
+        if (host != t) t.float = .{ .host = host, .rect = f.rect, .minimized = f.minimized, .z = f.z };
+    }
+    for (ordered.items) |t| if (t.float) |f| if (f.host.float != null) {
+        t.float = null;
+    };
 
     if (was_focus) |f| if (std.mem.indexOfScalar(*Session, dropped.items, f) != null) {
         // First: releasing the capture comes back as `capture_lost`.
@@ -2559,7 +2716,7 @@ fn daemonCommand(self: *const App, conn: *const Daemon) []const u16 {
 /// it. The new pane comes from slime (`daemon_posted`).
 fn splitPane(self: *App, s: *Session, dir: Daemon.Direction) void {
     const pane = s.daemonPane() orelse return;
-    const t = self.activeTab();
+    const t = self.tabs.items[(self.findSession(s.id) orelse return).tab];
     const conn = t.conn orelse return;
     if (t.zoom != null) {
         t.zoom = null;
@@ -2575,7 +2732,7 @@ fn splitPane(self: *App, s: *Session, dir: Daemon.Direction) void {
 /// be moved from there.
 fn openBrowser(self: *App, s: *Session) void {
     const pane = s.daemonPane() orelse return;
-    const t = self.activeTab();
+    const t = self.tabs.items[(self.findSession(s.id) orelse return).tab];
     const conn = t.conn orelse return;
     self.unzoom(t);
     conn.splitBrowser(pane, .right, L("about:blank")) catch |err| {
@@ -2589,16 +2746,17 @@ fn openBrowser(self: *App, s: *Session) void {
 /// A double click on the title of pane `s`: toggle its zoom when the
 /// tab has several slime panes, the cases its title shows a zoom button.
 fn zoomFromTitle(self: *App, s: *Session) void {
-    const t = self.activeTab();
+    const t = self.tabs.items[(self.findSession(s.id) orelse return).tab];
     if (t.conn == null or s.daemonPane() == null) return;
     if (t.count() > 1 or t.zoom != null) self.toggleZoom(s);
 }
 
 /// Zoom the active tab's pane `s` to fill the tab, or unzoom it.
 fn toggleZoom(self: *App, s: *Session) void {
-    const t = self.activeTab();
-    t.zoom = if (t.zoom == s) null else s;
     self.focusPane(s);
+    const t = self.activeTab();
+    if (!t.contains(s)) return;
+    t.zoom = if (t.zoom == s) null else s;
     _ = self.ui.setHover(.none);
     self.layoutTab(t);
     self.syncFocus();
@@ -2663,7 +2821,7 @@ fn equalizePanes(self: *App) void {
 fn startDrag(self: *App, i: usize, pos: win32.POINT) void {
     const dividers = self.placed().dividers.items;
     if (i >= dividers.len) return;
-    self.startDragging(.{ dragPart(dividers[i]), null, null }, pos);
+    self.startDragging(self.layerOf("dividers", i), .{ dragPart(dividers[i]), null, null }, pos);
 }
 
 /// Start dragging corner `i` of the active tab: the divider through it
@@ -2673,7 +2831,7 @@ fn startCornerDrag(self: *App, i: usize, pos: win32.POINT) void {
     if (i >= p.corners.items.len) return;
     const c = p.corners.items[i];
     const dividers = p.dividers.items;
-    self.startDragging(.{
+    self.startDragging(self.layerOf("corners", i), .{
         dragPart(dividers[c.through]),
         dragPart(dividers[c.ends[0].?]),
         if (c.ends[1]) |e| dragPart(dividers[e]) else null,
@@ -2684,8 +2842,7 @@ fn dragPart(d: Tab.Divider) Drag.Part {
     return .{ .divider = d, .from = d.shares() };
 }
 
-fn startDragging(self: *App, parts: [3]?Drag.Part, pos: win32.POINT) void {
-    const t = self.activeTab();
+fn startDragging(self: *App, t: *Tab, parts: [3]?Drag.Part, pos: win32.POINT) void {
     if (t.conn == null) return;
     self.hideTip();
     self.drag = .{ .tab = t, .parts = parts, .origin = pos };
@@ -2743,6 +2900,86 @@ fn sendLayout(self: *App, t: *const Tab) void {
     conn.layout(t.id, root) catch |err| log.err("sending the layout failed: {}", .{err});
 }
 
+/// The edges of the float `target` names that the mouse at `pos` is
+/// beyond, in the band around its box that resizes it.
+fn floatEdges(self: *App, target: Id.Target, pos: win32.POINT) ?FloatDrag.Edges {
+    const i = self.tabIndexOf(target) orelse return null;
+    const t = self.tabs.items[i];
+    const f = for (self.placed().floats.items) |f| {
+        if (f.tab == t) break f;
+    } else return null;
+    const x: f32 = @floatFromInt(pos.x);
+    const y: f32 = @floatFromInt(pos.y);
+    const r = f.frame;
+    const e: FloatDrag.Edges = .{ .left = x < r.x, .top = y < r.y, .right = x >= r.right(), .bottom = y >= r.bottom() };
+    if (!e.left and !e.top and !e.right and !e.bottom) return null;
+    return e;
+}
+
+/// The button went down on float `t`'s header (moving it) or edge
+/// (resizing it): give it the keys, on top, and follow the mouse.
+fn startFloatDrag(self: *App, t: *Tab, edges: FloatDrag.Edges, pos: win32.POINT) void {
+    const f = t.float orelse return;
+    if (t.conn == null) return;
+    if (self.tabIndex(t)) |i| self.activate(i);
+    self.hideTip();
+    self.float_drag = .{ .tab = t, .edges = edges, .origin = pos, .from = f.rect };
+    self.shell.captureMouse();
+}
+
+/// Move or resize the dragged float with the mouse, kept in the pane
+/// area and at least `Daemon.min_float` each way; resizing fits its
+/// panes as it goes.
+fn floatDragTo(self: *App, d: FloatDrag, pos: win32.POINT) void {
+    const f = if (d.tab.float) |*f| f else return;
+    const a = self.geometry.pane_area;
+    if (a.w < 1 or a.h < 1) return;
+    const whole: i32 = 10000;
+    const min: i32 = Daemon.min_float;
+    const dx: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(pos.x - d.origin.x)) * 10000 / a.w));
+    const dy: i32 = @intFromFloat(@round(@as(f32, @floatFromInt(pos.y - d.origin.y)) * 10000 / a.h));
+    var x0: i32 = d.from.x;
+    var y0: i32 = d.from.y;
+    var x1: i32 = x0 + d.from.w;
+    var y1: i32 = y0 + d.from.h;
+    if (d.edges.left and d.edges.right) {
+        const mx = std.math.clamp(dx, -x0, whole - x1);
+        x0 += mx;
+        x1 += mx;
+    } else if (d.edges.left) {
+        x0 = std.math.clamp(x0 + dx, 0, x1 - min);
+    } else if (d.edges.right) {
+        x1 = std.math.clamp(x1 + dx, x0 + min, whole);
+    }
+    if (d.edges.top and d.edges.bottom) {
+        const my = std.math.clamp(dy, -y0, whole - y1);
+        y0 += my;
+        y1 += my;
+    } else if (d.edges.top) {
+        y0 = std.math.clamp(y0 + dy, 0, y1 - min);
+    } else if (d.edges.bottom) {
+        y1 = std.math.clamp(y1 + dy, y0 + min, whole);
+    }
+    const rect: Daemon.FloatRect = .{ .x = @intCast(x0), .y = @intCast(y0), .w = @intCast(x1 - x0), .h = @intCast(y1 - y0) };
+    if (std.meta.eql(rect, f.rect)) return;
+    const resized = rect.w != f.rect.w or rect.h != f.rect.h;
+    f.rect = rect;
+    if (resized) self.layoutTab(d.tab);
+    self.markDirty();
+}
+
+/// Let go of the dragged float and tell slime where it is.
+fn endFloatDrag(self: *App) void {
+    const d = self.float_drag orelse return;
+    // First: releasing the capture comes back as `capture_lost`.
+    self.float_drag = null;
+    self.shell.releaseMouse();
+    const f = d.tab.float orelse return;
+    if (std.meta.eql(f.rect, d.from)) return;
+    const conn = d.tab.conn orelse return;
+    conn.floatRect(d.tab.id, f.rect) catch |err| log.warn("moving tab {f} failed: {}", .{ d.tab.id, err });
+}
+
 /// Start dragging the sidebar's edge from the mouse at `pos`.
 fn startSidebarDrag(self: *App, pos: win32.POINT) void {
     self.hideTip();
@@ -2772,8 +3009,9 @@ fn endSidebarDrag(self: *App) void {
 /// Drop a drag (of a divider or a pane) whose tree is about to change, as
 /// it stands: slime's tree, or the pane closing, decides the layout now.
 fn cancelDrag(self: *App) void {
-    if (self.drag == null and self.pane_drag == null) return;
+    if (self.drag == null and self.pane_drag == null and self.float_drag == null) return;
     self.drag = null;
+    self.float_drag = null;
     if (self.pane_drag) |d| {
         self.markDirty();
         self.shell.webCapture(d.source, false);
@@ -2835,7 +3073,7 @@ fn endPaneDrag(self: *App) void {
 fn dropAt(self: *App, d: *const PaneDrag, pos: win32.POINT) ?Drop {
     const x: f32 = @floatFromInt(pos.x);
     const y: f32 = @floatFromInt(pos.y);
-    const area = self.geometry.pane_area;
+    const area = self.tabArea(d.tab);
     if (!area.contains(x, y)) return null;
     const band = self.ui.px(24);
     const edge: ?Daemon.Direction = if (x < area.x + band)
@@ -2855,7 +3093,7 @@ fn dropAt(self: *App, d: *const PaneDrag, pos: win32.POINT) ?Drop {
 
     const under = self.placed().at(x, y) orelse return null;
     const target = under.session;
-    if (target == d.source) return null;
+    if (target == d.source or under.tab != d.tab) return null;
     const f = under.frame;
     const inset = self.ui.px(6);
     // The middle 40% each way swaps; else the side the mouse is toward,
@@ -2886,10 +3124,12 @@ fn half(r: Rect, side: Daemon.Direction) Rect {
     };
 }
 
-/// The active tab's pane on screen that `target` names.
+/// The pane on screen that `target` names: the tab shown's, or a float's
+/// over it.
 fn shownPane(self: *const App, target: Id.Target) ?*Session {
     const found = self.sessionOf(target) orelse return null;
-    if (found.tab != self.active or !self.activeTab().shows(found.s)) return null;
+    const t = self.tabs.items[found.tab];
+    if (!self.isShown(t) or !t.shows(found.s)) return null;
     return found.s;
 }
 
@@ -2900,12 +3140,25 @@ fn showPane(self: *App, target: Id.Target) void {
     self.focusPane(found.s);
 }
 
-/// Give the active tab's pane `s` the keys.
+/// Give pane `s` the keys: the active tab's, or one of a tab on screen
+/// with it (a float, or the tab under it), which becomes the active tab.
 fn focusPane(self: *App, s: *Session) void {
     const t = self.activeTab();
-    if (t.focus == s or !t.contains(s)) return;
+    if (t.focus == s) return;
+    if (t.contains(s)) {
+        self.deactivate();
+        t.focus = s;
+        self.activated();
+        return;
+    }
+    const i = for (self.tabs.items, 0..) |o, i| {
+        if (self.isShown(o) and o.contains(s)) break i;
+    } else return;
     self.deactivate();
-    t.focus = s;
+    self.active = i;
+    const o = self.tabs.items[i];
+    o.focus = s;
+    self.raiseFloat(o);
     self.activated();
 }
 
@@ -2979,7 +3232,10 @@ fn closeTab(self: *App, i: usize) void {
 fn dropTab(self: *App, i: usize) void {
     const was_active = i == self.active;
     if (was_active) self.deactivate();
-    self.destroyTab(self.tabs.orderedRemove(i));
+    const gone = self.tabs.orderedRemove(i);
+    // A float's keys go back to the tab it was over.
+    const host: ?*Tab = if (gone.float) |f| f.host else null;
+    self.destroyTab(gone);
     // Rows moved under the mouse.
     _ = self.ui.setHover(.none);
     self.middle_pressed = null;
@@ -2990,7 +3246,7 @@ fn dropTab(self: *App, i: usize) void {
     } else if (i < self.active) {
         self.active -= 1;
     } else if (was_active) {
-        self.active = @min(i, self.tabs.items.len - 1);
+        self.active = (if (host) |h| self.tabIndex(h) else null) orelse @min(i, self.tabs.items.len - 1);
         self.activated();
     }
     self.markDirty();
@@ -3001,6 +3257,7 @@ fn activate(self: *App, i: usize) void {
     if (i == self.active or i >= self.tabs.items.len) return;
     self.deactivate();
     self.active = i;
+    self.raiseFloat(self.tabs.items[i]);
     self.activated();
 }
 
@@ -3035,11 +3292,16 @@ fn activated(self: *App) void {
     self.markDirty();
 }
 
-/// Show the next or previous tab, wrapping around.
+/// Show the next or previous tab, wrapping around: from the tab shown
+/// (under a float with the keys), through tabs that don't float.
 fn cycle(self: *App, forward: bool) void {
     const n = self.tabs.items.len;
     if (n == 0) return;
-    self.activate(if (forward) (self.active + 1) % n else (self.active + n - 1) % n);
+    var i = self.tabIndex(self.shownHost()) orelse self.active;
+    for (0..n) |_| {
+        i = if (forward) (i + 1) % n else (i + n - 1) % n;
+        if (self.tabs.items[i].float == null) return self.activate(i);
+    }
 }
 
 /// A session's reader handed it a frame or a status: the active tab's
@@ -3047,15 +3309,16 @@ fn cycle(self: *App, forward: bool) void {
 fn outputArrived(self: *App) void {
     const quiet = self.shell.tickCount() < self.quiet_until;
     var status_changed = false;
-    for (self.tabs.items, 0..) |t, i| {
+    for (self.tabs.items) |t| {
+        const shown = self.isShown(t);
         var it = t.iterator();
         while (it.next()) |s| {
             if (s.status_changed.swap(false, .acq_rel)) status_changed = true;
             // Copy mode's / or ?, on a pane in view: its prompt opens.
             const prompt = s.search_prompt.swap(0, .acq_rel);
-            if (prompt != 0 and i == self.active and t.shows(s)) self.startPrompt(s, if (prompt == 2) .up else .down);
+            if (prompt != 0 and shown and t.shows(s)) self.startPrompt(s, if (prompt == 2) .up else .down);
             if (!s.unseen.swap(false, .acq_rel)) continue;
-            if (i == self.active) {
+            if (shown) {
                 if (!t.shows(s)) continue;
                 self.markDirty();
             } else if (!s.activity and !quiet) {
@@ -3185,7 +3448,7 @@ fn runAction(self: *App, action: binding.Action) bool {
         else => return false,
     };
     switch (action) {
-        .new_split, .goto_split, .resize_split, .equalize_splits, .toggle_split_zoom => if (self.activeTab().conn == null) return false,
+        .new_split, .goto_split, .resize_split, .equalize_splits, .toggle_split_zoom, .float_pane, .float_tab, .dock_float, .toggle_floats, .focus_float => if (self.activeTab().conn == null) return false,
         else => {},
     }
     switch (action) {
@@ -3229,9 +3492,126 @@ fn runAction(self: *App, action: binding.Action) bool {
         }, r.amount),
         .equalize_splits => self.equalizePanes(),
         .toggle_split_zoom => if (self.activeTab().count() > 1 or self.activeTab().zoom != null) self.toggleZoom(s),
+        .float_pane => self.floatPane(s),
+        .float_tab => self.openPaletteAt(.float_tab),
+        .dock_float => if (self.activeTab().float != null) self.dockFloat(self.activeTab()) else return false,
+        .toggle_floats => self.toggleFloats(),
+        .focus_float => self.focusFloat(),
         .lua, .invoke, .toggle_command_palette => unreachable,
     }
     return true;
+}
+
+/// Whether pane menus offer to float a pane of tab `t`: a slime tab of
+/// several panes, or of one that isn't the tab shown (a lone pane can't
+/// float over its own tab).
+fn canFloatPane(self: *const App, t: *const Tab) bool {
+    if (t.conn == null) return false;
+    return t.count() > 1 or (t.float == null and t != self.shownHost());
+}
+
+/// Whether tab `t` can float over the tab shown: another tab of its
+/// workspace that floats over nothing.
+fn canFloatOver(self: *const App, t: *const Tab) bool {
+    if (!self.hasTabs() or t.conn == null or t.float != null) return false;
+    const host = self.shownHost();
+    return t != host and t.conn == host.conn and t.ws == host.ws;
+}
+
+/// Float pane `s` over its tab: slime moves it into a new tab, which
+/// comes back focused under a new id.
+fn floatPane(self: *App, s: *Session) void {
+    const pane = s.daemonPane() orelse return;
+    const t = self.tabs.items[(self.findSession(s.id) orelse return).tab];
+    if (!self.canFloatPane(t)) return;
+    t.conn.?.floatPane(pane) catch |err| log.warn("floating pane {d} failed: {}", .{ s.id, err });
+}
+
+/// Float tab `t` over the tab shown, with the keys. Shown so at once:
+/// slime's structure says the same.
+fn floatTabOver(self: *App, t: *Tab) void {
+    if (!self.canFloatOver(t)) return;
+    const host = self.shownHost();
+    t.conn.?.floatTab(t.id, host.id) catch |err| return log.warn("floating tab {f} failed: {}", .{ t.id, err });
+    // Its own floats go over the new host.
+    for (self.tabs.items) |o| if (o.float) |*f| if (f.host == t) {
+        f.host = host;
+    };
+    t.float = .{ .host = host, .rect = Daemon.default_float };
+    self.layoutTab(t);
+    if (self.tabIndex(t)) |i| self.activate(i);
+    _ = self.ui.setHover(.none);
+    self.markDirty();
+}
+
+/// Make floating tab `t` an ordinary tab again.
+fn dockFloat(self: *App, t: *Tab) void {
+    const conn = t.conn orelse return;
+    if (t.float == null) return;
+    conn.dockTab(t.id) catch |err| return log.warn("docking tab {f} failed: {}", .{ t.id, err });
+    t.float = null;
+    self.layoutTab(t);
+    _ = self.ui.setHover(.none);
+    self.markDirty();
+}
+
+/// Take floating tab `t` down to a chip; the keys go to the tab under it.
+fn minimizeFloat(self: *App, t: *Tab) void {
+    const conn = t.conn orelse return;
+    const f = if (t.float) |*f| f else return;
+    if (f.minimized) return;
+    f.minimized = true;
+    conn.floatMinimized(t.id, true) catch |err| log.warn("minimizing tab {f} failed: {}", .{ t.id, err });
+    if (self.activeTab() == t) if (self.tabIndex(f.host)) |i| self.activate(i);
+    _ = self.ui.setHover(.none);
+    self.markDirty();
+}
+
+/// Show floating tab `t` again, on top, with the keys.
+fn restoreFloat(self: *App, t: *Tab) void {
+    const conn = t.conn orelse return;
+    const f = t.float orelse return;
+    if (f.minimized) conn.floatMinimized(t.id, false) catch |err| log.warn("restoring tab {f} failed: {}", .{ t.id, err });
+    const i = self.tabIndex(t) orelse return;
+    if (i == self.active) self.raiseFloat(t) else self.activate(i);
+    _ = self.ui.setHover(.none);
+    self.markDirty();
+}
+
+/// Every float over the tab shown down to a chip, the keys going to that
+/// tab; or, with none shown, every one back.
+fn toggleFloats(self: *App) void {
+    if (!self.hasTabs()) return;
+    const host = self.shownHost();
+    var buf: [max_floats]*Tab = undefined;
+    const floats = self.floatsOver(host, &buf);
+    const any_shown = for (floats) |t| {
+        if (!t.float.?.minimized) break true;
+    } else false;
+    for (floats) |t| {
+        if (t.float.?.minimized == any_shown) continue;
+        t.float.?.minimized = any_shown;
+        t.conn.?.floatMinimized(t.id, any_shown) catch |err| log.warn("minimizing tab {f} failed: {}", .{ t.id, err });
+    }
+    if (any_shown and self.activeTab() != host) if (self.tabIndex(host)) |i| self.activate(i);
+    _ = self.ui.setHover(.none);
+    self.markDirty();
+}
+
+/// Move the keys between the tab shown and its top float (restored, if
+/// all are chips).
+fn focusFloat(self: *App) void {
+    if (!self.hasTabs()) return;
+    const host = self.shownHost();
+    if (self.activeTab() != host) return self.activate(self.tabIndex(host) orelse return);
+    var buf: [max_floats]*Tab = undefined;
+    const floats = self.floatsOver(host, &buf);
+    if (floats.len == 0) return;
+    var top = floats[floats.len - 1];
+    for (floats) |t| if (!t.float.?.minimized) {
+        top = t;
+    };
+    self.restoreFloat(top);
 }
 
 /// `runAction`, with pane `s` as the one a pane's font size actions
@@ -3367,6 +3747,13 @@ fn connectTo(self: *App, host: []const u16) void {
 
 /// Open the command palette over everything, in place of whatever else
 /// had the keys.
+/// Open the palette at `step`, or move it there.
+fn openPaletteAt(self: *App, step: Palette.Step) void {
+    self.openPalette();
+    if (self.mode == .palette) self.mode.palette.setStep(step);
+    self.markDirty();
+}
+
 pub fn openPalette(self: *App) void {
     if (self.mode == .palette) return;
     self.closeMenu();
@@ -3424,7 +3811,7 @@ fn paletteKey(self: *App, p: *Palette, vk: u32) bool {
         },
         // In the host step, back to the commands.
         win32.VK_ESCAPE => {
-            if (p.step == .host) p.setStep(.commands) else self.closePalette();
+            if (p.step != .commands) p.setStep(.commands) else self.closePalette();
             self.keyHandled();
             return true;
         },
@@ -3713,6 +4100,13 @@ fn choosePalette(self: *App, i: usize) void {
     };
     const e = p.entryOf(i) orelse return;
     switch (e.action) {
+        // "Float tab…" goes on to its step, which lists the tabs.
+        .binding => |b| if (b == .float_tab) {
+            p.setStep(.float_tab);
+            self.resetBlink();
+            self.markDirty();
+            return;
+        },
         .connect => {
             p.setStep(.host);
             // Destinations go on the helper's command line unquoted.
@@ -3741,6 +4135,7 @@ fn choosePalette(self: *App, i: usize) void {
     self.closePalette();
     switch (action) {
         .tab => |key| if (self.tabIndexOf(.{ .tab = key })) |t| self.activate(t),
+        .float_tab => |key| if (self.tabIndexOf(.{ .tab = key })) |t| self.floatTabOver(self.tabs.items[t]),
         .show_workspace => |key| self.showWorkspace(key),
         .binding => |b| _ = self.runAction(b),
         .part => |id| self.widgetClick(id),
@@ -3761,6 +4156,7 @@ fn rebuildPalette(self: *App) Allocator.Error!void {
     switch (p.step) {
         .commands => try self.paletteCommands(p),
         .host => try self.paletteHosts(p),
+        .float_tab => try self.paletteFloatTabs(p),
     }
     try p.endRebuild();
 }
@@ -3773,7 +4169,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         try p.add(.{
             .label = t.focus.title(),
             .detail = self.paletteTabDetail(&buf, t),
-            .right = if (i == self.active) L("shown") else &.{},
+            .right = if (i == self.active) L("shown") else if (t.float) |f| (if (f.minimized) L("minimized") else &.{}) else &.{},
             .icon = .panels_top_left,
             .section = .tab,
             .action = .{ .tab = t.key },
@@ -3793,6 +4189,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
 
     const Command = struct { label: []const u16, icon: ?Painter.Lucide, action: binding.Action };
     const zoomed = self.hasTabs() and self.activeTab().zoom != null;
+    const floats_shown = self.hasTabs() and self.placed().floats.items.len > 0;
     const commands = [_]Command{
         .{ .label = L("New tab"), .icon = .plus, .action = .new_tab },
         .{ .label = L("Close pane"), .icon = .x, .action = .close_surface },
@@ -3804,6 +4201,11 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = L("Copy mode"), .icon = .copy, .action = .copy_mode },
         .{ .label = L("Next tab"), .icon = .arrow_right, .action = .next_tab },
         .{ .label = L("Previous tab"), .icon = .arrow_left, .action = .previous_tab },
+        .{ .label = L("Float pane"), .icon = .app_window, .action = .float_pane },
+        .{ .label = L("Float tab…"), .icon = .app_window, .action = .float_tab },
+        .{ .label = L("Dock float"), .icon = .square_arrow_down_left, .action = .dock_float },
+        .{ .label = if (floats_shown) L("Minimize floats") else L("Restore floats"), .icon = .minus, .action = .toggle_floats },
+        .{ .label = L("Focus float"), .icon = .app_window, .action = .focus_float },
         .{ .label = L("Increase font size"), .icon = null, .action = .{ .increase_font_size = 1 } },
         .{ .label = L("Decrease font size"), .icon = null, .action = .{ .decrease_font_size = 1 } },
         .{ .label = L("Reset font size"), .icon = .rotate_cw, .action = .reset_font_size },
@@ -3849,6 +4251,15 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     }
 }
 
+/// The tabs that can float over the one shown.
+fn paletteFloatTabs(self: *App, p: *Palette) Allocator.Error!void {
+    var buf: [Palette.max_text]u16 = undefined;
+    for (self.tabs.items) |t| {
+        if (!self.canFloatOver(t)) continue;
+        try p.add(.{ .label = t.focus.title(), .detail = self.paletteTabDetail(&buf, t), .icon = .panels_top_left, .section = .tab, .action = .{ .float_tab = t.key } });
+    }
+}
+
 /// The hosts: what's typed, if anything, then the remembered ones.
 fn paletteHosts(self: *App, p: *Palette) Allocator.Error!void {
     var buf: [Palette.max_text]u16 = undefined;
@@ -3869,9 +4280,15 @@ fn paletteHosts(self: *App, p: *Palette) Allocator.Error!void {
     }
 }
 
-/// Tab `t`'s workspace and host, for its palette entry: "name · host".
+/// Tab `t`'s workspace and host, for its palette entry: "name · host",
+/// and for a float, what it floats over.
 fn paletteTabDetail(self: *App, buf: []u16, t: *const Tab) []const u16 {
     var n: usize = 0;
+    if (t.float) |f| {
+        n = appendUnits(buf, n, L("floating over "));
+        n = appendUnits(buf, n, f.host.focus.title());
+        n = appendUnits(buf, n, L(" · "));
+    }
     if (t.conn) |conn| if (self.workspaceIn(conn, t.ws)) |w| {
         n = appendUnits(buf, n, w.name);
     };
@@ -4320,9 +4737,53 @@ pub fn placed(self: *App) *const Placement {
     if (self.placement_stale) {
         self.placement_stale = false;
         self.placement.clear();
-        if (self.active < self.tabs.items.len) self.placeTab(self.tabs.items[self.active], &self.placement);
+        if (self.active < self.tabs.items.len) self.placeShown() catch |err| log.err("placing floats failed: {}", .{err});
     }
     return &self.placement;
+}
+
+/// Place the tab shown, then the floats over it bottom to top, each
+/// under its header; those minimized aren't placed (the sidebar lists
+/// them).
+fn placeShown(self: *App) Allocator.Error!void {
+    const p = &self.placement;
+    const host = self.shownHost();
+    self.placeTab(host, p);
+    var buf: [max_floats]*Tab = undefined;
+    const floats = self.floatsOver(host, &buf);
+    for (floats) |t| {
+        const f = t.float.?;
+        if (f.minimized) continue;
+        const frame = self.floatFrame(f);
+        try p.floats.append(self.alloc, .{
+            .tab = t,
+            .frame = frame,
+            .header = .{ .x = frame.x, .y = frame.y, .w = frame.w, .h = @min(frame.h, self.geometry.title_height) },
+            .panes = p.panes.items.len,
+            .dividers = p.dividers.items.len,
+            .corners = p.corners.items.len,
+        });
+        self.placeTab(t, p);
+    }
+}
+
+/// Whether a float over placed pane `p`'s tab covers some of its page:
+/// its browser, drawn over everything the frame has, is hidden then, and
+/// a picture of the page stands in.
+pub fn pageCovered(self: *App, p: Placement.Pane) bool {
+    if (p.session.content != .browser) return false;
+    const floats = self.placed().floats.items;
+    // Only those over its own: after its float, if it's in one.
+    var from: usize = 0;
+    for (floats, 0..) |f, k| {
+        if (f.tab == p.tab) from = k + 1;
+    }
+    const r = p.rect;
+    for (floats[from..]) |f| {
+        const b = f.frame;
+        if (b.x < r.right() and r.x < b.right() and b.y < r.bottom() and r.y < b.bottom()) return true;
+    }
+    return false;
 }
 
 /// What's under a client position.
@@ -4345,6 +4806,11 @@ pub fn cursor(self: *App, pos: win32.POINT) Cursor {
         else => null,
     };
     if (sizing) |c| cursor_ = c;
+    if (self.float_drag) |d| {
+        cursor_ = FloatDrag.cursor(d.edges);
+    } else if (hit.target == .float and hit.part == .edge) {
+        if (self.floatEdges(hit.target, pos)) |e| cursor_ = FloatDrag.cursor(e);
+    }
     if (self.sidebar_drag != null or hit.eql(.window(.sidebar_edge))) cursor_ = .size_we;
     if (self.pane_drag) |d| if (d.at != null) {
         cursor_ = .size_all;
@@ -4435,6 +4901,11 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
         if (!held) self.endPaneDrag();
         return;
     }
+    if (self.float_drag) |d| {
+        self.floatDragTo(d, pos);
+        if (!held) self.endFloatDrag();
+        return;
+    }
     if (self.sidebar_drag) |d| {
         self.sidebarDragTo(d, pos);
         if (!held) self.endSidebarDrag();
@@ -4512,6 +4983,14 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
             if (hit.eql(.window(.scrollbar))) return self.startPaletteScroll(pos);
             if (hit.eql(.window(.sidebar_scrollbar))) return self.startSidebarScroll(pos);
             if (self.fieldPress(hit, m)) return;
+            if (hit.target == .float) if (self.tabIndexOf(hit.target)) |i| switch (hit.part) {
+                // Double-clicking a float's header takes it down to a chip.
+                .title => return if (msg == win32.WM_LBUTTONDBLCLK) self.minimizeFloat(self.tabs.items[i]) else self.startFloatDrag(self.tabs.items[i], FloatDrag.all, pos),
+                .edge => if (self.floatEdges(hit.target, pos)) |e| return self.startFloatDrag(self.tabs.items[i], e, pos),
+                // Its box between its panes raises it, with the keys.
+                .body => self.activate(i),
+                else => {},
+            };
             if (hit.part == .title) if (self.shownPane(hit.target)) |pane| {
                 // Double-clicking a pane's title zooms it, as its button
                 // does. The release may then land on the zoomed pane's
@@ -4688,6 +5167,18 @@ fn widgetClick(self: *App, hit: Id) void {
             }
         },
         .close => if (self.tabIndexOf(hit.target)) |i| self.closeTab(i),
+        .minimize => if (self.tabIndexOf(hit.target)) |i| self.minimizeFloat(self.tabs.items[i]),
+        .chip => if (self.tabIndexOf(hit.target)) |i| self.restoreFloat(self.tabs.items[i]),
+        .dock => switch (hit.target) {
+            .float => if (self.tabIndexOf(hit.target)) |i| self.dockFloat(self.tabs.items[i]),
+            .pane => if (self.findSession(hit.target.pane)) |found| self.dockFloat(self.tabs.items[found.tab]),
+            else => {},
+        },
+        .float => switch (hit.target) {
+            .tab => if (self.tabIndexOf(hit.target)) |i| self.floatTabOver(self.tabs.items[i]),
+            .pane => if (self.findSession(hit.target.pane)) |found| self.floatPane(found.s),
+            else => {},
+        },
         .fold => if (self.tabIndexOf(hit.target)) |i| {
             const t = self.tabs.items[i];
             t.folded = !t.folded;
@@ -4827,7 +5318,7 @@ fn fitTab(self: *App, t: *Tab) void {
     self.placeTab(t, &scratch);
 }
 
-/// Place tab `t`'s panes in the terminal area, into `into`, and fit
+/// Place tab `t`'s panes in its area (`tabArea`), adding to `into`, and fit
 /// their grids to them, each at its own font size. Each pane's terminal
 /// is under its title strip, padded by the geometry's padding (but for
 /// the chrome's inset at the top, which the strip stands in for), and
@@ -4836,13 +5327,14 @@ fn fitTab(self: *App, t: *Tab) void {
 /// never moves the text that stays.
 fn placeTab(self: *App, t: *Tab, into: *Placement) void {
     const g = &self.geometry;
-    t.place(self.alloc, into, g.pane_area, g.gap, g.grip) catch |err| {
+    const first = into.panes.items.len;
+    t.placeInto(self.alloc, into, self.tabArea(t), g.gap, g.grip) catch |err| {
         log.err("laying out panes failed: {}", .{err});
-        into.clear();
+        into.panes.shrinkRetainingCapacity(first);
     };
     var pad = g.padding;
     pad.top -|= g.inset;
-    for (into.panes.items) |*p| {
+    for (into.panes.items[first..]) |*p| {
         // A browser's page is under its address row too.
         const chrome = if (p.session.content == .browser) g.title_height + g.bar_height else g.title_height;
         p.rect = Placement.under(p.frame, chrome);
@@ -5996,4 +6488,215 @@ test "the pane font actions: on the focused pane, reset to the window's, and not
     defer browser.deinitContent();
     try std.testing.expect(!app.runActionOn(.{ .increase_pane_font_size = 1 }, &browser));
     try std.testing.expectEqual(0, browser.font_delta);
+}
+
+/// A tab of one terminal pane titled `title` in workspace 1 of the test
+/// daemon, numbered `n` there, with no daemon behind its pane.
+fn testTab(t: *TestApp, n: u32, title: []const u16) !*Tab {
+    const alloc = std.testing.allocator;
+    const app = &t.app;
+    const s = try app.createSession(.{ .failed = .{ .title = title, .why = "test" } }, .{ .cols = 80, .rows = 24 });
+    errdefer s.destroy();
+    const tab = try Tab.create(alloc, app.nextTabKey(), &t.daemon, 1, .{ .ws = 1, .n = n }, .{ .pane = s }, s);
+    errdefer tab.destroy(alloc);
+    try app.tabs.append(alloc, tab);
+    return tab;
+}
+
+/// Tabs A (two panes, side by side), F, G, and B of workspace 1, shown;
+/// F and G float over A, G minimized and on top.
+fn testFloats(t: *TestApp) !struct { a: *Tab, f: *Tab, g: *Tab, b: *Tab } {
+    const app = &t.app;
+    _ = try t.workspace(1, L("w"), 4, 1, true);
+    const a = try testTab(t, 1, L("a"));
+    // A second pane beside A's.
+    const alloc = std.testing.allocator;
+    const s = try app.createSession(.{ .failed = .{ .title = L("a2"), .why = "test" } }, .{ .cols = 80, .rows = 24 });
+    const children = try alloc.alloc(Tab.Child, 2);
+    children[0] = .{ .share = 5000, .node = a.root };
+    children[1] = .{ .share = 5000, .node = .{ .pane = s } };
+    a.root = .{ .split = .{ .axis = .row, .children = children } };
+    const f = try testTab(t, 2, L("f"));
+    const g = try testTab(t, 3, L("g"));
+    const b = try testTab(t, 4, L("b"));
+    f.float = .{ .host = a, .rect = Daemon.default_float, .z = 1 };
+    g.float = .{ .host = a, .rect = Daemon.default_float, .minimized = true, .z = 2 };
+    app.active = 0;
+    t.relayout();
+    return .{ .a = a, .f = f, .g = g, .b = b };
+}
+
+test "a float is placed over the tab shown, under its header, and a minimized one is listed in the sidebar" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+
+    const p = app.placed();
+    // A's two panes, then F's; G, minimized, isn't placed.
+    try std.testing.expectEqual(@as(usize, 3), p.panes.items.len);
+    try std.testing.expectEqual(tabs.a, p.panes.items[0].tab);
+    try std.testing.expectEqual(tabs.f, p.panes.items[2].tab);
+    try std.testing.expectEqual(@as(usize, 1), p.floats.items.len);
+    try std.testing.expectEqual(@as(usize, 2), p.floats.items[0].panes);
+    try std.testing.expectEqual(@as(usize, 1), p.hostEnd().dividers);
+    // F's pane is in its box, a gap under its header, over both of A's.
+    const box = p.floats.items[0].frame;
+    const fp = p.panes.items[2].frame;
+    try std.testing.expect(fp.x >= box.x and fp.right() <= box.right() and fp.bottom() <= box.bottom());
+    try std.testing.expectEqual(box.y + app.geometry.title_height + app.geometry.gap, fp.y);
+    try std.testing.expectEqual(box.x + app.geometry.gap, fp.x);
+    const mid_x = fp.x + fp.w / 2;
+    const mid_y = fp.y + fp.h / 2;
+    try std.testing.expectEqual(tabs.f, p.at(mid_x, mid_y).?.tab);
+    try std.testing.expect(app.isShown(tabs.f) and app.isShown(tabs.a));
+    try std.testing.expect(!app.isShown(tabs.g) and !app.isShown(tabs.b));
+
+    // The tree: F's box over A's panes, its header, its band, and G's
+    // row at the sidebar's bottom.
+    const built = app.view();
+    const fid: Id = .{ .target = .{ .float = tabs.f.key } };
+    const gid: Id = .{ .target = .{ .float = tabs.g.key } };
+    try std.testing.expectEqual(Id{ .target = .{ .pane = tabs.f.focus.id }, .part = .terminal }, app.ui.hitTest(built, mid_x, mid_y));
+    try std.testing.expectEqual(fid.with(.title), app.ui.hitTest(built, box.x + 40, box.y + 5));
+    try std.testing.expectEqual(fid.with(.edge), app.ui.hitTest(built, box.x - 2, mid_y));
+    try std.testing.expectEqual(fid.with(.close), app.ui.hitTest(built, box.right() - 10, box.y + app.geometry.title_height / 2));
+    const chip = Ui.find(built, gid.with(.chip)).?.rect;
+    try std.testing.expect(t.frame.sidebar.contains(chip.x + 5, chip.y + 5));
+    try std.testing.expectEqual(gid.with(.chip), app.ui.hitTest(built, chip.x + 5, chip.y + 5));
+    try std.testing.expect(Ui.find(built, fid.with(.chip)) == null);
+    try std.testing.expectEqual(@as(usize, 1), Ui.floatCount(built));
+    // The sidebar's rows list A and B, not the floats.
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .tab = tabs.a.key } }) != null);
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .tab = tabs.b.key } }) != null);
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .tab = tabs.f.key } }) == null);
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .tab = tabs.g.key } }) == null);
+
+    // A press on F's pane gives F the keys; F's box is lit, A's panes dim.
+    app.focusPane(tabs.f.focus);
+    try std.testing.expectEqual(tabs.f, app.activeTab());
+    try std.testing.expectEqual(tabs.a, app.shownHost());
+    const lit = app.view();
+    try std.testing.expect(Ui.find(lit, fid).?.kind.float.focused);
+    try std.testing.expect(Ui.find(lit, .{ .target = .{ .pane = tabs.a.focus.id }, .part = .terminal }).?.kind.pane.dimmed);
+    // Its row restores G, on top, with the keys, and the list goes.
+    app.widgetClick(gid.with(.chip));
+    try std.testing.expectEqual(tabs.g, app.activeTab());
+    try std.testing.expect(!tabs.g.float.?.minimized and tabs.g.float.?.z > tabs.f.float.?.z);
+    try std.testing.expectEqual(@as(usize, 2), app.placed().floats.items.len);
+    try std.testing.expect(Ui.find(app.view(), gid.with(.chip)) == null);
+}
+
+test "next tab goes through the tabs that don't float, and a float's palette entry shows it over its tab" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+
+    app.cycle(true);
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    app.cycle(true);
+    try std.testing.expectEqual(tabs.a, app.activeTab());
+    // From a float, from the tab under it.
+    app.activate(app.tabIndex(tabs.f).?);
+    app.cycle(false);
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+
+    // The palette lists G among the tabs, saying what it floats over;
+    // choosing it shows A with G restored over it.
+    app.openPalette();
+    _ = app.view();
+    const p = &app.mode.palette;
+    const i = for (0..p.count()) |k| {
+        if (std.meta.eql(p.entryOf(k).?.action, Palette.Action{ .tab = tabs.g.key })) break k;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.startsWith(u16, p.entryOf(i).?.detail, L("floating over a")));
+    app.choosePalette(i);
+    try std.testing.expectEqual(tabs.g, app.activeTab());
+    try std.testing.expectEqual(tabs.a, app.shownHost());
+    try std.testing.expect(!tabs.g.float.?.minimized);
+}
+
+test "the palette's float commands have no keys, and Float tab… lists the tabs that can float over the one shown" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+
+    app.openPalette();
+    _ = app.view();
+    const p = &app.mode.palette;
+    for ([_]binding.Action{ .float_pane, .float_tab, .dock_float, .toggle_floats, .focus_float }) |action| {
+        const e = for (0..p.count()) |k| {
+            const e = p.entryOf(k).?;
+            if (std.meta.eql(e.action, Palette.Action{ .binding = action })) break e;
+        } else return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(usize, 0), e.right.len);
+    }
+    // Float tab… goes on to the tabs: B alone, not A (shown) or the floats.
+    const ft = for (0..p.count()) |k| {
+        if (std.meta.eql(p.entryOf(k).?.action, Palette.Action{ .binding = .float_tab })) break k;
+    } else return error.TestUnexpectedResult;
+    app.choosePalette(ft);
+    try std.testing.expect(app.mode == .palette);
+    _ = app.view();
+    try std.testing.expectEqual(Palette.Step.float_tab, app.mode.palette.step);
+    try std.testing.expectEqual(@as(usize, 1), app.mode.palette.count());
+    try std.testing.expectEqual(Palette.Action{ .float_tab = tabs.b.key }, app.mode.palette.entryOf(0).?.action);
+    app.closePalette();
+    tabs.b.float = .{ .host = tabs.a, .rect = Daemon.default_float, .z = 3 };
+    // Toggling minimizes every float over A and gives A the keys; again
+    // restores them.
+    app.toggleFloats();
+    try std.testing.expectEqual(tabs.a, app.activeTab());
+    try std.testing.expectEqual(@as(usize, 0), app.placed().floats.items.len);
+    const down = app.view();
+    for ([_]*Tab{ tabs.f, tabs.g, tabs.b }) |tab| {
+        try std.testing.expect(Ui.find(down, .{ .target = .{ .float = tab.key }, .part = .chip }) != null);
+    }
+    app.toggleFloats();
+    try std.testing.expectEqual(@as(usize, 3), app.placed().floats.items.len);
+}
+
+test "dragging a float's header moves it, and its edge resizes it, kept in the area" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+    const box = app.placed().floats.items[0].frame;
+    const down: win32.POINT = .{ .x = @intFromFloat(box.x + 40), .y = @intFromFloat(box.y + 5) };
+    const area = app.geometry.pane_area;
+
+    // Far up and left: it stops at the area's corner, the same size.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = down } });
+    try std.testing.expect(app.float_drag != null);
+    try std.testing.expectEqual(tabs.f, app.activeTab());
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = down.x - 2000, .y = down.y - 2000 } } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = down.x - 2000, .y = down.y - 2000 } } });
+    try std.testing.expect(app.float_drag == null);
+    const moved = tabs.f.float.?.rect;
+    try std.testing.expectEqual(@as(u16, 0), moved.x);
+    try std.testing.expectEqual(@as(u16, 0), moved.y);
+    try std.testing.expectEqual(Daemon.default_float.w, moved.w);
+    try std.testing.expectEqual(area.x, app.placed().floats.items[0].frame.x);
+
+    // Its right edge, far left: no narrower than the least.
+    const now = app.placed().floats.items[0].frame;
+    const edge: win32.POINT = .{ .x = @intFromFloat(now.right() + 1), .y = @intFromFloat(now.y + now.h / 2) };
+    _ = app.view();
+    try std.testing.expectEqual(Id{ .target = .{ .float = tabs.f.key }, .part = .edge }, app.hitAt(edge));
+    try std.testing.expectEqual(Cursor.size_we, app.cursor(edge));
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = edge } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = edge.x - 2000, .y = edge.y } } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = edge.x - 2000, .y = edge.y } } });
+    try std.testing.expectEqual(@as(u16, Daemon.min_float), tabs.f.float.?.rect.w);
+    try std.testing.expectEqual(Daemon.default_float.h, tabs.f.float.?.rect.h);
 }

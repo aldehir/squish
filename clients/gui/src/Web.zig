@@ -1693,6 +1693,14 @@ fn setZoom(self: *View, zoom: f64) void {
     if (self.browser()) |b| b.zoom = zoom;
 }
 
+/// Whether `capture` was last told to keep a picture of `s`'s page.
+pub fn capturing(self: *const Web, s: *Session) bool {
+    _ = self;
+    const b = s.browser() orelse return false;
+    const v = b.view orelse return false;
+    return v.want_preview;
+}
+
 /// Begin placing the frame's views: those `show` doesn't place by
 /// `endPlacing` are hidden.
 pub fn beginPlacing(self: *Web) void {

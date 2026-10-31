@@ -3,6 +3,7 @@
 //! `currentColor`. Painter recolors and restrokes them as it draws.
 
 pub const activity = @embedFile("activity.svg");
+pub const app_window = @embedFile("app-window.svg");
 pub const arrow_left = @embedFile("arrow-left.svg");
 pub const arrow_right = @embedFile("arrow-right.svg");
 pub const check = @embedFile("check.svg");
@@ -20,6 +21,7 @@ pub const layers = @embedFile("layers.svg");
 pub const lock = @embedFile("lock.svg");
 pub const maximize_2 = @embedFile("maximize-2.svg");
 pub const minimize_2 = @embedFile("minimize-2.svg");
+pub const minus = @embedFile("minus.svg");
 pub const panel_left = @embedFile("panel-left.svg");
 pub const panels_top_left = @embedFile("panels-top-left.svg");
 pub const pencil = @embedFile("pencil.svg");
@@ -30,6 +32,7 @@ pub const rows_2 = @embedFile("rows-2.svg");
 pub const search = @embedFile("search.svg");
 pub const shield_alert = @embedFile("shield-alert.svg");
 pub const shield_question_mark = @embedFile("shield-question-mark.svg");
+pub const square_arrow_down_left = @embedFile("square-arrow-down-left.svg");
 pub const terminal = @embedFile("terminal.svg");
 pub const trash = @embedFile("trash.svg");
 pub const unplug = @embedFile("unplug.svg");

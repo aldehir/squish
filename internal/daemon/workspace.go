@@ -24,8 +24,11 @@ type workspace struct {
 	tabs    []*tab
 	nextTab uint32 // the last tab number given out
 	viewers map[*conn]*viewer
-	// The tab shown; nil while there are none.
+	// The tab with input; nil while there are none. A floating tab can
+	// be active: the window shows its host under it.
 	active *tab
+	// The last Float.Z given out.
+	nextZ uint32
 	// When its last viewer left, to pick the most recent for a new
 	// window.
 	detachedAt time.Time
@@ -56,6 +59,9 @@ type tab struct {
 	// none).
 	focus PaneID
 	zoom  PaneID
+	// Set while the tab floats over another (float.go); nil for an
+	// ordinary tab.
+	float *rpc.Float
 }
 
 var (
@@ -87,7 +93,12 @@ func (t *tab) newPaneID() PaneID {
 }
 
 func (t *tab) info() rpc.Tab {
-	return rpc.Tab{ID: t.id, Name: t.name, Tree: t.root.Clone(), Focus: t.focus, Zoomed: t.zoom}
+	info := rpc.Tab{ID: t.id, Name: t.name, Tree: t.root.Clone(), Focus: t.focus, Zoomed: t.zoom}
+	if t.float != nil {
+		f := *t.float
+		info.Float = &f
+	}
+	return info
 }
 
 func (ws *workspace) tabInfos() []rpc.Tab {
@@ -151,7 +162,7 @@ func (s *Server) retileLocked(t *tab) {
 	if t.ws.attached() || t.root == nil {
 		return
 	}
-	for id, size := range s.measureLocked(t.ws, t.ws.area, t.root, nil) {
+	for id, size := range s.measureLocked(t.ws, t.areaOf(t.ws.area), t.root, nil) {
 		if p := s.panes[id]; p != nil {
 			p.resize(nil, size)
 		}
@@ -298,7 +309,7 @@ func (s *Server) workspaceAttach(cl *callCtx, p rpc.WorkspaceAttachParams) (*rpc
 	for _, t := range ws.tabs {
 		var sizes map[PaneID]Size
 		if validArea(v.area) {
-			sizes = s.measureLocked(ws, v.area, t.root, nil)
+			sizes = s.measureLocked(ws, t.areaOf(v.area), t.root, nil)
 		}
 		for _, id := range t.root.Panes() {
 			pn := s.panes[id]
@@ -469,6 +480,17 @@ func (s *Server) workspaceFocus(cl *callCtx, p rpc.WorkspaceFocusParams) (rpc.Em
 	}
 	ws := t.ws
 	changed := s.selectTabLocked(ws, t)
+	// A float given the input shows: restored, and on top.
+	if t.float != nil {
+		if t.float.Minimized {
+			t.float.Minimized = false
+			changed = true
+		}
+		if t.float.Z != ws.nextZ {
+			ws.raiseLocked(t)
+			changed = true
+		}
+	}
 	if pn != nil && t.focus != pn.paneID() {
 		t.focus = pn.paneID()
 		changed = true
@@ -813,7 +835,7 @@ func (s *Server) paneSplit(cl *callCtx, m rpc.PaneSplitParams) (*rpc.Created, er
 	}
 	// The new pane takes its neighbour's cell size, as a split takes its
 	// font; beside a browser, which has none, the tab's.
-	size := s.measureLocked(t.ws, t.ws.area, trial, map[PaneID]Size{id: target.cell()})[id]
+	size := s.measureLocked(t.ws, t.areaOf(t.ws.area), trial, map[PaneID]Size{id: target.cell()})[id]
 	s.mu.Unlock()
 
 	// A shell can be in a directory that's gone (PowerShell holds none
@@ -850,7 +872,8 @@ func (s *Server) paneSplit(cl *callCtx, m rpc.PaneSplitParams) (*rpc.Created, er
 }
 
 // paneMove takes a pane out of its tab and puts it along a side of
-// another, or of a new tab after its own. In another tab it's that
+// another, or of a new tab after its own (floating, with m.Float). In
+// another tab it's that
 // tab's next pane: its viewers let go of it under the old id and take
 // it up under the new, and the old id forwards to the new while the
 // pane lives.
@@ -860,6 +883,16 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 	}
 	if m.Side < Right || m.Side > Up {
 		return nil, rpc.Errorf(rpc.CodeInvalidParams, "side is right, down, left, or up")
+	}
+	if m.Float != nil {
+		if !m.Tab.IsZero() {
+			return nil, rpc.Errorf(rpc.CodeInvalidParams, "float and tab together")
+		}
+		if m.Float.Rect != nil {
+			if err := m.Float.Rect.Validate(); err != nil {
+				return nil, rpc.Errorf(rpc.CodeInvalidParams, "%v", err)
+			}
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -879,7 +912,25 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 			return nil, rpc.Errorf(rpc.CodeInvalidParams, "tab %s is in another workspace", m.Tab)
 		}
 	}
-	if src.root.IsLeaf() && (dst == src || dst == nil) {
+	// A float goes over the pane's tab, or what that floats over.
+	var host *tab
+	if m.Float != nil {
+		host = src.hostOf()
+		if !m.Float.Over.IsZero() {
+			if host = s.tabs[m.Float.Over]; host == nil {
+				return nil, errNoTab
+			}
+			if host.ws != ws {
+				return nil, rpc.Errorf(rpc.CodeInvalidParams, "tab %s is in another workspace", m.Float.Over)
+			}
+			if host.float != nil {
+				return nil, rpc.Errorf(rpc.CodeInvalidParams, "can't float over a floating tab")
+			}
+		}
+		if host == src && src.root.IsLeaf() {
+			return nil, rpc.Errorf(rpc.CodeInvalidParams, "a lone pane can't float over its own tab")
+		}
+	} else if src.root.IsLeaf() && (dst == src || dst == nil) {
 		// Alone in its tab already.
 		return &rpc.Created{Pane: pn.paneID()}, nil
 	}
@@ -895,6 +946,13 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 		}
 		ws.tabs = append(ws.tabs[:at], append([]*tab{dst}, ws.tabs[at:]...)...)
 		s.emitLocked(rpc.EvTabCreated, rpc.TabEventParams{ID: dst.id}, nil, nil)
+		if host != nil {
+			rect := rpc.DefaultFloat
+			if m.Float.Rect != nil {
+				rect = *m.Float.Rect
+			}
+			s.floatLocked(dst, host, rect)
+		}
 	}
 
 	old := pn.paneID()
@@ -930,7 +988,7 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 		for c, v := range ws.viewers {
 			var size Size
 			if validArea(v.area) {
-				size = s.measureLocked(ws, v.area, dst.root, nil)[id]
+				size = s.measureLocked(ws, dst.areaOf(v.area), dst.root, nil)[id]
 			}
 			if err := pn.attach(c, size, old); err != nil {
 				s.log.Error("attaching pane", "pane", id, "err", err)
@@ -1037,18 +1095,24 @@ func (s *Server) tabInfo(_ *callCtx, p rpc.TabParams) (*rpc.Tab, error) {
 }
 
 // removeTabLocked takes a tab out of its workspace, moving the active
-// tab to the one in its place (or the last). It reports whether the
+// tab to the one in its place (or the last; a float's host), its floats
+// docking in its place first. It reports whether the
 // workspace is still there to send a structure of: a killed or
 // unviewed workspace left with no tabs goes with it.
 func (s *Server) removeTabLocked(t *tab) bool {
 	delete(s.tabs, t.id)
 	ws := t.ws
+	// Its floats take its place; a float's host takes its input.
+	s.dockFloatsLocked(t)
+	host := t.hostOf()
 	for i, x := range ws.tabs {
 		if x == t {
 			ws.tabs = append(ws.tabs[:i], ws.tabs[i+1:]...)
 			if ws.active == t {
 				var next *tab
-				if len(ws.tabs) > 0 {
+				if host != t {
+					next = host
+				} else if len(ws.tabs) > 0 {
 					next = ws.tabs[min(i, len(ws.tabs)-1)]
 				}
 				s.selectTabLocked(ws, next)

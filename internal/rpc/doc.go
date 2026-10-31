@@ -34,10 +34,13 @@ var MethodDocs = []MethodDoc{
 	{TabRename, "{id, name}", "{}", ""},
 	{TabLayout, "{id, tree: Node}", "{}", "same panes, new shares (a divider drag); a child's from, the pane its space was split from, is kept if it names a pane beside it and dropped if not"},
 	{TabInfo, "{id}", "Tab", ""},
+	{TabFloat, "{id, over?, rect?: {x, y, w, h}, minimized?, raise?}", "{}",
+		"floats tab id over tab over (an ordinary tab without over: over the active tab, or what that one floats over), or changes its float: rect in basis points of the host's area (w and h at least 1500, x+w and y+h at most 10000; centered 60% x 60% by default), minimized takes it off the screen (the window lists it), raise puts it on top. Floats are one level deep: over must be ordinary, and id's own floats move onto it"},
+	{TabDock, "{id}", "{}", "a floating tab becomes ordinary again, right after the tab it floated over; a no-op on an ordinary tab"},
 	{PaneSplit, "{pane, direction: right|down|left|up, share?: 1..9999, kind?, url?, command?, cwd?, env?}", "Created",
 		"share is the new pane's, in basis points (5000 default); the rest is the new pane's PaneSpec. A terminal without a cwd starts in pane's shell's directory, the last it reported (OSC 7 or 9;9; slime shell-integration), if that shell is on this host"},
-	{PaneMove, "{pane, tab?, side?: right|down|left|up}", "Created",
-		"into tab along side, or a new tab of its own without tab; the result is the pane's new id, and its old ids keep finding it"},
+	{PaneMove, "{pane, tab?, side?: right|down|left|up, float?: {over?, rect?}}", "Created",
+		"into tab along side, or a new tab of its own without tab; the result is the pane's new id, and its old ids keep finding it. With float (true or a table), the new tab floats as tab.float says: over the pane's tab (or what that one floats over) unless over names another"},
 	{PaneKill, "{id}", "{}", ""},
 	{PaneWrite, "{id, text}", "{}", "as typed; no newline is added, a \"\\r\" presses enter; not a browser's"},
 	{PaneText, "{id, vt?: bool}", "{text}", "the screen and scrollback: plain, or the VT that redraws it; not a browser's"},
@@ -82,7 +85,10 @@ const ShapesDoc = `A workspace id is an integer; a tab id is the string "w.t" an
                  needs, and takes no command
   Workspace      {id, name, active_tab: "w.t", tabs: [Tab]}
   WorkspaceDesc  Workspace plus {attached, viewers?, detached_at?}
-  Tab            {id: "w.t", name?, tree: Node, focus?: "w.t.p", zoomed?: "w.t.p"}
+  Tab            {id: "w.t", name?, tree: Node, focus?: "w.t.p", zoomed?: "w.t.p",
+                  float?: {over: "w.t", rect: {x, y, w, h}, minimized?, z}}
+                 float is set while the tab floats over tab over: rect in basis
+                 points of over's area, z its stacking among over's floats
   PaneDesc       {id: "w.t.p", kind?, url?, command, title?, pwd?, cols, rows, created,
                   pid, status?: [{id, state, progress}]}: a browser has kind, url,
                   and title, and zeros for the terminal's
@@ -123,6 +129,8 @@ var EventDocs = []EventDoc{
 	{EvTabClosed, "{id}"},
 	{EvTabRenamed, "{id, name}"},
 	{EvTabSelected, "{id}"},
+	{EvTabFloated, "{id, over}: the tab floats over over now (tab.float, pane.move with float, or its host floating)"},
+	{EvTabDocked, "{id}: a floating tab is ordinary again (tab.dock, or its host closed)"},
 	{EvPaneCreated, "{id}"},
 	{EvPaneMoved, "{id, from}: to another tab, under a new id"},
 	{EvPaneAttached, "{id, moved_from?, kind?, url?, command, status?} (viewers only; a terminal's frames follow, a browser's nothing)"},

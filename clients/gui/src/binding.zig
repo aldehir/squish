@@ -36,6 +36,17 @@ pub const Action = union(enum) {
     resize_split: ResizeSplit,
     equalize_splits,
     toggle_split_zoom,
+    /// Floating tabs, shown over the tab shown (a movable box in the
+    /// terminal area that splits as any tab does): the focused pane into
+    /// a new one; a tab picked in the palette over the shown one; the
+    /// focused float back into a tab of its own; every float over the
+    /// shown tab down to a chip, or back; and the keys between the shown
+    /// tab and its top float. No keys by default: the palette has them.
+    float_pane,
+    float_tab,
+    dock_float,
+    toggle_floats,
+    focus_float,
     /// Open the command palette, or close it.
     toggle_command_palette,
     /// Open the search card on the focused pane (the search runs in the
@@ -397,6 +408,11 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .copy_mode => .copy_mode,
         .equalize_splits => .equalize_splits,
         .toggle_split_zoom => .toggle_split_zoom,
+        .float_pane => .float_pane,
+        .float_tab => .float_tab,
+        .dock_float => .dock_float,
+        .toggle_floats => .toggle_floats,
+        .focus_float => .focus_float,
         .toggle_command_palette => .toggle_command_palette,
         .start_search => .start_search,
         .end_search => .end_search,

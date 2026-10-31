@@ -5,6 +5,11 @@
 //! the terminal area, and remade whenever either changes, so nothing here
 //! outlives a layout: the window draws, hit-tests, and drags against it,
 //! and the sessions themselves hold no geometry.
+//!
+//! The tab shown may have floating tabs over it: their panes, dividers,
+//! and corners follow its own, a float's after the one under it, and
+//! `floats` says which are whose. Minimized floats aren't placed: the
+//! sidebar lists them.
 const Placement = @This();
 
 const std = @import("std");
@@ -20,12 +25,47 @@ panes: std.ArrayList(Pane) = .empty,
 dividers: std.ArrayList(Tab.Divider) = .empty,
 /// Where dividers meet, dragged to move all of them at once.
 corners: std.ArrayList(Corner) = .empty,
+/// The floats shown over the tab, bottom to top.
+floats: std.ArrayList(Float) = .empty,
+
+/// A float shown over the tab: its box (header and panes), the header
+/// that moves it, and where its panes, dividers, and corners start in
+/// the lists. Each runs to the next float's start, or the end.
+pub const Float = struct {
+    tab: *Tab,
+    frame: Rect,
+    header: Rect,
+    panes: usize,
+    dividers: usize,
+    corners: usize,
+};
+
+/// Where the shown tab's own panes, dividers, and corners end: where the
+/// first float's start, else the lists' ends.
+pub fn hostEnd(self: *const Placement) Float {
+    if (self.floats.items.len > 0) return self.floats.items[0];
+    return .{ .tab = undefined, .frame = .{}, .header = .{}, .panes = self.panes.items.len, .dividers = self.dividers.items.len, .corners = self.corners.items.len };
+}
+
+/// Float `i`'s panes, dividers, and corners.
+pub fn floatParts(self: *const Placement, i: usize) struct { panes: []const Pane, dividers: [2]usize, corners: [2]usize } {
+    const f = self.floats.items[i];
+    const next: ?Float = if (i + 1 < self.floats.items.len) self.floats.items[i + 1] else null;
+    const pe = if (next) |n| n.panes else self.panes.items.len;
+    return .{
+        .panes = self.panes.items[f.panes..pe],
+        .dividers = .{ f.dividers, if (next) |n| n.dividers else self.dividers.items.len },
+        .corners = .{ f.corners, if (next) |n| n.corners else self.corners.items.len },
+    };
+}
 
 /// Pixels around a grid, inside its terminal.
 pub const Padding = struct { left: u32 = 0, right: u32 = 0, top: u32 = 0, bottom: u32 = 0 };
 
 pub const Pane = struct {
     session: *Session,
+    /// The tab it's in: the one shown, or a float over it.
+    tab: *Tab,
     /// All of it: its title strip and terminal.
     frame: Rect,
     /// Its terminal, or a browser's page, under the strip (`under`).
@@ -65,6 +105,7 @@ pub fn deinit(self: *Placement, alloc: Allocator) void {
     self.panes.deinit(alloc);
     self.dividers.deinit(alloc);
     self.corners.deinit(alloc);
+    self.floats.deinit(alloc);
     self.* = undefined;
 }
 
@@ -72,18 +113,20 @@ pub fn clear(self: *Placement) void {
     self.panes.clearRetainingCapacity();
     self.dividers.clearRetainingCapacity();
     self.corners.clearRetainingCapacity();
+    self.floats.clearRetainingCapacity();
 }
 
-/// Find the corners among the dividers: each end of a divider that
+/// Find the corners among the dividers from `first` on: each end of a divider that
 /// meets one across it. A divider spans its split, so the one it ends
 /// at is an ancestor split's, and the ends from both sides of it only
 /// line up by chance. Each is `grip` either way of the junction: the
 /// dividers' grip, so it's there to take hold of with no gap.
-pub fn findCorners(self: *Placement, alloc: Allocator, grip: f32) !void {
+pub fn findCorners(self: *Placement, alloc: Allocator, first: usize, grip: f32) !void {
     const ds = self.dividers.items;
-    for (ds, 0..) |d, i| {
+    const first_corner = self.corners.items.len;
+    for (ds[first..], first..) |d, i| {
         const vertical = d.axis() == .row;
-        for (ds, 0..) |e, j| {
+        for (ds[first..], first..) |e, j| {
             if (e.axis() == d.axis()) continue;
             // d runs between e's long sides, and an end of it touches e.
             const within = if (vertical)
@@ -100,7 +143,7 @@ pub fn findCorners(self: *Placement, alloc: Allocator, grip: f32) !void {
             const cy = if (vertical) e.rect.y + e.rect.h / 2 else d.rect.y + d.rect.h / 2;
             const rect: Rect = .{ .x = cx - grip, .y = cy - grip, .w = 2 * grip, .h = 2 * grip };
             // The end from the other side of e, if it got here first.
-            for (self.corners.items) |*c| {
+            for (self.corners.items[first_corner..]) |*c| {
                 if (c.through == j and near(c.rect.x, rect.x) and near(c.rect.y, rect.y)) {
                     c.ends[1] = @intCast(i);
                     break;
@@ -122,10 +165,25 @@ pub fn find(self: *const Placement, s: *const Session) ?*const Pane {
     return null;
 }
 
-/// The pane at a client position, if one's there.
+/// The pane at a client position, if one's there: a float's over the
+/// tab's, the top float's first.
 pub fn at(self: *const Placement, x: f32, y: f32) ?*const Pane {
-    for (self.panes.items) |*p| {
+    var i = self.panes.items.len;
+    while (i > 0) {
+        i -= 1;
+        const p = &self.panes.items[i];
         if (p.frame.contains(x, y)) return p;
+    }
+    return null;
+}
+
+/// The float whose box is at a client position, the top one first.
+pub fn floatAt(self: *const Placement, x: f32, y: f32) ?*const Float {
+    var i = self.floats.items.len;
+    while (i > 0) {
+        i -= 1;
+        const f = &self.floats.items[i];
+        if (f.frame.contains(x, y)) return f;
     }
     return null;
 }
@@ -133,13 +191,14 @@ pub fn at(self: *const Placement, x: f32, y: f32) ?*const Pane {
 /// The pane next to `from` on `side`: of those past that edge and level
 /// with it, the nearest, then the one most in line with it.
 pub fn neighbor(self: *const Placement, from: *const Session, side: Daemon.Direction) ?*Session {
-    const f = (self.find(from) orelse return null).frame;
+    const fp = self.find(from) orelse return null;
+    const f = fp.frame;
     const along = side == .left or side == .right;
     var best: ?*Session = null;
     var best_gap: f32 = 0;
     var best_off: f32 = 0;
     for (self.panes.items) |p| {
-        if (p.session == from) continue;
+        if (p.session == from or p.tab != fp.tab) continue;
         const r = p.frame;
         const gap = switch (side) {
             .left => f.x - r.right(),

@@ -86,6 +86,8 @@ const (
 	TabRename       = "tab.rename"
 	TabLayout       = "tab.layout"
 	TabInfo         = "tab.info"
+	TabFloat        = "tab.float"
+	TabDock         = "tab.dock"
 	PaneSplit       = "pane.split"
 	PaneMove        = "pane.move"
 	PaneKill        = "pane.kill"
@@ -125,6 +127,8 @@ const (
 	EvTabClosed             = "tab.closed"
 	EvTabRenamed            = "tab.renamed"
 	EvTabSelected           = "tab.selected"
+	EvTabFloated            = "tab.floated"
+	EvTabDocked             = "tab.docked"
 	EvPaneCreated           = "pane.created"
 	EvPaneMoved             = "pane.moved"
 	EvPaneAttached          = "pane.attached"
@@ -389,6 +393,46 @@ type Tab struct {
 	// tab, or none.
 	Focus  PaneID `json:"focus,omitzero"`
 	Zoomed PaneID `json:"zoomed,omitzero"`
+	// Float is set while the tab floats over another: shown over it,
+	// not in a slot of its own. Nil for an ordinary tab.
+	Float *Float `json:"float,omitempty"`
+}
+
+// Float places a floating tab over its host.
+type Float struct {
+	// The tab it floats over: same workspace, never itself floating.
+	Over TabID `json:"over"`
+	// Where, in basis points (of Whole) of the host's tab area, so
+	// windows of different sizes show it in the same place.
+	Rect FloatRect `json:"rect"`
+	// Minimized: off the screen, listed by the window; panes unshown.
+	Minimized bool `json:"minimized,omitempty"`
+	// Stacking among the host's floats: higher is on top. Raised on
+	// focus; only the order means anything.
+	Z uint32 `json:"z"`
+}
+
+// FloatRect is a float's place in its host's tab area, in basis points:
+// X+W and Y+H are at most Whole, W and H at least MinFloat.
+type FloatRect struct {
+	X uint16 `json:"x"`
+	Y uint16 `json:"y"`
+	W uint16 `json:"w"`
+	H uint16 `json:"h"`
+}
+
+// MinFloat is the least a float spans each way: 15% of the area.
+const MinFloat = 1500
+
+// DefaultFloat is a new float's place: centered, 60% by 60%.
+var DefaultFloat = FloatRect{X: 2000, Y: 2000, W: 6000, H: 6000}
+
+// Validate checks that r fits the area and isn't too small.
+func (r FloatRect) Validate() error {
+	if r.W < MinFloat || r.H < MinFloat || uint32(r.X)+uint32(r.W) > Whole || uint32(r.Y)+uint32(r.H) > Whole {
+		return fmt.Errorf("rpc: float rect %d,%d %dx%d out of range", r.X, r.Y, r.W, r.H)
+	}
+	return nil
 }
 
 // Layout is a tab to build: a tree whose leaves say what to run,
@@ -734,10 +778,43 @@ type PaneSplitParams struct {
 // finds it. The viewers see the old id detach and the new attach
 // (pane.attached with moved_from); a viewer's own call focuses the
 // pane.
+//
+// With Float, the new tab is born floating: over the pane's tab (or the
+// tab that one floats over), else Float.Over, at Float.Rect if given.
 type PaneMoveParams struct {
-	Pane PaneID    `json:"pane"`
-	Tab  TabID     `json:"tab,omitzero"`
-	Side Direction `json:"side,omitempty"`
+	Pane  PaneID       `json:"pane"`
+	Tab   TabID        `json:"tab,omitzero"`
+	Side  Direction    `json:"side,omitempty"`
+	Float *FloatTarget `json:"float,omitempty"`
+}
+
+// FloatTarget is where pane.move floats a pane: both members optional,
+// and true on the wire is the same as {}.
+type FloatTarget struct {
+	Over TabID      `json:"over,omitzero"`
+	Rect *FloatRect `json:"rect,omitempty"`
+}
+
+func (f *FloatTarget) UnmarshalJSON(b []byte) error {
+	if string(b) == "true" {
+		*f = FloatTarget{}
+		return nil
+	}
+	type plain FloatTarget
+	return json.Unmarshal(b, (*plain)(f))
+}
+
+// TabFloatParams floats tab ID over tab Over, or changes how it floats:
+// its Rect, whether it's Minimized, and Raise puts it on top of its
+// host's other floats. An ordinary tab without Over floats over the
+// active tab (or the tab that one floats over). Its own floats move
+// onto the new host.
+type TabFloatParams struct {
+	ID        TabID      `json:"id"`
+	Over      TabID      `json:"over,omitzero"`
+	Rect      *FloatRect `json:"rect,omitempty"`
+	Minimized *bool      `json:"minimized,omitempty"`
+	Raise     bool       `json:"raise,omitempty"`
 }
 
 // PaneParams names a pane: kill, info.
@@ -827,6 +904,13 @@ type WorkspaceViewerParams struct {
 type TabEventParams struct {
 	ID   TabID  `json:"id"`
 	Name string `json:"name,omitempty"`
+}
+
+// TabFloatedParams: tab.floated, a tab floated over Over (or moved onto
+// it from another host).
+type TabFloatedParams struct {
+	ID   TabID `json:"id"`
+	Over TabID `json:"over"`
 }
 
 // PaneCreatedParams: pane.created.
@@ -940,6 +1024,11 @@ var DaemonActions = map[string]string{
 	"toggle_split_zoom": WorkspaceFocus,
 	"resize_split":      TabLayout,
 	"equalize_splits":   TabLayout,
+	"float_pane":        PaneMove,
+	"float_tab":         TabFloat,
+	"dock_float":        TabDock,
+	"toggle_floats":     TabFloat,
+	"focus_float":       WorkspaceFocus,
 }
 
 // ClientActionParams: client.action, to a workspace's viewers.

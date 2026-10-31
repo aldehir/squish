@@ -1558,7 +1558,7 @@ test "a terminal's methods do nothing for a browser" {
     try std.testing.expect(s.term() == null);
     try std.testing.expect(s.browser() != null);
     // Nothing here reaches for a connection, a window, or a screen.
-    s.resize(.{ .session = &s, .frame = .{ .w = 400, .h = 300 }, .rect = .{ .w = 400, .h = 270 }, .cols = 40, .rows = 20 });
+    s.resize(.{ .session = &s, .tab = undefined, .frame = .{ .w = 400, .h = 300 }, .rect = .{ .w = 400, .h = 270 }, .cols = 40, .rows = 20 });
     s.applyFrames();
     s.drawn();
     s.charInput('a');

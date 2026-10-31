@@ -533,6 +533,14 @@ const Overlay = struct {
         return self.ui.hasOver(self.tree);
     }
 
+    pub fn paintFloat(self: Overlay, p: *Painter, k: usize, part: anytype) void {
+        self.ui.paintFloat(p, self.tree, k, part);
+    }
+
+    pub fn paintAbove(self: Overlay, p: *Painter) void {
+        self.ui.paintAbove(p, self.tree);
+    }
+
     pub fn capture(self: Overlay) ?Ui.Rect {
         return Ui.dragCapture(self.tree);
     }
@@ -604,9 +612,17 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
     }
     self.placeBrowsers();
     self.armIdle();
+    // Where each float's panes start: they're placed after the tab's.
+    var floats: [App.max_floats]usize = undefined;
+    var nfloats: usize = 0;
+    if (tab != null) for (app.placed().floats.items) |f| {
+        floats[nfloats] = f.panes;
+        nfloats += 1;
+    };
     var shadows: [2]Renderer.BoxStyle.Shadow = undefined;
     try r.draw(self.alloc, .{
         .panes = self.frame_panes.items,
+        .floats = floats[0..nfloats],
         // The chrome's ground, around and between the panes.
         .background = self.ui.theme.ground,
         .box = self.paneBox(&shadows),
@@ -627,19 +643,24 @@ fn fontsOf(self: *Window, grid: *const font.Grid) *const Renderer.Fonts {
     return &self.frame_fonts.items[self.frame_fonts.items.len - 1];
 }
 
-/// Show the active tab's browser panes' pages where they're placed, over
-/// their boxes inside the border, dimmed as a terminal without focus is;
-/// the others' are hidden.
+/// Show the shown browser panes' pages where they're placed, over their
+/// boxes inside the border, dimmed as a terminal without focus is; the
+/// others' are hidden. A page a float covers is hidden too, since its
+/// browser draws over everything in the frame: a picture of it stands
+/// in (`App.pageCovered`).
 fn placeBrowsers(self: *Window) void {
     const app = &self.app;
     self.web.beginPlacing();
     defer self.web.endPlacing();
     if (!app.hasTabs()) return;
     const tab = app.activeTab();
-    const several = tab.count() > 1;
+    const several = app.placed().panes.items.len > 1;
     const border = self.ui.stroke();
     for (app.placed().panes.items) |p| {
         if (p.session.content != .browser) continue;
+        const covered = app.pageCovered(p);
+        if (covered != self.web.capturing(p.session)) self.web.capture(p.session, covered);
+        if (covered) continue;
         self.web.show(p.session, .{
             .bounds = Web.pageBounds(p.rect, border),
             .radius = @max(0, self.frame.corner - border),
@@ -1102,6 +1123,8 @@ fn cursorHandle(cursor: App.Cursor) ?win32.HCURSOR {
         .size_we => win32.IDC_SIZEWE,
         .size_ns => win32.IDC_SIZENS,
         .size_all => win32.IDC_SIZEALL,
+        .size_nwse => win32.IDC_SIZENWSE,
+        .size_nesw => win32.IDC_SIZENESW,
         .shape => |shape| mouseCursor(shape),
         .handle => |h| return h,
     };

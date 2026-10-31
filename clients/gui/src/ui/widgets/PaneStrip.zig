@@ -297,7 +297,10 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
     }
     if (pane.browser) |b| {
         paintUrl(ui, p, urlRect(ui, node), b, pane.focused);
-        if (!b.live) paintPage(ui, p, b);
+        if (b.still) |img| {
+            const w = ui.stroke();
+            p.image(img, b.page.inset(w, w), 0, 1);
+        } else if (!b.live) paintPage(ui, p, b);
     }
     paintSearch(ui, p, node);
     ui.paintChildren(p, node);
