@@ -67,6 +67,7 @@ const tip_timer_id = 6;
 const repeat_timer_id = 7;
 /// Tries again to make a lost GPU device (`recoverDevice`).
 const device_timer_id = 8;
+const find_timer_id = 9;
 
 /// How long `recoverDevice` waits between tries: soon at first, while
 /// the GPU may still be resetting, then less often.
@@ -911,6 +912,7 @@ fn timerId(timer: App.Timer) usize {
         .spinner => spinner_timer_id,
         .tip => tip_timer_id,
         .repeat => repeat_timer_id,
+        .find => find_timer_id,
     };
 }
 
@@ -1279,6 +1281,7 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
                 spinner_timer_id => _ = app.update(.{ .tick = .spinner }),
                 tip_timer_id => _ = app.update(.{ .tick = .tip }),
                 repeat_timer_id => _ = app.update(.{ .tick = .repeat }),
+                find_timer_id => _ = app.update(.{ .tick = .find }),
                 idle_timer_id => {
                     self.web.closeIdle(win32.GetTickCount64(), self.idleMs());
                     self.armIdle();

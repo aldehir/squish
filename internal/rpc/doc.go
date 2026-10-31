@@ -43,6 +43,8 @@ var MethodDocs = []MethodDoc{
 		"into tab along side, or a new tab of its own without tab; with at, beside pane at on side of it, taking half its space, in at's tab (its own, too). The result is the pane's new id, and its old ids keep finding it. With float (true or a table), the new tab floats as tab.float says: over the pane's tab (or what that one floats over) unless over names another"},
 	{PaneKill, "{id}", "{}", ""},
 	{PaneWrite, "{id, text}", "{}", "as typed; no newline is added, a \"\\r\" presses enter; not a browser's"},
+	{PaneFind, "{id, query, root?, limit?, refresh?}", "{root, pretty, reason?, items: [{path, dir, pos, insert}], total, matched, scanning, truncated, tool}",
+		"paths under the pane's shell's directory (the last it reported, if on this host) that fuzzy-match query, fd/fzf style: files and directories both, .gitignore honored where fd is installed, best first, limit (50) of them with the matched rune offsets; root narrows to a directory under it. The first call starts a scan and answers from what it has: scanning says to ask again. An empty root with reason no-pwd, other-host or gone is a pane with nothing to search"},
 	{PaneText, "{id, vt?: bool}", "{text}", "the screen and scrollback: plain, or the VT that redraws it; not a browser's"},
 	{PaneInfo, "{id}", "PaneDesc", "a moved pane is found under its old id and described under its current one"},
 	{PaneNavigate, "{pane, url}", "{}", "sends a browser pane to url: every window showing it follows (pane.url), and the last page's title is dropped (pane.title) until one reports the new one's"},

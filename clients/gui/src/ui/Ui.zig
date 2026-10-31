@@ -658,6 +658,9 @@ pub const Fonts = struct {
             .tip_strong => .{ .weight = .SEMI_BOLD, .size = 12 },
             // Numbers that change in place, like the stats.
             .mono => .{ .mono = true, .size = 10.5 },
+            // The file picker's paths, and the part of them matched.
+            .path => .{ .mono = true, .size = 12.5 },
+            .path_strong => .{ .mono = true, .weight = .SEMI_BOLD, .size = 12.5 },
             // A dialog's title.
             .heading => .{ .weight = .SEMI_BOLD, .size = 15 },
             // Paragraphs, wrapped, from the top.

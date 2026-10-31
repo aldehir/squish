@@ -805,6 +805,14 @@ pub fn daemonPane(self: *const Session) ?Daemon.PaneRef {
     };
 }
 
+/// The connection the session's pane is on, if it's a daemon's.
+pub fn daemonConn(self: *const Session) ?*Daemon {
+    return switch (self.transport orelse return null) {
+        .daemon => |s| s.conn,
+        .waiting => null,
+    };
+}
+
 /// The SSH host the session's pane runs on, if it's remote, as the
 /// sidebar remembers it: its daemon's host, or the one it waits on.
 pub fn hostDest(self: *const Session) ?[]const u16 {
@@ -1329,6 +1337,15 @@ pub fn charInput(self: *Session, unit: u16) void {
     const len = std.unicode.utf16LeToUtf8(&utf8, pair) catch return;
     self.env.input();
     self.send(.{ .text = utf8[0..len] });
+}
+
+/// Type `text` into the pane as an IME commit arrives: the file
+/// picker's choice. Not a paste, so a shell that brackets pastes doesn't
+/// mark it as one.
+pub fn typeText(self: *Session, text: []const u8) void {
+    if (self.term() == null) return;
+    self.env.input();
+    self.send(.{ .text = text });
 }
 
 /// Tell slime about a focus change, which it reports to a program that

@@ -89,6 +89,7 @@ const (
 	TabFloat        = "tab.float"
 	TabDock         = "tab.dock"
 	PaneSplit       = "pane.split"
+	PaneFind        = "pane.find"
 	PaneMove        = "pane.move"
 	PaneKill        = "pane.kill"
 	PaneWrite       = "pane.write"
@@ -836,6 +837,52 @@ type PaneParams struct {
 type PaneWriteParams struct {
 	ID   PaneID `json:"id"`
 	Text string `json:"text"`
+}
+
+// PaneFindParams asks for the paths under the pane's shell's directory
+// that fuzzy-match Query (fd and fzf style: files and directories both,
+// best first), Limit of them (50; at most 200). Root narrows the search
+// to a directory under it (relative, no ".."); Refresh drops the cached
+// scan first.
+type PaneFindParams struct {
+	ID      PaneID `json:"id"`
+	Query   string `json:"query"`
+	Root    string `json:"root,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	Refresh bool   `json:"refresh,omitempty"`
+}
+
+// PaneFindResult is the directory searched, as the host spells it
+// (C:\Users\..., /home/...) and home-relative (~/dev/slime), and the
+// items that match. An empty Root with Reason set is a pane with
+// nothing to search: no-pwd (its shell reported no directory),
+// other-host (it reported another host's), or gone (the directory, or
+// the shell, is). Total is how many entries the scan has found so far,
+// Matched how many the query matches, Scanning whether the scan is
+// still running (ask again for more), Truncated whether it stopped at
+// its budget, and Tool which scanner ran: fd, or slime's own walk.
+type PaneFindResult struct {
+	Root      string     `json:"root"`
+	Pretty    string     `json:"pretty"`
+	Reason    string     `json:"reason,omitempty"`
+	Items     []FindItem `json:"items"`
+	Total     int        `json:"total"`
+	Matched   int        `json:"matched"`
+	Scanning  bool       `json:"scanning"`
+	Truncated bool       `json:"truncated"`
+	Tool      string     `json:"tool"`
+}
+
+// FindItem is one match: Path relative to the root searched, with
+// forward slashes and no trailing slash; Pos the rune offsets into it
+// the query matched, ascending; and Insert what typing it into the
+// shell takes: the path relative to the pane's directory (not Root),
+// quoted for the pane's shell when it needs it.
+type FindItem struct {
+	Path   string `json:"path"`
+	Dir    bool   `json:"dir"`
+	Pos    []int  `json:"pos"`
+	Insert string `json:"insert"`
 }
 
 // PaneTextParams asks for the text of a pane's screen and scrollback

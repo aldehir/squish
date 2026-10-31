@@ -1,17 +1,21 @@
 //! The command palette: a query, the entries it's over (every tab,
 //! every hidden workspace, the window's commands, and init.lua's
-//! actions; or, in the host step, the hosts to connect to), and the
-//! results, the entries the query matches, best first, with the units
-//! it matched marked for drawing. The app fills the entries whenever
-//! the tree is built (`App.rebuildPalette`), copying their text in
-//! here, so what's listed never points at a tab or workspace that has
-//! since gone, and moves the focus with the keyboard;
-//! `widgets/PaletteView.zig` lays it out and draws it.
+//! actions; or, in the host step, the hosts to connect to; or, in the
+//! file step, the paths the daemon found), and the results, the entries
+//! the query matches, best first, with the units it matched marked for
+//! drawing. The app fills the entries whenever the tree is built
+//! (`App.rebuildPalette`), copying their text in here, so what's listed
+//! never points at a tab or workspace that has since gone, and moves
+//! the focus with the keyboard; `widgets/PaletteView.zig` lays it out
+//! and draws it. The file step's entries come ranked and marked by the
+//! daemon (`pane.find`), so they keep their order; its box sits at the
+//! pane's cursor (`anchor`) rather than under the title bar.
 const Palette = @This();
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Painter = @import("../renderer/Painter.zig");
+const Rect = Painter.Rect;
 const Id = @import("Id.zig");
 const TextField = @import("TextField.zig");
 const binding = @import("../binding.zig");
@@ -30,10 +34,13 @@ pub const Step = enum {
     host,
     /// "Float tab…": the tabs that can float over the one shown.
     float_tab,
+    /// The file picker (ctrl+i): paths under the focused pane's shell's
+    /// directory, ranked by the daemon, at the pane's cursor.
+    file,
 };
 
 /// Listed in this order, under a caption each, while the query is empty.
-pub const Section = enum { tab, workspace, command, host };
+pub const Section = enum { tab, workspace, command, host, file };
 
 pub fn caption(s: Section) []const u16 {
     return switch (s) {
@@ -41,8 +48,40 @@ pub fn caption(s: Section) []const u16 {
         .workspace => L("Workspaces"),
         .command => L("Commands"),
         .host => L("Hosts"),
+        .file => L("Files"),
     };
 }
+
+/// Where the file step's box goes: at the cursor of the pane it's
+/// about. Taken once when the step opens; the shell redrawing its
+/// prompt doesn't move the box.
+pub const Anchor = struct {
+    /// The pane's terminal rect, which the box stays inside.
+    pane: Rect,
+    /// The cursor's cell, in window pixels.
+    cell: Rect,
+};
+
+/// What the daemon said of the file step's last search, for the chip,
+/// the footer, and the empty states.
+pub const FileStatus = struct {
+    /// The directory searched, under the pane's own: relative, with a
+    /// trailing slash ("internal/vt/"), and empty at the pane's own,
+    /// which the prompt already names. Arena-owned.
+    root: []const u16 = &.{},
+    /// Why there's nothing to search, if so.
+    reason: ?Reason = null,
+    /// Entries the scan has found, how many match, whether it's still
+    /// going, whether it stopped at its budget, and what scanned.
+    total: u32 = 0,
+    matched: u32 = 0,
+    scanning: bool = false,
+    truncated: bool = false,
+    tool: Tool = .fd,
+
+    pub const Reason = enum { no_pwd, other_host, gone };
+    pub const Tool = enum { fd, walk };
+};
 
 /// What choosing an entry does.
 pub const Action = union(enum) {
@@ -72,6 +111,9 @@ pub const Action = union(enum) {
     reload_config,
     /// Run one of init.lua's actions by name, in the daemon.
     invoke: []const u8,
+    /// Type this into the pane the file step is about: a path, quoted
+    /// for its shell by the daemon. Owned by the arena.
+    insert: []const u8,
 };
 
 pub const Entry = struct {
@@ -84,6 +126,12 @@ pub const Entry = struct {
     action: Action,
     /// Listed whatever the query, unmarked: "Connect to <what's typed>".
     always: bool = false,
+    /// Marked by whoever ranked the entries (the daemon, in the file
+    /// step): `endRebuild` keeps the entries' order and these marks on
+    /// the label instead of matching the query itself.
+    marked: ?Hits = null,
+    /// A directory, in the file step: Tab makes it the root.
+    dir: bool = false,
 };
 
 pub const Hits = std.StaticBitSet(max_text);
@@ -111,6 +159,11 @@ scroll: usize = 0,
 matched: [max_query]u16 = undefined,
 matched_len: usize = 0,
 matched_step: Step = .commands,
+/// The file step's box goes at the cursor; null is the centered box.
+anchor: ?Anchor = null,
+/// What the daemon last said of the file step's search; null before it
+/// has answered. Its text is in the arena.
+file: ?FileStatus = null,
 
 pub fn init(gpa: Allocator) Palette {
     return .{ .arena = .init(gpa) };
@@ -137,26 +190,41 @@ pub fn add(self: *Palette, e: Entry) Allocator.Error!void {
     copy.right = try a.dupe(u16, e.right);
     switch (e.action) {
         .invoke => |name| copy.action = .{ .invoke = try a.dupe(u8, name) },
+        .insert => |text| copy.action = .{ .insert = try a.dupe(u8, text) },
         else => {},
     }
     try self.entries.append(a, copy);
 }
 
+/// Keep `status` for the file step, its text copied.
+pub fn setFile(self: *Palette, status: FileStatus) Allocator.Error!void {
+    var copy = status;
+    copy.root = try self.arena.allocator().dupe(u16, status.root);
+    self.file = copy;
+}
+
 /// Match the query against the entries: the results, best first; with
-/// no query, every entry in its order. A query other than the last
-/// one's puts the focus at the top.
+/// no query, every entry in its order. Entries that came marked keep
+/// their order and marks whatever the query. A query other than the
+/// last one's puts the focus at the top.
 pub fn endRebuild(self: *Palette) Allocator.Error!void {
     const a = self.arena.allocator();
     const query = self.queryText();
+    var ranked = false;
     for (self.entries.items, 0..) |e, i| {
         if (e.always) {
             try self.results.append(a, .{ .entry = i, .score = std.math.maxInt(i32) });
+            continue;
+        }
+        if (e.marked) |hits| {
+            try self.results.append(a, .{ .entry = i, .score = 0, .label_hits = hits });
             continue;
         }
         if (query.len == 0) {
             try self.results.append(a, .{ .entry = i, .score = 0 });
             continue;
         }
+        ranked = true;
         const label = match(e.label, query);
         const detail = match(e.detail, query);
         if (label == null and detail == null) continue;
@@ -172,7 +240,7 @@ pub fn endRebuild(self: *Palette) Allocator.Error!void {
         }
         try self.results.append(a, r);
     }
-    if (query.len > 0) std.sort.insertion(Result, self.results.items, {}, better);
+    if (ranked) std.sort.insertion(Result, self.results.items, {}, better);
     const changed = self.step != self.matched_step or !std.mem.eql(u16, query, self.matched[0..self.matched_len]);
     if (changed) {
         @memcpy(self.matched[0..query.len], query);
@@ -253,12 +321,16 @@ pub fn scrollBy(self: *Palette, delta: isize, rows: usize) void {
 }
 
 /// Go on to the host step, or back to the commands: the query starts
-/// over.
+/// over, and the file step's state goes.
 pub fn setStep(self: *Palette, step: Step) void {
     self.step = step;
     self.query = .{};
     self.focus = 0;
     self.scroll = 0;
+    if (step != .file) {
+        self.anchor = null;
+        self.file = null;
+    }
 }
 
 /// Whether the query matches `text`: every unit of the query in order,
@@ -414,6 +486,31 @@ test "an entry marked always is listed first whatever the query" {
     // Back to the commands, the query starts over.
     p.setStep(.commands);
     try std.testing.expectEqual(@as(usize, 0), p.query.len);
+}
+
+test "entries that come marked keep their order and marks whatever the query" {
+    var p: Palette = .init(std.testing.allocator);
+    defer p.deinit();
+    p.setStep(.file);
+    p.query.insert(L("zzz"));
+    var hits: Hits = .empty;
+    hits.set(0);
+    hits.set(9);
+    p.beginRebuild();
+    try p.add(.{ .label = L("internal/vt/frame.zig"), .icon = .file, .section = .file, .action = .{ .insert = "internal/vt/frame.zig" }, .marked = hits });
+    try p.add(.{ .label = L("internal/vt/frames"), .icon = .folder, .section = .file, .action = .{ .insert = "internal/vt/frames" }, .marked = .empty, .dir = true });
+    try p.setFile(.{ .root = L("internal/"), .total = 2, .matched = 2 });
+    try p.endRebuild();
+    // The query matches neither label, yet both are listed, in order.
+    try std.testing.expectEqual(@as(usize, 2), p.count());
+    try std.testing.expectEqualStrings("internal/vt/frame.zig", p.entryOf(0).?.action.insert);
+    try std.testing.expect(p.results.items[0].label_hits.isSet(0) and p.results.items[0].label_hits.isSet(9));
+    try std.testing.expectEqual(@as(usize, 2), p.results.items[0].label_hits.count());
+    try std.testing.expect(p.entryOf(1).?.dir);
+    try std.testing.expectEqualSlices(u16, L("internal/"), p.file.?.root);
+    // Leaving the step drops its state.
+    p.setStep(.commands);
+    try std.testing.expect(p.file == null and p.anchor == null);
 }
 
 test "the scroll keeps the focus in view" {

@@ -61,7 +61,7 @@ pub const Size = struct { w: ?f32 = null, h: ?f32 = null };
 pub const Insets = struct { left: f32 = 0, right: f32 = 0, top: f32 = 0, bottom: f32 = 0 };
 
 /// A text format of the UI's (`Ui.Fonts`).
-pub const Font = enum { body, body_strong, title, section, hint, tip, tip_strong, mono, heading, prose, mono_prose, button, button_strong };
+pub const Font = enum { body, body_strong, title, section, hint, tip, tip_strong, mono, heading, prose, mono_prose, button, button_strong, path, path_strong };
 
 pub const Kind = union(enum) {
     /// Children top to bottom; those with no height share what's left.

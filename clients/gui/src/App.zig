@@ -206,6 +206,8 @@ float_drag: ?FloatDrag = null,
 /// The sidebar's edge being dragged, which has the mouse until the
 /// button's up.
 sidebar_drag: ?SidebarDrag = null,
+/// The file picker's search, while the palette is in its file step.
+find: ?Find = null,
 /// The palette's scrollbar thumb being dragged, likewise; and the
 /// sidebar's.
 palette_scroll: ?ThumbDrag = null,
@@ -256,6 +258,44 @@ pub const Rename = struct {
     ws: u32,
     field: TextField,
 };
+
+/// The file step's live state: one `pane.find` round trip at a time,
+/// the reply shown, and what the next call asks.
+const Find = struct {
+    /// The pane searched, and its connection (the host's for a remote
+    /// pane), so a focus change doesn't move the search.
+    pane: Daemon.PaneRef,
+    conn: *Daemon,
+    /// Sequence of the last call sent and of the reply shown; a reply
+    /// older than the one shown is dropped.
+    sent: u32 = 0,
+    shown: u32 = 0,
+    /// A call is in flight: the next change waits for its reply, which
+    /// is the only flow control (one round trip at a time, however
+    /// slow the host).
+    in_flight: bool = false,
+    /// The query the last call asked, to send another when it changes.
+    sent_query: [Palette.max_query]u16 = undefined,
+    sent_len: usize = 0,
+    /// The root or the refresh changed since the last call; `poll` asks
+    /// again regardless, the scan being still under way.
+    dirty: bool = true,
+    poll: bool = false,
+    refresh: bool = false,
+    /// The directory searched under the pane's, relative; "" for the
+    /// pane's own.
+    root: std.ArrayList(u8) = .empty,
+    /// The last reply, owned; the palette's entries copy from it.
+    reply: ?Daemon.FindReply = null,
+
+    fn deinit(self: *Find, alloc: Allocator) void {
+        self.root.deinit(alloc);
+        if (self.reply) |*r| r.deinit();
+    }
+};
+
+/// How soon the picker asks again while the daemon's scan is running.
+const find_poll_ms = 60;
 
 /// A scrollbar's thumb being dragged.
 const ThumbDrag = struct {
@@ -544,6 +584,8 @@ pub const Timer = enum {
     /// Ends a repeatable key binding's repeat (`repeat_ms` after its
     /// last press).
     repeat,
+    /// Asks the file picker's daemon again while its scan runs.
+    find,
 };
 
 /// How long a repeatable binding's prefix stays pressed after it runs,
@@ -889,6 +931,7 @@ pub fn deinit(self: *App) void {
         .palette => |*p| p.deinit(),
         else => {},
     }
+    if (self.find) |*f| f.deinit(self.alloc);
     Daemon.freeActions(self.alloc, self.actions);
     Daemon.freeWorkspaceDefs(self.alloc, self.workspace_defs);
     self.alloc.free(self.copy_keys);
@@ -986,6 +1029,10 @@ pub fn update(self: *App, msg: Msg) Result {
                 // Another key may have ended the repeat and started a
                 // sequence since, which stays.
                 if (self.keymap.isRepeating()) self.keymap.cancel();
+            },
+            .find => {
+                self.shell.killTimer(.find);
+                self.pollFind();
             },
         },
         .output => self.outputArrived(),
@@ -2442,6 +2489,7 @@ fn daemonPosted(self: *App) void {
         self.workspacesChanged(conn);
         self.daemonChanged(conn);
         self.hostsChanged(conn);
+        self.findsChanged(conn);
         self.openWorkspaces(conn);
         self.performClientActions(conn);
         if (conn.isLost()) self.dropWorkspacesOf(conn);
@@ -2454,6 +2502,7 @@ fn daemonPosted(self: *App) void {
             .attached => {
                 self.workspacesChanged(conn);
                 self.remoteChanged(&self.remotes.items[i]);
+                self.findsChanged(conn);
                 self.openWorkspaces(conn);
                 self.performClientActions(conn);
                 if (conn.isLost()) self.dropWorkspacesOf(conn);
@@ -3545,6 +3594,7 @@ fn runAction(self: *App, action: binding.Action) bool {
             return true;
         },
         .toggle_command_palette => return self.togglePalette(),
+        .pick_file => return self.pickFile(),
         else => {},
     }
     const s = self.focusedSession() orelse switch (action) {
@@ -3616,7 +3666,7 @@ fn runAction(self: *App, action: binding.Action) bool {
         .dock_float => if (self.activeTab().float != null) self.dockFloat(self.activeTab()) else return false,
         .toggle_floats => self.toggleFloats(),
         .focus_float => self.focusFloat(),
-        .lua, .invoke, .toggle_command_palette => unreachable,
+        .lua, .invoke, .toggle_command_palette, .pick_file => unreachable,
     }
     return true;
 }
@@ -3905,6 +3955,11 @@ pub fn closePalette(self: *App) void {
         .palette => |*p| p.deinit(),
         else => return,
     }
+    if (self.find) |*f| {
+        f.deinit(self.alloc);
+        self.find = null;
+        self.shell.killTimer(.find);
+    }
     if (self.palette_scroll != null) self.endPaletteScroll();
     self.mode = .terminal;
     _ = self.ui.setHover(.none);
@@ -3913,7 +3968,9 @@ pub fn closePalette(self: *App) void {
 }
 
 /// A key down for the command palette. Returns false for keys it
-/// doesn't take, which go on to the bindings.
+/// doesn't take, which go on to the bindings. In the file step, Tab
+/// enters the directory focused, Backspace on an empty query leaves
+/// one, and ctrl+r scans again.
 fn paletteKey(self: *App, p: *Palette, vk: u32) bool {
     const ctrl = self.shell.keyDown(win32.VK_CONTROL);
     switch (vk) {
@@ -3928,12 +3985,16 @@ fn paletteKey(self: *App, p: *Palette, vk: u32) bool {
             self.keyHandled();
             return true;
         },
-        // In the host step, back to the commands.
+        // In the host step, back to the commands; the file step opened
+        // on its own, so it closes.
         win32.VK_ESCAPE => {
-            if (p.step != .commands) p.setStep(.commands) else self.closePalette();
+            if (p.step != .commands and p.step != .file) p.setStep(.commands) else self.closePalette();
             self.keyHandled();
             return true;
         },
+        win32.VK_TAB => if (p.step == .file) self.descendFind(p) else return false,
+        win32.VK_BACK => if (p.step == .file and p.query.len == 0) self.ascendFind(p) else if (!self.editKey(&p.query, vk, true)) return false,
+        'R' => if (p.step == .file and ctrl) self.refreshFind() else if (!self.editKey(&p.query, vk, true)) return false,
         else => if (!self.editKey(&p.query, vk, true)) return false,
     }
     self.paletteScrolled();
@@ -4248,6 +4309,17 @@ fn choosePalette(self: *App, i: usize) void {
             self.closePalette();
             return;
         },
+        // The path lives in the palette too: copy it out, then type it
+        // into the pane the picker was opened on.
+        .insert => |text| {
+            var buf: [TextField.max_len]u8 = undefined;
+            const len = @min(text.len, buf.len);
+            @memcpy(buf[0..len], text[0..len]);
+            const target = if (self.find) |f| self.daemonSession(f.conn, f.pane) else null;
+            self.closePalette();
+            if (target) |s| s.typeText(buf[0..len]);
+            return;
+        },
         else => {},
     }
     const action = e.action;
@@ -4266,7 +4338,7 @@ fn choosePalette(self: *App, i: usize) void {
         .host => |h| self.openOnHost(h) catch |err| log.err("connect failed: {}", .{err}),
         .toggle_stats => self.shell.toggleStats(),
         .reload_config => if (self.daemon) |conn| conn.reloadConfig() catch |err| log.err("reloading the config failed: {}", .{err}),
-        .connect, .typed_host, .invoke => unreachable,
+        .connect, .typed_host, .invoke, .insert => unreachable,
     }
 }
 
@@ -4281,8 +4353,195 @@ fn rebuildPalette(self: *App) Allocator.Error!void {
         .commands => try self.paletteCommands(p),
         .host => try self.paletteHosts(p),
         .float_tab => try self.paletteFloatTabs(p),
+        .file => try self.paletteFiles(p),
     }
     try p.endRebuild();
+}
+
+/// The file step: the paths the daemon last sent, marked as it ranked
+/// them, and what it said of the search; then the next call, if the
+/// query has changed since the last.
+fn paletteFiles(self: *App, p: *Palette) Allocator.Error!void {
+    const f = if (self.find) |*f| f else return;
+    defer self.syncFind();
+    const reply = if (f.reply) |*r| r else return;
+    if (reply.failed) return p.setFile(.{ .reason = .gone });
+    const v = reply.value;
+    // The chip follows the root asked for, ahead of its reply.
+    var root: [Palette.max_text]u16 = undefined;
+    var root_len = utf16Into(&root, f.root.items);
+    if (root_len > 0 and root_len < root.len) {
+        root[root_len] = '/';
+        root_len += 1;
+    }
+    try p.setFile(.{
+        .root = root[0..root_len],
+        .reason = if (v.reason.len == 0) null else if (std.mem.eql(u8, v.reason, "no-pwd")) .no_pwd else if (std.mem.eql(u8, v.reason, "other-host")) .other_host else .gone,
+        .total = v.total,
+        .matched = v.matched,
+        .scanning = v.scanning,
+        .truncated = v.truncated,
+        .tool = if (std.mem.eql(u8, v.tool, "walk")) .walk else .fd,
+    });
+    var buf: [Palette.max_text]u16 = undefined;
+    for (v.items) |item| {
+        var hits: Palette.Hits = .empty;
+        for (item.pos orelse &.{}) |i| if (i < Palette.max_text) hits.set(i);
+        try p.add(.{
+            .label = buf[0..utf16Into(&buf, item.path)],
+            .icon = if (item.dir) .folder else .file,
+            .section = .file,
+            .action = .{ .insert = item.insert },
+            .marked = hits,
+            .dir = item.dir,
+        });
+    }
+}
+
+/// `utf8` as UTF-16 in `buf`, as much as fits whole: the units written.
+fn utf16Into(buf: []u16, utf8: []const u8) usize {
+    var end = @min(utf8.len, buf.len);
+    // Not in the middle of a sequence: its units could outnumber the room.
+    while (end > 0 and end < utf8.len and utf8[end] & 0xC0 == 0x80) end -= 1;
+    return std.unicode.utf8ToUtf16Le(buf, utf8[0..end]) catch 0;
+}
+
+/// Open the file picker (ctrl+i): the palette's file step over the
+/// focused pane's shell's directory, at its cursor. False without a
+/// terminal pane of slime's focused.
+fn pickFile(self: *App) bool {
+    const s = self.focusedSession() orelse return false;
+    if (s.content != .terminal) return false;
+    const pane = s.daemonPane() orelse return false;
+    const conn = s.daemonConn() orelse return false;
+    self.openPalette();
+    if (self.mode != .palette) return false;
+    const p = &self.mode.palette;
+    p.setStep(.file);
+    p.anchor = self.cursorAnchor(s);
+    if (self.find) |*f| f.deinit(self.alloc);
+    self.find = .{ .pane = pane, .conn = conn };
+    self.syncFind();
+    self.resetBlink();
+    self.markDirty();
+    return true;
+}
+
+/// Where the file step's box goes: at `s`'s cursor, if it's on screen,
+/// from the pane's place and the cursor's cell.
+fn cursorAnchor(self: *App, s: *Session) ?Palette.Anchor {
+    const t = s.term() orelse return null;
+    const v = t.screen.cursor.viewport orelse return null;
+    for (self.placed().panes.items) |p| {
+        if (p.session != s) continue;
+        const cw: f32 = @floatFromInt(p.cell.width);
+        const ch: f32 = @floatFromInt(p.cell.height);
+        return .{
+            .pane = p.rect,
+            .cell = .{
+                .x = p.rect.x + @as(f32, @floatFromInt(p.pad.left)) + cw * @as(f32, @floatFromInt(v.x)),
+                .y = p.rect.y + @as(f32, @floatFromInt(p.pad.top)) + ch * @as(f32, @floatFromInt(v.y)),
+                .w = cw,
+                .h = ch,
+            },
+        };
+    }
+    return null;
+}
+
+/// Send the file step's next call, if none is in flight and something
+/// changed: the query, the root, a refresh asked, or the scan still
+/// going at the last reply.
+fn syncFind(self: *App) void {
+    const f = if (self.find) |*f| f else return;
+    if (self.mode != .palette or self.mode.palette.step != .file or f.in_flight) return;
+    const query = self.mode.palette.queryText();
+    const same = std.mem.eql(u16, query, f.sent_query[0..f.sent_len]);
+    if (same and !f.dirty and !f.poll) return;
+    if (f.conn.isLost()) return;
+    var buf: [Palette.max_query * 3]u8 = undefined;
+    const n = std.unicode.utf16LeToUtf8(&buf, query) catch 0;
+    f.sent +%= 1;
+    f.conn.paneFind(f.pane, f.sent, .{ .query = buf[0..n], .root = f.root.items, .refresh = f.refresh }) catch |err| {
+        log.warn("pane.find failed: {}", .{err});
+        return;
+    };
+    @memcpy(f.sent_query[0..query.len], query);
+    f.sent_len = query.len;
+    f.in_flight = true;
+    f.dirty = false;
+    f.poll = false;
+    f.refresh = false;
+}
+
+/// Take up `conn`'s pane.find replies: the latest for the picker's
+/// search replaces what's shown; then, with the scan still going, ask
+/// again shortly, and send any change that waited.
+fn findsChanged(self: *App, conn: *Daemon) void {
+    const replies = conn.takeFinds();
+    defer self.alloc.free(replies);
+    var shown = false;
+    for (replies) |*r| {
+        const f = if (self.find) |*f| f else {
+            r.deinit();
+            continue;
+        };
+        if (f.conn != conn or r.seq < f.shown or r.seq > f.sent) {
+            r.deinit();
+            continue;
+        }
+        if (r.seq == f.sent) f.in_flight = false;
+        if (f.reply) |*old| old.deinit();
+        f.reply = r.*;
+        f.shown = r.seq;
+        shown = true;
+    }
+    if (!shown) return;
+    const f = &self.find.?;
+    if (f.reply.?.value.scanning and !f.in_flight) self.shell.setTimer(.find, find_poll_ms);
+    self.syncFind();
+    self.markDirty();
+}
+
+/// The poll timer fired: ask again, for what the scan found since.
+fn pollFind(self: *App) void {
+    const f = if (self.find) |*f| f else return;
+    f.poll = true;
+    self.syncFind();
+}
+
+/// Tab in the file step: the directory focused becomes the root, and
+/// the query starts over. Nothing on a file.
+fn descendFind(self: *App, p: *Palette) void {
+    const f = if (self.find) |*f| f else return;
+    const e = p.focused() orelse return;
+    if (!e.dir) return;
+    var utf8: [Palette.max_text * 3]u8 = undefined;
+    const n = std.unicode.utf16LeToUtf8(&utf8, e.label) catch return;
+    if (f.root.items.len > 0) f.root.append(self.alloc, '/') catch return;
+    f.root.appendSlice(self.alloc, utf8[0..n]) catch return;
+    p.query = .{};
+    f.dirty = true;
+    self.syncFind();
+}
+
+/// Backspace on an empty query in the file step: up one directory, not
+/// above the pane's.
+fn ascendFind(self: *App, p: *Palette) void {
+    const f = if (self.find) |*f| f else return;
+    if (f.root.items.len == 0) return;
+    if (std.mem.lastIndexOfScalar(u8, f.root.items, '/')) |i| f.root.shrinkRetainingCapacity(i) else f.root.clearRetainingCapacity();
+    p.query = .{};
+    f.dirty = true;
+    self.syncFind();
+}
+
+/// ctrl+r in the file step: the daemon scans the directory again.
+fn refreshFind(self: *App) void {
+    const f = if (self.find) |*f| f else return;
+    f.refresh = true;
+    f.dirty = true;
+    self.syncFind();
 }
 
 fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
@@ -4323,6 +4582,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = L("Equalize splits"), .icon = .columns_2, .action = .equalize_splits },
         .{ .label = L("Search"), .icon = .search, .action = .start_search },
         .{ .label = L("Copy mode"), .icon = .copy, .action = .copy_mode },
+        .{ .label = L("Pick a file…"), .icon = .file, .action = .pick_file },
         .{ .label = L("Next tab"), .icon = .arrow_right, .action = .next_tab },
         .{ .label = L("Previous tab"), .icon = .arrow_left, .action = .previous_tab },
         .{ .label = L("Float pane"), .icon = .app_window, .action = .float_pane },
@@ -6363,6 +6623,57 @@ test "ctrl+shift+p opens the command palette, which takes the keys until an entr
     try std.testing.expectEqual(Palette.Action.toggle_stats, app.mode.palette.focused().?.action);
     _ = app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = win32.VK_RETURN, .lparam = 0 } });
     try std.testing.expect(shell.stats_shown);
+}
+
+test "ctrl+i opens the file step at the pane's cursor, and Escape closes it" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    // The calls fail on the unconnected daemon, but their list is kept.
+    defer t.daemon.find_calls.deinit(std.testing.allocator);
+    defer t.deinit();
+    const app = &t.app;
+    const panes = try t.twoPanes();
+    // A pane slime doesn't run has no directory to search: nothing opens.
+    shell.held = .{ .ctrl = true };
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'I', .lparam = 0 } }));
+    shell.held = .{};
+    try std.testing.expect(app.mode == .terminal);
+    // Slime's pane, its cursor at column 3 of row 2: the box goes there.
+    const b = panes[1];
+    b.transport = .{ .daemon = .{ .conn = &t.daemon, .pane = .{ .ws = 1, .tab = 1, .n = 2 } } };
+    b.term().?.screen.cursor.viewport = .{ .x = 3, .y = 2, .wide_tail = false };
+    shell.held = .{ .ctrl = true };
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'I', .lparam = 0 } }));
+    shell.held = .{};
+    try std.testing.expect(app.mode == .palette);
+    try std.testing.expectEqual(Palette.Step.file, app.mode.palette.step);
+    try std.testing.expect(app.find != null);
+    try std.testing.expectEqual(b.daemonPane().?, app.find.?.pane);
+    const pl = for (app.placed().panes.items) |p| {
+        if (p.session == b) break p;
+    } else return error.TestUnexpectedResult;
+    const anchor = app.mode.palette.anchor.?;
+    try std.testing.expectEqual(pl.rect, anchor.pane);
+    try std.testing.expectEqual(pl.rect.x + @as(f32, @floatFromInt(pl.pad.left + 3 * pl.cell.width)), anchor.cell.x);
+    try std.testing.expectEqual(pl.rect.y + @as(f32, @floatFromInt(pl.pad.top + 2 * pl.cell.height)), anchor.cell.y);
+    // No reply yet: no rows, no captions, and the text goes to the query.
+    _ = app.view();
+    try std.testing.expectEqual(@as(usize, 0), app.mode.palette.count());
+    for ("vt") |c| _ = app.update(.{ .char = .{ .unit = c, .sys = false } });
+    try std.testing.expectEqualSlices(u16, L("vt"), app.mode.palette.query.text());
+    // Tab with nothing focused does nothing; Escape closes rather than
+    // going back to the commands.
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = win32.VK_TAB, .lparam = 0 } }));
+    try std.testing.expect(app.mode == .palette);
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = win32.VK_ESCAPE, .lparam = 0 } }));
+    try std.testing.expect(app.mode == .terminal);
+    try std.testing.expect(app.find == null);
+    // Off the viewport, the box falls back to the centered one.
+    b.term().?.screen.cursor.viewport = null;
+    try std.testing.expect(app.pickFile());
+    try std.testing.expect(app.mode.palette.anchor == null);
+    app.closePalette();
 }
 
 test "the palette's host step lists the hosts and what's typed, and Escape goes back" {

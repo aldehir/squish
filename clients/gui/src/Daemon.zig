@@ -120,8 +120,9 @@ frame_interval: u32 = 0,
 posting: std.atomic.Value(bool) = .init(false),
 
 /// Guards `panes`, `arrivals`, `structures`, `attached`, `focus_calls`,
-/// `attach_calls`, `host_events`, `workspace_events`, and `lost`, and is
-/// held while calling a sink, so a session can't go while one runs.
+/// `attach_calls`, `host_events`, `workspace_events`, `find_calls`,
+/// `find_events`, and `lost`, and is held while calling a sink, so a
+/// session can't go while one runs.
 lock: win32.SRWLOCK = .{},
 panes: std.AutoHashMapUnmanaged(PaneRef, Slot) = .empty,
 arrivals: std.ArrayList(Arrival) = .empty,
@@ -156,6 +157,11 @@ focus_calls: std.ArrayList(u32) = .empty,
 attach_calls: std.ArrayList(AttachCall) = .empty,
 /// Ids of our `hostList` calls, whose replies become `hosts` events.
 host_lists: std.ArrayList(u32) = .empty,
+/// Our `paneFind` calls not yet replied to, each with the sequence the
+/// app gave it, and their replies until the UI thread takes them
+/// (`takeFinds`).
+find_calls: std.ArrayList(FindCall) = .empty,
+find_events: std.ArrayList(FindReply) = .empty,
 /// The config init.lua last loaded as (`config.changed`), until the UI
 /// thread takes it (`takeConfig`); only the latest matters.
 config_update: ?ConfigUpdate = null,
@@ -163,6 +169,31 @@ config_update: ?ConfigUpdate = null,
 lost: bool = false,
 /// `deinit` is hanging up, so the reader's end isn't a loss.
 closing: std.atomic.Value(bool) = .init(false),
+
+const FindCall = struct { id: u32, seq: u32 };
+
+/// What `paneFind` asks: rpc.PaneFindParams but the pane.
+pub const FindParams = struct {
+    query: []const u8,
+    /// A directory under the pane's, relative; "" for the pane's.
+    root: []const u8 = "",
+    limit: u32 = 50,
+    refresh: bool = false,
+};
+
+/// A `pane.find` reply (rpc.PaneFindResult), parsed into an arena of
+/// its own, tagged with its call's `seq`; `failed` when the daemon
+/// refused the call, and `value` is then empty.
+pub const FindReply = struct {
+    arena: std.heap.ArenaAllocator,
+    seq: u32,
+    value: Json.FindResult,
+    failed: bool = false,
+
+    pub fn deinit(self: *FindReply) void {
+        self.arena.deinit();
+    }
+};
 
 /// A window message posted from the reader thread when panes arrive, and
 /// when a host's slime has attached or failed to.
@@ -917,6 +948,19 @@ pub const Json = struct {
     };
     const Question = struct { label: []const u8 = "", echo: bool = false };
     const HostList = struct { hosts: []const Host = &.{} };
+    /// rpc.PaneFindResult and rpc.FindItem.
+    pub const FindResult = struct {
+        root: []const u8 = "",
+        pretty: []const u8 = "",
+        reason: []const u8 = "",
+        items: []const FindItem = &.{},
+        total: u32 = 0,
+        matched: u32 = 0,
+        scanning: bool = false,
+        truncated: bool = false,
+        tool: []const u8 = "",
+    };
+    pub const FindItem = struct { path: []const u8 = "", dir: bool = false, pos: ?[]const u32 = null, insert: []const u8 = "" };
     const WorkspaceList = struct { workspaces: []const WorkspaceDesc = &.{} };
     /// rpc.ConfigDesc: `settings` is slime.config's table.
     pub const Config = struct { path: []const u8 = "", settings: std.json.Value = .null, keymap: []const Binding = &.{}, actions: []const ActionDesc = &.{}, workspaces: []const WorkspaceDef = &.{}, copy_keys: []const u8 = "", errors: []const []const u8 = &.{} };
@@ -1444,6 +1488,9 @@ fn freeState(self: *Daemon) void {
     self.focus_calls.deinit(self.alloc);
     self.attach_calls.deinit(self.alloc);
     self.host_lists.deinit(self.alloc);
+    self.find_calls.deinit(self.alloc);
+    for (self.find_events.items) |*r| r.deinit();
+    self.find_events.deinit(self.alloc);
     self.opens.deinit(self.alloc);
     for (self.client_actions.items) |*a| a.deinit(self.alloc);
     self.client_actions.deinit(self.alloc);
@@ -1515,6 +1562,46 @@ pub fn hostList(self: *Daemon) void {
     win32.AcquireSRWLockExclusive(&self.lock);
     defer win32.ReleaseSRWLockExclusive(&self.lock);
     self.host_lists.append(self.alloc, id) catch {};
+}
+
+/// Ask for the paths under `pane`'s shell's directory that match
+/// `params.query`, ranked and marked by the daemon; the reply comes as a
+/// `FindReply` tagged `seq` (`takeFinds`). The call is recorded before
+/// it goes out, so its reply can't slip by. UI thread.
+pub fn paneFind(self: *Daemon, pane: PaneRef, seq: u32, params: FindParams) !void {
+    const id = self.nextId();
+    const body = try encodeCall(self.alloc, id, "pane.find", .{
+        .id = pane,
+        .query = params.query,
+        .root = params.root,
+        .limit = params.limit,
+        .refresh = params.refresh,
+    });
+    defer self.alloc.free(body);
+    {
+        win32.AcquireSRWLockExclusive(&self.lock);
+        defer win32.ReleaseSRWLockExclusive(&self.lock);
+        try self.find_calls.append(self.alloc, .{ .id = id, .seq = seq });
+    }
+    self.send(.call, .none, body) catch |err| {
+        win32.AcquireSRWLockExclusive(&self.lock);
+        defer win32.ReleaseSRWLockExclusive(&self.lock);
+        for (self.find_calls.items, 0..) |c, i| {
+            if (c.id != id) continue;
+            _ = self.find_calls.swapRemove(i);
+            break;
+        }
+        return err;
+    };
+}
+
+/// Take the `paneFind` replies since the last look, in order. The
+/// caller owns them (`FindReply.deinit` each, then free the slice). UI
+/// thread.
+pub fn takeFinds(self: *Daemon) []FindReply {
+    win32.AcquireSRWLockExclusive(&self.lock);
+    defer win32.ReleaseSRWLockExclusive(&self.lock);
+    return self.find_events.toOwnedSlice(self.alloc) catch &.{};
 }
 
 /// Take what the daemon said about workspaces not attached here since the
@@ -2367,7 +2454,8 @@ fn notified(self: *Daemon, a: Allocator, method: []const u8, params: std.json.Va
 /// A reply came: if it answers a `focus` call, structures from now on
 /// carry its focus; if it answers an `attach` or `newWorkspace`, its
 /// result is the workspace's structure, or the failure is passed on; if
-/// it answers `hostList`, keep the hosts.
+/// it answers `hostList`, keep the hosts; if a `paneFind`, keep the
+/// paths for the UI thread.
 fn replied(self: *Daemon, env: Json.Envelope) void {
     const id = env.id orelse return;
     const attaching: ?AttachCall = attaching: {
@@ -2394,6 +2482,27 @@ fn replied(self: *Daemon, env: Json.Envelope) void {
     defer win32.ReleaseSRWLockExclusive(&self.lock);
     if (std.mem.indexOfScalar(u32, self.focus_calls.items, id)) |i| {
         _ = self.focus_calls.orderedRemove(i);
+        return;
+    }
+    for (self.find_calls.items, 0..) |c, i| {
+        if (c.id != id) continue;
+        _ = self.find_calls.swapRemove(i);
+        var reply: FindReply = .{ .arena = .init(self.alloc), .seq = c.seq, .value = .{} };
+        if (env.@"error" != null) {
+            reply.failed = true;
+        } else {
+            // Copied out of the envelope's arena, which goes with the frame.
+            reply.value = std.json.parseFromValueLeaky(Json.FindResult, reply.arena.allocator(), env.result, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| value: {
+                log.warn("bad pane.find reply from slime: {}", .{err});
+                reply.failed = true;
+                break :value .{};
+            };
+        }
+        self.find_events.append(self.alloc, reply) catch {
+            reply.deinit();
+            return;
+        };
+        if (self.posting.load(.acquire)) _ = win32.PostMessageW(self.notify.hwnd, self.notify.msg, 0, 0);
         return;
     }
     if (std.mem.indexOfScalar(u32, self.host_lists.items, id)) |i| {

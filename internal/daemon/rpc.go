@@ -78,6 +78,7 @@ var methods = map[string]handler{
 	rpc.TabFloat:        method((*Server).tabFloat),
 	rpc.TabDock:         method((*Server).tabDock),
 	rpc.PaneSplit:       method((*Server).paneSplit),
+	rpc.PaneFind:        method((*Server).paneFind),
 	rpc.PaneMove:        method((*Server).paneMove),
 	rpc.PaneKill:        method((*Server).paneKill),
 	rpc.PaneWrite:       method((*Server).paneWrite),

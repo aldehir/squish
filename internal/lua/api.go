@@ -176,7 +176,8 @@ which are for the top level only:
                              tabs' float_pane, float_tab (picks a tab in the
                              palette), dock_float, toggle_floats, and
                              focus_float, which have no keys by default,
-                             toggle_command_palette, start_search,
+                             toggle_command_palette, pick_file (a fuzzy path
+                             picker at the cursor, ctrl+i), start_search,
                              navigate_search {direction = "next"|"previous"},
                              end_search, copy_mode, copy_to_clipboard,
                              paste_from_clipboard,

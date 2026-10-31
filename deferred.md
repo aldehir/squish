@@ -45,6 +45,17 @@ is attached.
   Its own commands (show the stats, reload the
   config, connect to a host) aren't window actions, so init.lua can't
   bind keys to them.
+- **The file picker** (ctrl+i, `pane.find`, the palette's file step)
+  takes fzf's plain fuzzy terms, not its operators (`'exact`, `^prefix`,
+  `!not`); picks one path (Tab on a file does nothing; a multi-select
+  that inserts several is a follow-up); shows no preview; inserts no
+  trailing space; and follows the shell's directory only on the pane's
+  own host (a shell on a further ssh hop gets the no-directory state).
+  The scan reads `.gitignore` only where fd is installed; the walk
+  fallback skips dot-names and a short deny list. The box's anchor is
+  taken when it opens; a prompt redrawn under it doesn't move it. The
+  binding takes ctrl+i from programs that use the kitty keyboard
+  protocol (the legacy encoding sent it as Tab anyway).
 - **The chrome's colors** come from the configured background and
   foreground at startup. They don't follow a program's OSC 10/11, and
   switching between a light/dark theme pair waits on following the

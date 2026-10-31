@@ -49,6 +49,9 @@ pub const Action = union(enum) {
     focus_float,
     /// Open the command palette, or close it.
     toggle_command_palette,
+    /// Open the file picker at the focused pane's cursor: the palette's
+    /// file step, over the paths under its shell's directory.
+    pick_file,
     /// Open the search card on the focused pane (the search runs in the
     /// daemon: internal/vt/search.zig), step through its matches, or
     /// end it. Ghostty's names.
@@ -196,6 +199,9 @@ pub const defaults = [_]Binding{
     .{ .trigger = .{ .vk = win32.VK_RIGHT, .mods = ctrl_alt_shift }, .action = .{ .resize_split = .{ .direction = .right, .amount = 1 } }, .performable = true },
     .{ .trigger = .{ .vk = win32.VK_OEM_PLUS, .mods = ctrl_alt_shift }, .action = .equalize_splits, .performable = true },
     .{ .trigger = .{ .vk = 'P', .mods = ctrl_shift }, .action = .toggle_command_palette },
+    // A distinct key from Tab on Windows, though the legacy encoding
+    // sent both as 0x09.
+    .{ .trigger = .{ .vk = 'I', .mods = ctrl }, .action = .pick_file },
     .{ .trigger = .{ .vk = 'F', .mods = ctrl_shift }, .action = .start_search, .performable = true },
     // Windows Terminal's mark mode key.
     .{ .trigger = .{ .vk = 'M', .mods = ctrl_shift }, .action = .copy_mode, .performable = true },
@@ -414,6 +420,7 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .toggle_floats => .toggle_floats,
         .focus_float => .focus_float,
         .toggle_command_palette => .toggle_command_palette,
+        .pick_file => .pick_file,
         .start_search => .start_search,
         .end_search => .end_search,
         .navigate_search => .{ .navigate_search = argEnum(NavigateSearch, args, "direction", .next) },

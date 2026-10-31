@@ -76,6 +76,10 @@ type Server struct {
 	config       *config.Config
 	configErrors []string
 	watch        time.Duration
+
+	// The file picker's scans (find.go), by directory.
+	findMu sync.Mutex
+	finds  map[string]*findCache
 }
 
 // Options configure a Server.
@@ -464,6 +468,7 @@ func (s *Server) list() *rpc.WorkspaceListResult {
 // Close kills every terminal, at once: a holder's Close waits for its
 // child to go.
 func (s *Server) Close() {
+	s.closeFinds()
 	s.mu.Lock()
 	ps := make([]*Pane, 0, len(s.panes))
 	for _, p := range s.panes {

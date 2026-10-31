@@ -5,6 +5,7 @@ go 1.27.0
 require (
 	github.com/Microsoft/go-winio v0.6.4
 	github.com/creack/pty v1.1.24
+	github.com/junegunn/fzf v0.74.5
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/gopher-lua v1.1.1
 	golang.org/x/crypto v0.58.0
@@ -14,5 +15,8 @@ require (
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 )
