@@ -330,7 +330,7 @@ pub const HostInfo = struct {
             .host = h.id,
             .dest = dest,
             // A state this build doesn't know shows as unknown.
-            .state = std.meta.stringToEnum(HostStatus, h.state) orelse @enumFromInt(0xff),
+            .state = std.meta.stringToEnum(HostStatus, h.state) orelse @fromBackingInt(@intCast(0xff)),
             .text = text,
             .proxy = proxy,
         };
@@ -404,7 +404,7 @@ pub const Prompt = struct {
         self.arena = .init(gpa);
         errdefer self.arena.deinit();
         const a = self.arena.allocator();
-        self.kind = std.meta.stringToEnum(Kind, p.kind) orelse @enumFromInt(0xff);
+        self.kind = std.meta.stringToEnum(Kind, p.kind) orelse @fromBackingInt(@intCast(0xff));
         self.title = try toUtf16(a, p.title);
         self.text = try toUtf16(a, p.text);
         self.detail = try toUtf16(a, p.detail);
@@ -944,7 +944,7 @@ const Pending = struct {
 
     fn keep(self: *Pending, alloc: Allocator, f: Frame) !void {
         var head: [5]u8 = undefined;
-        head[0] = @intFromEnum(f.type);
+        head[0] = @backingInt(f.type);
         std.mem.writeInt(u32, head[1..5], @intCast(f.payload.len), .little);
         try self.kept.ensureUnusedCapacity(alloc, head.len + f.payload.len);
         self.kept.appendSliceAssumeCapacity(&head);
@@ -956,7 +956,7 @@ const Pending = struct {
         var rest = self.kept.items;
         while (rest.len >= 5) {
             const len = std.mem.readInt(u32, rest[1..5], .little);
-            const f: Frame = .{ .type = @enumFromInt(rest[0]), .id = .none, .payload = rest[5..][0..len] };
+            const f: Frame = .{ .type = @fromBackingInt(@intCast(rest[0])), .id = .none, .payload = rest[5..][0..len] };
             deliver(sink, f) catch |err| log.warn("bad message {d} from slime: {}", .{ rest[0], err });
             rest = rest[5 + len ..];
         }
@@ -1707,6 +1707,18 @@ pub fn floatPane(self: *Daemon, pane: PaneRef) !void {
     _ = try self.call("pane.move", .{ .pane = pane, .float = true });
 }
 
+/// Move pane `pane` into tab `tab`, along its whole `side`. It comes
+/// back under a new id, focused. UI thread.
+pub fn movePaneToTab(self: *Daemon, pane: PaneRef, tab: TabRef, side: Direction) !void {
+    _ = try self.call("pane.move", .{ .pane = pane, .tab = tab, .side = side });
+}
+
+/// Move pane `pane` beside pane `at`, on `side` of it, halving it, in
+/// `at`'s tab. It comes back under a new id there, focused. UI thread.
+pub fn movePaneBeside(self: *Daemon, pane: PaneRef, at: PaneRef, side: Direction) !void {
+    _ = try self.call("pane.move", .{ .pane = pane, .at = at, .side = side });
+}
+
 /// Tell the daemon the focus moved here: `f.tab` is shown in its
 /// workspace, with `f.pane` focused and `f.zoomed` zoomed (none for
 /// none). Every other window on the workspace follows; this one doesn't
@@ -1822,7 +1834,7 @@ fn route(self: *Daemon, buf: []u8) void {
     while (true) {
         const f = self.pipe.readFrame(buf) catch break;
         self.handle(f) catch |err| {
-            log.warn("bad message {d} from slime: {}", .{ @intFromEnum(f.type), err });
+            log.warn("bad message {d} from slime: {}", .{ @backingInt(f.type), err });
         };
     }
     if (self.closing.load(.acquire)) return;
@@ -2244,7 +2256,7 @@ fn deliver(sink: Sink, f: Frame) !void {
             });
         },
         .notice => {
-            const kind: Notice.Kind = @enumFromInt(try r.readU8());
+            const kind: Notice.Kind = @fromBackingInt(@intCast(try r.readU8()));
             const text = try r.readStr();
             sink.notice(sink.ctx, .{ .kind = kind, .text = text, .status = try .init(&r) });
         },
@@ -2598,7 +2610,7 @@ const Pipe = struct {
     fn send(self: *Pipe, msg: MsgType, id: PaneRef, payload: []const u8) !void {
         var header: [4 + header_len]u8 = undefined;
         std.mem.writeInt(u32, header[0..4], @intCast(header_len + payload.len), .little);
-        header[4] = @intFromEnum(msg);
+        header[4] = @backingInt(msg);
         std.mem.writeInt(u32, header[5..9], id.ws, .little);
         std.mem.writeInt(u32, header[9..13], id.tab, .little);
         std.mem.writeInt(u32, header[13..17], id.n, .little);
@@ -2634,7 +2646,7 @@ const Pipe = struct {
         if (len < header_len or len > buf.len) return error.BadFrame;
         try self.readExact(buf[0..len]);
         return .{
-            .type = @enumFromInt(buf[0]),
+            .type = @fromBackingInt(@intCast(buf[0])),
             .id = .{
                 .ws = std.mem.readInt(u32, buf[1..5], .little),
                 .tab = std.mem.readInt(u32, buf[5..9], .little),
@@ -2956,7 +2968,7 @@ test "a host's state parses as the Go side sends it" {
     defer odd.deinit();
     var unknown = try HostInfo.fromJson(alloc, odd.value);
     defer unknown.deinit(alloc);
-    try std.testing.expectEqual(@as(u8, 0xff), @intFromEnum(unknown.state));
+    try std.testing.expectEqual(@as(u8, 0xff), @backingInt(unknown.state));
 }
 
 test "workspace.list parses as the daemon sends it" {

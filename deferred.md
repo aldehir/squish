@@ -59,9 +59,10 @@ is attached.
   user having seen it.
 - **Floating tabs** (a tab with `float {over, rect}`: `tab.float`,
   `tab.dock`, `pane.move` with `float`) stop at what the window's
-  placement can do in one tab area. A pane can't be dragged between a
-  float and the tab under it (a pane drag stays in its tab), floats
-  don't float over floats (floating a host moves its floats onto the
+  placement can do in one tab area. A pane dragged into another tab
+  (a float, or the tab under one) goes along its edge or beside a pane,
+  never in a pane's place: a swap across tabs would move two panes.
+  Floats don't float over floats (floating a host moves its floats onto the
   new one), a tab of a session not run in slime can't float (no daemon
   tab to keep it), and a float stays in its workspace. The shown tab's
   browser pages stay live under floats (the renderer draws floats into

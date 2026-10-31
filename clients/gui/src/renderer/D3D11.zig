@@ -1645,7 +1645,7 @@ fn createDevice(device: *?*d3d11.IDevice, context: *?*d3d11.IDeviceContext, allo
         if (hr >= 0) {
             log.info("device created driver={t} feature_level=0x{x} debug={}", .{
                 a.driver,
-                @intFromEnum(level),
+                @backingInt(level),
                 a.flags & d3d11.CREATE_DEVICE_DEBUG != 0,
             });
             return a.driver;

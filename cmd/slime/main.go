@@ -662,12 +662,13 @@ func paneCommand() *cobra.Command {
 		},
 	}
 	move := &cobra.Command{
-		Use:   "move [pane] <tab|new|float> [right|down|left|up|over-tab]",
-		Short: "Move a pane along a side of another tab, or into a new tab of its own, and print its new id",
+		Use:   "move [pane] <tab|at-pane|new|float> [right|down|left|up|over-tab]",
+		Short: "Move a pane along a side of another tab, beside a pane, or into a new tab of its own, and print its new id",
 		Long: "Moves a pane (this console's, without one) into tab along the side given,\n" +
-			"or into a new tab of its own; with float, into a new tab floating over the\n" +
-			"pane's tab (or over-tab). The pane gets a new id there, printed; its old\n" +
-			"ids keep finding it.",
+			"beside at-pane on that side of it (taking half its space, in its tab), or\n" +
+			"into a new tab of its own; with float, into a new tab floating over the\n" +
+			"pane's tab (or over-tab). In another tab the pane gets a new id, printed;\n" +
+			"its old ids keep finding it.",
 		Args: cobra.RangeArgs(1, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pane, args, err := paneArg(args)
@@ -689,8 +690,11 @@ func paneCommand() *cobra.Command {
 					args = args[:1]
 				}
 			default:
-				if p.Tab, err = rpc.ParseTabID(args[0]); err != nil {
-					return err
+				// A pane id has a part more than a tab's.
+				if p.At, err = rpc.ParsePaneID(args[0]); err != nil {
+					if p.Tab, err = rpc.ParseTabID(args[0]); err != nil {
+						return fmt.Errorf("a tab or pane id, new, or float, not %q", args[0])
+					}
 				}
 			}
 			if len(args) == 2 {

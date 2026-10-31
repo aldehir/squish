@@ -126,6 +126,77 @@ func TestFloatPaneMove(t *testing.T) {
 	}
 }
 
+// TestPaneMoveAt: pane.move with at puts a pane beside another, in that
+// pane's tab (a float's, or back into the host's), under a new id there
+// and its own in its own tab; at doesn't go with tab or float, or name
+// the pane itself.
+func TestPaneMoveAt(t *testing.T) {
+	h := newHarness(t)
+	w := h.window()
+	first := w.newWorkspace()
+	w.newTab()
+	a, created := w.split(first, Right, 5000, "")
+	w.absorb(a)
+	second := created.Pane
+	var moved rpc.Created
+	a, err := w.call(rpc.PaneMove, rpc.PaneMoveParams{Pane: second, Float: &rpc.FloatTarget{}}, &moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.absorb(a)
+	inFloat := moved.Pane
+
+	// From the host into the float, under the float's pane.
+	a, err = w.call(rpc.PaneMove, rpc.PaneMoveParams{Pane: first, At: inFloat, Side: Down}, &moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.absorb(a)
+	checkFloats(t, h)
+	// The host, left empty, closed, and its float docked in its place.
+	tabs := tabsOf(t, w)
+	if len(tabs) != 2 || tabs[0].ID != inFloat.TabID() {
+		t.Fatalf("tabs %s: want the docked float first, in the closed host's place", tabIDs(tabs))
+	}
+	ft := tabs[0]
+	if ft.Float != nil {
+		t.Errorf("still floating with its host gone: %+v", ft.Float)
+	}
+	if moved.Pane.TabID() != ft.ID || moved.Pane == first {
+		t.Errorf("moved to %s, want a new id in %s", moved.Pane, ft.ID)
+	}
+	tree := ft.Tree
+	if tree.IsLeaf() || tree.Axis != rpc.Column || len(tree.Children) != 2 ||
+		tree.Children[0].Node.Pane != inFloat || tree.Children[1].Node.Pane != moved.Pane ||
+		tree.Children[0].Share != 5000 {
+		t.Errorf("tree %+v, want %s over %s halving it", tree, inFloat, moved.Pane)
+	}
+
+	// Within its own tab it keeps its id, and goes to the other side.
+	a, err = w.call(rpc.PaneMove, rpc.PaneMoveParams{Pane: moved.Pane, At: inFloat, Side: Left}, &moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.absorb(a)
+	tree = tabsOf(t, w)[0].Tree
+	if tree.IsLeaf() || tree.Axis != rpc.Row || tree.Children[0].Node.Pane != moved.Pane || tree.Children[1].Node.Pane != inFloat {
+		t.Errorf("tree %+v, want %s left of %s", tree, moved.Pane, inFloat)
+	}
+
+	if err := w.c.Call(rpc.PaneMove, rpc.PaneMoveParams{Pane: moved.Pane, At: moved.Pane}, nil); !isInvalid(err, "beside itself") {
+		t.Errorf("beside itself: %v", err)
+	}
+	if err := w.c.Call(rpc.PaneMove, rpc.PaneMoveParams{Pane: moved.Pane, At: inFloat, Tab: ft.ID}, nil); !isInvalid(err, "at and tab") {
+		t.Errorf("at with tab: %v", err)
+	}
+	if err := w.c.Call(rpc.PaneMove, rpc.PaneMoveParams{Pane: moved.Pane, At: inFloat, Float: &rpc.FloatTarget{}}, nil); !isInvalid(err, "at and float") {
+		t.Errorf("at with float: %v", err)
+	}
+	if err := w.c.Call(rpc.PaneMove, rpc.PaneMoveParams{Pane: moved.Pane, At: rpc.PaneID{WS: 9, Tab: 9, N: 9}}, nil); err == nil {
+		t.Errorf("beside no such pane: %v", err)
+	}
+}
+
 // TestFloatHostClosedDocks: closing a host docks its floats in its
 // place, the input going to them.
 func TestFloatHostClosedDocks(t *testing.T) {

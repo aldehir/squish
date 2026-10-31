@@ -779,11 +779,16 @@ type PaneSplitParams struct {
 // (pane.attached with moved_from); a viewer's own call focuses the
 // pane.
 //
+// With At, the pane goes beside pane At instead, on Side of it, taking
+// half its space (as a split does), in At's tab; Tab and Float don't go
+// with it. Within its own tab the pane keeps its id.
+//
 // With Float, the new tab is born floating: over the pane's tab (or the
 // tab that one floats over), else Float.Over, at Float.Rect if given.
 type PaneMoveParams struct {
 	Pane  PaneID       `json:"pane"`
 	Tab   TabID        `json:"tab,omitzero"`
+	At    PaneID       `json:"at,omitzero"`
 	Side  Direction    `json:"side,omitempty"`
 	Float *FloatTarget `json:"float,omitempty"`
 }

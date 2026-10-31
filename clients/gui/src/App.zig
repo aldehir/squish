@@ -384,8 +384,11 @@ const PaneDrag = struct {
     drop: ?Drop = null,
 };
 
-/// Where a dragged pane would land, and its highlight.
+/// Where a dragged pane would land, and its highlight: in `tab`, its
+/// own or another shown (a float over it, the tab under its float, or
+/// another float).
 const Drop = struct {
+    tab: *Tab,
     place: Tab.Place,
     rect: Rect,
 };
@@ -3033,7 +3036,9 @@ fn startPaneDrag(self: *App, s: *Session, pos: win32.POINT) void {
 /// system's drag distance, find where the pane would land. Only a tab of
 /// several daemon panes rearranges; others just took focus.
 fn paneDragTo(self: *App, d: *PaneDrag, pos: win32.POINT) void {
-    if (d.tab.conn == null or d.tab.count() < 2) return;
+    // A pane alone in a docked tab stays: its tab would close behind it.
+    // Alone in a float, it can go into another tab, the float closing.
+    if (d.tab.conn == null or (d.tab.float == null and d.tab.count() < 2)) return;
     if (d.at == null) {
         const dx, const dy = self.shell.dragThreshold();
         if (@abs(pos.x - d.start.x) <= dx and @abs(pos.y - d.start.y) <= dy) return;
@@ -3061,19 +3066,39 @@ fn endPaneDrag(self: *App) void {
     self.shell.webCapture(d.source, false);
     self.markDirty();
     const drop = d.drop orelse return;
+    if (drop.tab != d.tab) {
+        // Into another tab: slime moves it, and the structure that
+        // follows shows it there under a new id.
+        const pane = d.source.daemonPane() orelse return;
+        const conn = d.tab.conn orelse return;
+        const r = switch (drop.place) {
+            .edge => |side| conn.movePaneToTab(pane, drop.tab.id, side),
+            .beside => |b| conn.movePaneBeside(pane, b.target.daemonPane() orelse return, b.side),
+            .swap => return,
+        };
+        r catch |err| log.warn("moving pane {d} to tab {f} failed: {}", .{ d.source.id, drop.tab.id, err });
+        return;
+    }
     d.tab.move(self.alloc, d.source, drop.place) catch |err| return log.err("moving the pane failed: {}", .{err});
     self.layoutTab(d.tab);
     self.sendLayout(d.tab);
     self.syncFocus();
 }
 
-/// Where the dragged pane would land at `pos`: along a side of the tab
-/// near its edge, else in the pane under the mouse, beside it on the
-/// side the mouse is toward, or in its place from its middle.
+/// Where the dragged pane would land at `pos`: in the tab under the
+/// mouse (the topmost float whose box holds it, else the tab shown),
+/// along a side of it near its edge, else in the pane under the mouse,
+/// beside it on the side the mouse is toward, or in its place from its
+/// middle. Into another tab the pane is only put beside one: a swap
+/// across tabs would move two panes. A pane alone in its tab stays:
+/// its tab would close behind it.
 fn dropAt(self: *App, d: *const PaneDrag, pos: win32.POINT) ?Drop {
     const x: f32 = @floatFromInt(pos.x);
     const y: f32 = @floatFromInt(pos.y);
-    const area = self.tabArea(d.tab);
+    const placed_ = self.placed();
+    const tab = if (placed_.floatAt(x, y)) |f| f.tab else self.shownHost();
+    if (tab != d.tab and ((d.tab.float == null and d.tab.count() < 2) or d.source.daemonPane() == null or tab.conn != d.tab.conn)) return null;
+    const area = self.tabArea(tab);
     if (!area.contains(x, y)) return null;
     const band = self.ui.px(24);
     const edge: ?Daemon.Direction = if (x < area.x + band)
@@ -3087,20 +3112,24 @@ fn dropAt(self: *App, d: *const PaneDrag, pos: win32.POINT) ?Drop {
     else
         null;
     if (edge) |side| return .{
+        .tab = tab,
         .place = .{ .edge = side },
         .rect = half(area, side).inset(self.ui.px(4), self.ui.px(4)),
     };
 
-    const under = self.placed().at(x, y) orelse return null;
+    // Between a float's panes the pane found is one under the float.
+    const under = placed_.at(x, y) orelse return null;
     const target = under.session;
-    if (target == d.source or under.tab != d.tab) return null;
+    if (target == d.source or under.tab != tab) return null;
+    if (tab != d.tab and target.daemonPane() == null) return null;
     const f = under.frame;
     const inset = self.ui.px(6);
     // The middle 40% each way swaps; else the side the mouse is toward,
     // as diagonals from the corners divide it.
     const nx = (x - (f.x + f.w / 2)) / f.w;
     const ny = (y - (f.y + f.h / 2)) / f.h;
-    if (@abs(nx) < 0.2 and @abs(ny) < 0.2) return .{
+    if (tab == d.tab and @abs(nx) < 0.2 and @abs(ny) < 0.2) return .{
+        .tab = tab,
         .place = .{ .swap = target },
         .rect = f.inset(inset, inset),
     };
@@ -3109,6 +3138,7 @@ fn dropAt(self: *App, d: *const PaneDrag, pos: win32.POINT) ?Drop {
     else
         (if (ny < 0) .up else .down);
     return .{
+        .tab = tab,
         .place = .{ .beside = .{ .target = target, .side = side } },
         .rect = half(f, side).inset(inset, inset),
     };
@@ -5084,7 +5114,7 @@ fn wheelBinding(self: *App, m: Msg.Mouse, pane: *Session) bool {
         .alt = held.alt,
         .super = held.super,
     };
-    const b = self.keymap.find(@intFromEnum(wheel), mods) orelse return false;
+    const b = self.keymap.find(@backingInt(wheel), mods) orelse return false;
     const axis: usize = @intFromBool(m.msg == win32.WM_MOUSEHWHEEL);
     // Turns with other modifiers don't add up with these.
     if (self.wheel_mods.int() != mods.keys().int()) self.wheel_rest = .{ 0, 0 };
@@ -6700,4 +6730,68 @@ test "dragging a float's header moves it, and its edge resizes it, kept in the a
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = edge.x - 2000, .y = edge.y } } });
     try std.testing.expectEqual(@as(u16, Daemon.min_float), tabs.f.float.?.rect.w);
     try std.testing.expectEqual(Daemon.default_float.h, tabs.f.float.?.rect.h);
+}
+
+test "a pane drags between a float and the tab under it: along an edge, or beside a pane, never swapping" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    // The test daemon takes no calls, but a focus call keeps a list.
+    defer t.daemon.focus_calls.deinit(std.testing.allocator);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+    // Slime's panes, so they can go between tabs.
+    const a2 = app.placed().panes.items[1].session;
+    for ([_]*Session{ tabs.a.focus, a2, tabs.f.focus }, [_]Daemon.PaneRef{ .{ .ws = 1, .tab = 1, .n = 1 }, .{ .ws = 1, .tab = 1, .n = 2 }, .{ .ws = 1, .tab = 2, .n = 1 } }) |s, ref| {
+        s.transport = .{ .daemon = .{ .conn = &t.daemon, .pane = ref } };
+    }
+    const area = app.geometry.pane_area;
+    const box = app.placed().floats.items[0].frame;
+    const fp = app.placed().panes.items[2].frame;
+    const band = app.ui.px(24);
+
+    // F's lone pane, out of its float: along A's right edge, then beside
+    // A's second pane (never in its place), then back over its own box,
+    // where it has nowhere to go.
+    const strip: win32.POINT = .{ .x = @intFromFloat(fp.x + 40), .y = @intFromFloat(fp.y + 5) };
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = strip } });
+    try std.testing.expect(app.pane_drag != null);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = @intFromFloat(area.right() - band / 2), .y = @intFromFloat(area.y + area.h / 2) } } });
+    var drop = app.pane_drag.?.drop orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(tabs.a, drop.tab);
+    try std.testing.expectEqual(Tab.Place{ .edge = .right }, drop.place);
+    const a2f = app.placed().panes.items[1].frame;
+    const mid_a2: win32.POINT = .{ .x = @intFromFloat(a2f.x + a2f.w / 2), .y = @intFromFloat(a2f.y + a2f.h / 2) };
+    try std.testing.expect(box.contains(@floatFromInt(mid_a2.x), @floatFromInt(mid_a2.y)));
+    const beside_a2: win32.POINT = .{ .x = mid_a2.x, .y = @intFromFloat(a2f.y + band + 10) };
+    try std.testing.expect(!box.contains(@floatFromInt(beside_a2.x), @floatFromInt(beside_a2.y)));
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = beside_a2 } });
+    drop = app.pane_drag.?.drop orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(tabs.a, drop.tab);
+    try std.testing.expectEqual(Tab.Place{ .beside = .{ .target = a2, .side = .up } }, drop.place);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = @intFromFloat(fp.x + fp.w / 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
+    try std.testing.expect(app.pane_drag.?.drop == null);
+    // Let go over A: slime is asked (and can't answer here); the trees
+    // here wait for its structure.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = beside_a2 } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = beside_a2 } });
+    try std.testing.expect(app.pane_drag == null);
+    try std.testing.expectEqual(@as(usize, 1), tabs.f.count());
+    try std.testing.expectEqual(@as(usize, 2), tabs.a.count());
+
+    // A's pane into the float: beside F's pane, not in its place, from
+    // its middle; between F's panes and its box, nothing.
+    const a2_strip: win32.POINT = .{ .x = @intFromFloat(a2f.x + 40), .y = @intFromFloat(a2f.y + 5) };
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = a2_strip } });
+    try std.testing.expect(app.pane_drag != null);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = @intFromFloat(fp.x + fp.w / 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
+    drop = app.pane_drag.?.drop orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(tabs.f, drop.tab);
+    try std.testing.expect(drop.place == .beside);
+    try std.testing.expectEqual(tabs.f.focus, drop.place.beside.target);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = @intFromFloat(box.x + 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
+    try std.testing.expect(app.pane_drag.?.drop == null);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = @intFromFloat(box.x + 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
+    try std.testing.expect(app.pane_drag == null);
 }

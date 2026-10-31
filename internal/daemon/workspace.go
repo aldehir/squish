@@ -872,17 +872,24 @@ func (s *Server) paneSplit(cl *callCtx, m rpc.PaneSplitParams) (*rpc.Created, er
 }
 
 // paneMove takes a pane out of its tab and puts it along a side of
-// another, or of a new tab after its own (floating, with m.Float). In
-// another tab it's that
-// tab's next pane: its viewers let go of it under the old id and take
-// it up under the new, and the old id forwards to the new while the
-// pane lives.
+// another, beside a pane of another (m.At), or in a new tab after its
+// own (floating, with m.Float). In another tab it's that tab's next
+// pane: its viewers let go of it under the old id and take it up under
+// the new, and the old id forwards to the new while the pane lives.
 func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, error) {
 	if m.Side == 0 {
 		m.Side = Right
 	}
 	if m.Side < Right || m.Side > Up {
 		return nil, rpc.Errorf(rpc.CodeInvalidParams, "side is right, down, left, or up")
+	}
+	if !m.At.IsZero() {
+		if !m.Tab.IsZero() {
+			return nil, rpc.Errorf(rpc.CodeInvalidParams, "at and tab together")
+		}
+		if m.Float != nil {
+			return nil, rpc.Errorf(rpc.CodeInvalidParams, "at and float together")
+		}
 	}
 	if m.Float != nil {
 		if !m.Tab.IsZero() {
@@ -911,6 +918,21 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 		if dst.ws != ws {
 			return nil, rpc.Errorf(rpc.CodeInvalidParams, "tab %s is in another workspace", m.Tab)
 		}
+	}
+	// Beside a pane: into its tab.
+	if !m.At.IsZero() {
+		at := s.paneLocked(m.At)
+		if at == nil || at.tabOf() == nil {
+			return nil, errNoPane
+		}
+		if at == pn {
+			return nil, rpc.Errorf(rpc.CodeInvalidParams, "pane %s can't go beside itself", m.Pane)
+		}
+		dst = at.tabOf()
+		if dst.ws != ws {
+			return nil, rpc.Errorf(rpc.CodeInvalidParams, "pane %s is in another workspace", m.At)
+		}
+		m.At = at.paneID()
 	}
 	// A float goes over the pane's tab, or what that floats over.
 	var host *tab
@@ -975,6 +997,13 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 	}
 	if dst.root == nil {
 		dst.root = leaf(id)
+	} else if !m.At.IsZero() {
+		root, err := splitNode(dst.root, m.At, id, m.Side, Whole/2)
+		if err != nil {
+			// At was in dst a moment ago, under the lock.
+			panic(err)
+		}
+		dst.root = root
 	} else {
 		dst.root = joinEdge(dst.root, id, m.Side)
 	}
