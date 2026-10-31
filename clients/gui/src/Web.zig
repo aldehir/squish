@@ -1080,6 +1080,7 @@ pub const View = struct {
             },
             .radius = p.radius,
             .opacity = p.opacity,
+            .layer = p.layer,
         }) catch return;
         if (self.container != container) {
             self.container = container;
@@ -1127,6 +1128,8 @@ pub const Place = struct {
     /// The pane's bottom corners.
     radius: f32,
     opacity: f32 = 1,
+    /// Under the floats (the shown tab's pane) or over them (a float's).
+    layer: Renderer.Layer = .ground,
 };
 
 /// Host `host`'s environment, once it's made.

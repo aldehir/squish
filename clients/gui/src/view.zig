@@ -224,7 +224,7 @@ const Builder = struct {
     }
 
     /// The minimized floats, under a header of their own at the sidebar's
-    /// bottom: each a row like a tab's, set in as a workspace's tabs are,
+    /// bottom: each a row like a tab's, flush with the header,
     /// its title after a window icon, which shows it again. Null for none.
     fn minimized(self: *const Builder) Allocator.Error!?Node {
         const app = self.app;
@@ -235,12 +235,12 @@ const Builder = struct {
             if (!f.minimized) continue;
             const target: Id.Target = .{ .float = tab.key };
             const hovered = self.ui.hover.on(target);
-            // The icon where a tab row's is, past its fold arrow.
+            // The icon in a row of its own, as a tab row's, so the title starts at a DIP rounded once.
             const items = try self.nodes(&.{
                 .{ .kind = .{ .row = .{
-                    .w = TreeList.fold_width + 24,
+                    .w = 32,
                     .children = try self.nodes(&.{
-                        .{ .kind = .{ .spacer = TreeList.fold_width } },
+                        .{ .kind = .{ .spacer = 8 } },
                         .{ .kind = .{ .icon = .{ .icon = .app_window, .size = 16, .color = if (hovered) t.text_strong else t.text_muted } } },
                     }),
                 } } },
@@ -260,7 +260,7 @@ const Builder = struct {
             }),
             .h = header_height,
         } } };
-        const list: Node = .{ .kind = .{ .column = .{ .children = rows.items, .gap = TreeList.row_gap, .pad = .{ .left = TreeList.indent } } } };
+        const list: Node = .{ .kind = .{ .column = .{ .children = rows.items, .gap = TreeList.row_gap } } };
         return .{ .kind = .{ .column = .{ .children = try self.nodes(&.{ head, list }), .gap = TreeList.row_gap, .pad = .{ .right = scrollbar_gutter } } } };
     }
 

@@ -4767,13 +4767,14 @@ fn placeShown(self: *App) Allocator.Error!void {
     }
 }
 
-/// Whether a float over placed pane `p`'s tab covers some of its page:
-/// its browser, drawn over everything the frame has, is hidden then, and
-/// a picture of the page stands in.
+/// Whether a float over placed pane `p`'s float covers some of its page:
+/// its browser, drawn over every float, is hidden then, and a picture of
+/// the page stands in. The shown tab's pages are under the floats (the
+/// renderer's float chain), so never covered.
 pub fn pageCovered(self: *App, p: Placement.Pane) bool {
-    if (p.session.content != .browser) return false;
+    if (p.session.content != .browser or p.tab.float == null) return false;
     const floats = self.placed().floats.items;
-    // Only those over its own: after its float, if it's in one.
+    // Only those over its own.
     var from: usize = 0;
     for (floats, 0..) |f, k| {
         if (f.tab == p.tab) from = k + 1;

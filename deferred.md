@@ -63,9 +63,15 @@ is attached.
   float and the tab under it (a pane drag stays in its tab), floats
   don't float over floats (floating a host moves its floats onto the
   new one), a tab of a session not run in slime can't float (no daemon
-  tab to keep it), and a float stays in its workspace. A float over a
-  browser pane hides its page for a still picture of it while it
-  covers any of it.
+  tab to keep it), and a float stays in its workspace. The shown tab's
+  browser pages stay live under floats (the renderer draws floats into
+  a chain over them), but a float's page under another float is hidden
+  for a still picture while that float covers any of it, and the still
+  comes out blank (the page is hidden before its capture completes, as
+  a dragged browser pane's thumbnail is). Text on floats is grayscale
+  antialiased while a browser is shown, like dialogs and menus. A
+  dragged pane's thumbnail is copied from the ground, so a float's pane
+  drags as its box without its contents.
 
 ## Needs app chrome
 

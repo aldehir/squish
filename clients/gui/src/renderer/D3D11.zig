@@ -17,8 +17,12 @@
 //! can be composed with it: each such pane gets a container visual over
 //! the chain (`setPaneVisual`), and while there are any, a second,
 //! transparent chain over them takes what must be over panes (dialogs,
-//! the menu, the tooltip, a dragged pane). Without them the window draws
-//! into the one chain alone.
+//! the menu, the tooltip, a dragged pane). Floating tabs go between: a
+//! third chain over the shown tab's browsers takes the floats (their
+//! boxes, terminals, and strips), and a float's own browsers go over
+//! that, under the overlay (`PaneVisual.layer`). Without browsers the
+//! window draws into the one chain alone. Text on the transparent chains
+//! is grayscale-antialiased: ClearType needs opaque pixels under it.
 //!
 //! A device can be lost (a driver update or reset, a GPU going away):
 //! `isLost` says so after a failed `draw` or `resize`, and `recover`
@@ -136,7 +140,11 @@ comp: Composition,
 /// Browser panes' container visuals, over the ground (see `setPaneVisual`).
 pane_visuals: std.ArrayList(PaneVisualEntry) = .empty,
 /// The chain over `pane_visuals`, while there are any.
-overlay: ?OverlayChain = null,
+overlay: ?LayerChain = null,
+/// The floats' chain, over the ground's pane visuals and under the
+/// floats' own: made by the first `draw` with floats while there's an
+/// overlay, and gone with it.
+float_chain: ?LayerChain = null,
 /// A copy of part of the last frame, for the UI to draw scaled (a pane
 /// being dragged). Kept between frames at its last size.
 capture: ?Capture = null,
@@ -304,6 +312,7 @@ pub fn deinit(self: *D3D11) void {
     if (!self.released) self.releaseDevice();
     for (self.pane_visuals.items) |e| e.deinit();
     self.pane_visuals.deinit(self.alloc);
+    if (self.float_chain) |*fc| fc.deinit();
     if (self.overlay) |*o| o.deinit();
     self.comp.deinit();
     com.releaseOpt(&self.wic_factory);
@@ -489,7 +498,8 @@ fn createDeviceObjects(self: *D3D11, hwnd: win32.HWND, allow_warp: bool) Error!v
     errdefer self.releaseDevice();
 
     try self.createRenderTarget();
-    if (self.overlay) |*o| try self.createOverlayChain(o);
+    if (self.overlay) |*o| try self.createLayerChain(o, "overlay");
+    if (self.float_chain) |*fc| try self.createLayerChain(fc, "float");
     try com.check(self.comp.root.setContent(self.swap_chain), "IDCompositionVisual::SetContent");
     try self.commit();
     log.info("composition swap chain: waitable, max latency 1, tearing={}, refresh {d:.1} Hz", .{
@@ -505,6 +515,7 @@ fn releaseDevice(self: *D3D11) void {
     // The visuals hold the chains, and with them the old device.
     _ = self.comp.root.setContent(null);
     if (self.overlay) |*o| o.releaseChain();
+    if (self.float_chain) |*fc| fc.releaseChain();
     _ = self.comp.device.commit();
     self.context.clearState();
     self.d2d_context.setTarget(null);
@@ -636,7 +647,8 @@ pub fn resize(self: *D3D11, width: u32, height: u32) Error!void {
     self.width = width;
     self.height = height;
     try self.createRenderTarget();
-    if (self.overlay) |*o| try self.resizeOverlay(o);
+    if (self.overlay) |*o| try self.resizeLayer(o);
+    if (self.float_chain) |*fc| try self.resizeLayer(fc);
 }
 
 /// Draw the terminals, then `ui` over them, and present. `ui` has a
@@ -646,10 +658,12 @@ pub fn resize(self: *D3D11, width: u32, height: u32) Error!void {
 /// draws over the frame with the copy. While there's an overlay chain,
 /// `paint`'s `.ground` goes into the swap chain and its `.over` and
 /// `paintOver` into the overlay, which is drawn while `hasOver()` says
-/// it has something; otherwise `paint` draws `.all`. Commits the
-/// composition tree if it changed. Waits for the swap chain first unless
-/// `waitForFrame` or `frameAcquired` already did. Does nothing while
-/// the device is lost.
+/// it has something; otherwise `paint` draws `.all`. The floats
+/// (`Frame.floats`: `ui`'s `paintFloat` and `paintAbove`) go into the
+/// float chain while there's an overlay, else into the swap chain after
+/// the ground. Commits the composition tree if it changed. Waits for
+/// the swap chain first unless `waitForFrame` or `frameAcquired` already
+/// did. Does nothing while the device is lost.
 pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error{ DeviceLost, HResult }!void {
     if (self.lost) return;
     const rtv = self.rtv orelse return;
@@ -676,28 +690,28 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
     ctx.omSetRenderTargets(&.{rtv});
     ctx.clearRenderTargetView(rtv, &f.background);
     try self.drawPanes(alloc, f, f.panes[0..if (f.floats.len > 0) f.floats[0] else f.panes.len]);
-    if (f.floats.len > 0) {
-        // The ground under the floats, then each float's box, terminals,
-        // and strips, then the ground over them.
+    // With browsers (an overlay), the floats get a chain of their own
+    // over the ground's; the first frame with floats makes it. Failing
+    // that, they're drawn in the ground, under the browsers.
+    if (f.floats.len > 0 and self.overlay != null and self.float_chain == null) {
+        self.createFloatChain() catch |err| log.warn("making the float chain failed: {}", .{err});
+    }
+    const layered = f.floats.len > 0 and self.float_chain != null and self.float_chain.?.rtv != null;
+    if (f.floats.len > 0 and !layered) {
+        // The ground under the floats, then the floats, then the ground
+        // over them.
         try self.paintUi(ui, .ground);
-        for (f.floats, 0..) |start, k| {
-            const end = if (k + 1 < f.floats.len) f.floats[k + 1] else f.panes.len;
-            try self.paintFloat(ui, k, .box);
-            ctx.clearState();
-            ctx.omSetRenderTargets(&.{rtv});
-            try self.drawPanes(alloc, f, f.panes[start..end]);
-            try self.paintFloat(ui, k, .panes);
-        }
-        try self.paintAbove(ui);
+        try self.drawFloats(alloc, f, ui, rtv);
     }
     if (self.overlay) |*o| {
-        if (f.floats.len == 0) try self.paintUi(ui, .ground);
+        if (f.floats.len == 0 or layered) try self.paintUi(ui, .ground);
         const capture = ui.capture();
         const img = if (capture) |region| self.captureRegion(region) catch |err| img: {
             log.warn("capturing the frame failed: {}", .{err});
             break :img null;
         } else null;
         try self.presentGround();
+        if (self.float_chain) |*fc| try self.drawFloatChain(fc, alloc, f, ui, layered);
         try self.drawOverlay(o, ui, capture != null, img);
     } else {
         if (f.floats.len > 0) try self.paintUi(ui, .over) else try self.paintUi(ui, .all);
@@ -711,6 +725,44 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
         try self.presentGround();
     }
     if (self.comp.dirty) try self.commit();
+}
+
+/// Each float's box, terminals, and strips, bottom to top, then the UI
+/// over them, into `rtv` (the Direct2D target set).
+fn drawFloats(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype, rtv: *d3d11.IRenderTargetView) error{ DeviceLost, HResult }!void {
+    const ctx = self.context;
+    for (f.floats, 0..) |start, k| {
+        const end = if (k + 1 < f.floats.len) f.floats[k + 1] else f.panes.len;
+        try self.paintFloat(ui, k, .box);
+        ctx.clearState();
+        ctx.omSetRenderTargets(&.{rtv});
+        try self.drawPanes(alloc, f, f.panes[start..end]);
+        try self.paintFloat(ui, k, .panes);
+    }
+    try self.paintAbove(ui);
+}
+
+/// The float chain's frame: the floats over transparency, if `layered`;
+/// else presented clear, once, and then left alone.
+fn drawFloatChain(self: *D3D11, fc: *LayerChain, alloc: std.mem.Allocator, f: Frame, ui: anytype, layered: bool) error{ DeviceLost, HResult }!void {
+    if (!layered) {
+        if (fc.shown) try self.clearLayer(fc);
+        return;
+    }
+    // A failed resize left the chain without targets until the next.
+    const rtv = fc.rtv orelse return;
+    fc.shown = true;
+    const ctx = self.context;
+    ctx.clearState();
+    ctx.omSetRenderTargets(&.{rtv});
+    ctx.clearRenderTargetView(rtv, &.{ 0, 0, 0, 0 });
+    const d2d = self.d2d_context;
+    d2d.setTarget(fc.d2d_target);
+    defer d2d.setTarget(self.d2d_target);
+    if (self.text_antialias == d2d1.TEXT_ANTIALIAS_MODE_CLEARTYPE) d2d.setTextAntialiasMode(d2d1.TEXT_ANTIALIAS_MODE_GRAYSCALE);
+    defer d2d.setTextAntialiasMode(self.text_antialias);
+    try self.drawFloats(alloc, f, ui, rtv);
+    try checkPresent(fc.swap_chain.?.present(0, 0));
 }
 
 /// Draw `panes`' shadows, then their boxes and terminals, over what the
@@ -779,10 +831,10 @@ fn checkPresent(hr: win32.HRESULT) error{ DeviceLost, HResult }!void {
 /// The overlay's frame: `ui`'s `.over` and, if `capture`, `paintOver`
 /// with `img`, over transparency. An overlay with nothing to show is
 /// presented cleared, and then left alone.
-fn drawOverlay(self: *D3D11, o: *OverlayChain, ui: anytype, capture: bool, img: ?Painter.Image) error{ DeviceLost, HResult }!void {
+fn drawOverlay(self: *D3D11, o: *LayerChain, ui: anytype, capture: bool, img: ?Painter.Image) error{ DeviceLost, HResult }!void {
     const over = ui.hasOver();
     if (!over) {
-        if (o.shown) try self.clearOverlay(o);
+        if (o.shown) try self.clearLayer(o);
         return;
     }
     // A failed resize left the overlay without targets until the next.
@@ -1239,7 +1291,13 @@ pub const PaneVisual = struct {
     radius: f32,
     /// Below 1, the ground under it shows through: an unfocused pane.
     opacity: f32 = 1,
+    /// Under the floats (the shown tab's) or over them (a float's own).
+    layer: Layer = .ground,
 };
+
+/// Where a pane's visual goes among the chains: over the ground and
+/// under the float chain, or over the float chain and under the overlay.
+pub const Layer = enum { ground, float };
 
 const PaneVisualEntry = struct {
     key: u64,
@@ -1272,18 +1330,23 @@ const PaneVisualEntry = struct {
 };
 
 /// Show a container visual for the pane `key` (its ID) as `props` says,
-/// over the swap chain and under the overlay. The first one made brings
-/// the overlay chain, so the UI over panes is drawn over it from the next
-/// frame. The caller hangs the pane's own visual under the one returned,
-/// which stays the same until `removePaneVisual`. Call again whenever the
-/// layout or focus changes; the tree is committed with the next `draw`
-/// or `commit`. A pane a tab switch or a zoom hides is removed, not
-/// hidden, so a window showing none has no overlay and its UI gets
-/// ClearType back.
+/// over the swap chain and under the overlay (in its layer, about the
+/// float chain). The first one made brings the overlay chain, so the UI
+/// over panes is drawn over it from the next frame. The caller hangs the
+/// pane's own visual under the one returned, which stays the same until
+/// `removePaneVisual`. Call again whenever the layout or focus changes;
+/// the tree is committed with the next `draw` or `commit`. A pane a tab
+/// switch or a zoom hides is removed, not hidden, so a window showing
+/// none has no overlay and its UI gets ClearType back.
 pub fn setPaneVisual(self: *D3D11, key: u64, props: PaneVisual) Error!*dcomp.IVisual {
     for (self.pane_visuals.items) |*e| if (e.key == key) {
         if (!std.meta.eql(e.props, props)) {
+            const moved = e.props.layer != props.layer;
             try e.apply(props);
+            if (moved) {
+                _ = self.comp.root.removeVisual(e.visual.visual());
+                try self.insertPaneVisual(e.visual.visual(), props.layer);
+            }
             self.comp.dirty = true;
         }
         return e.visual.visual();
@@ -1307,25 +1370,34 @@ pub fn setPaneVisual(self: *D3D11, key: u64, props: PaneVisual) Error!*dcomp.IVi
     try entry.apply(props);
     self.pane_visuals.ensureUnusedCapacity(self.alloc, 1) catch return error.HResult;
 
-    // Under the overlay, or, with none yet, anywhere: the overlay goes
-    // over this one next.
-    const root = self.comp.root;
-    if (self.overlay) |o| {
-        try com.check(root.addVisual(visual.?, false, o.visual), "IDCompositionVisual::AddVisual");
-    } else {
-        try com.check(root.addVisual(visual.?, true, null), "IDCompositionVisual::AddVisual");
-        self.createOverlay(visual.?) catch |err| {
-            _ = root.removeVisual(visual.?);
-            return err;
-        };
-    }
+    try self.insertPaneVisual(visual.?, props.layer);
     self.pane_visuals.appendAssumeCapacity(entry);
     self.comp.dirty = true;
     return visual3.visual();
 }
 
-/// Remove the pane `key`'s visual, and the overlay with the last one.
-/// Whatever the caller hung under it goes with it.
+/// Put a pane's visual in the tree in `layer`: under the float chain
+/// (or the overlay, with none) for the ground, under the overlay for a
+/// float. The first makes the overlay, over it.
+fn insertPaneVisual(self: *D3D11, visual: *dcomp.IVisual, layer: Layer) Error!void {
+    const root = self.comp.root;
+    const o = self.overlay orelse {
+        try com.check(root.addVisual(visual, true, null), "IDCompositionVisual::AddVisual");
+        self.createOverlay(visual) catch |err| {
+            _ = root.removeVisual(visual);
+            return err;
+        };
+        return;
+    };
+    const under = switch (layer) {
+        .ground => if (self.float_chain) |fc| fc.visual else o.visual,
+        .float => o.visual,
+    };
+    try com.check(root.addVisual(visual, false, under), "IDCompositionVisual::AddVisual");
+}
+
+/// Remove the pane `key`'s visual, and the overlay and float chain with
+/// the last one. Whatever the caller hung under it goes with it.
 pub fn removePaneVisual(self: *D3D11, key: u64) void {
     for (self.pane_visuals.items, 0..) |e, i| if (e.key == key) {
         _ = self.comp.root.removeVisual(e.visual.visual());
@@ -1334,18 +1406,27 @@ pub fn removePaneVisual(self: *D3D11, key: u64) void {
         self.comp.dirty = true;
         break;
     };
-    if (self.pane_visuals.items.len == 0) if (self.overlay) |*o| {
-        _ = self.comp.root.removeVisual(o.visual);
-        o.deinit();
-        self.overlay = null;
-        self.comp.dirty = true;
-        log.info("overlay chain destroyed", .{});
-    };
+    if (self.pane_visuals.items.len == 0) {
+        if (self.float_chain) |*fc| {
+            _ = self.comp.root.removeVisual(fc.visual);
+            fc.deinit();
+            self.float_chain = null;
+            log.info("float chain destroyed", .{});
+        }
+        if (self.overlay) |*o| {
+            _ = self.comp.root.removeVisual(o.visual);
+            o.deinit();
+            self.overlay = null;
+            self.comp.dirty = true;
+            log.info("overlay chain destroyed", .{});
+        }
+    }
 }
 
-/// A transparent chain over the panes' visuals, the window's size. The
-/// visual outlives a lost device; the chain and its targets don't.
-const OverlayChain = struct {
+/// A transparent chain over the panes' visuals, the window's size: the
+/// overlay, or the floats'. The visual outlives a lost device; the chain
+/// and its targets don't.
+const LayerChain = struct {
     visual: *dcomp.IVisual,
     /// Null while the device is lost.
     swap_chain: ?*dxgi.ISwapChain1 = null,
@@ -1354,13 +1435,13 @@ const OverlayChain = struct {
     /// What was last presented isn't clear.
     shown: bool = false,
 
-    fn releaseTargets(self: *OverlayChain) void {
+    fn releaseTargets(self: *LayerChain) void {
         com.releaseOpt(&self.rtv);
         com.releaseOpt(&self.d2d_target);
     }
 
     /// Let the chain go, leaving the visual empty.
-    fn releaseChain(self: *OverlayChain) void {
+    fn releaseChain(self: *LayerChain) void {
         self.releaseTargets();
         if (self.swap_chain == null) return;
         _ = self.visual.setContent(null);
@@ -1368,7 +1449,7 @@ const OverlayChain = struct {
         self.shown = false;
     }
 
-    fn deinit(self: *OverlayChain) void {
+    fn deinit(self: *LayerChain) void {
         self.releaseChain();
         com.release(self.visual);
     }
@@ -1380,53 +1461,74 @@ const OverlayChain = struct {
 fn createOverlay(self: *D3D11, above: *dcomp.IVisual) Error!void {
     var visual: ?*dcomp.IVisual = null;
     try com.check(self.comp.device.createVisual(&visual), "IDCompositionDevice2::CreateVisual");
-    var o: OverlayChain = .{ .visual = visual.? };
+    var o: LayerChain = .{ .visual = visual.? };
     errdefer o.deinit();
-    if (!self.released) try self.createOverlayChain(&o);
+    if (!self.released) try self.createLayerChain(&o, "overlay");
     try com.check(self.comp.root.addVisual(o.visual, true, above), "IDCompositionVisual::AddVisual");
     self.overlay = o;
 }
 
-/// Make `o`'s chain, presented clear, its visual's content.
-fn createOverlayChain(self: *D3D11, o: *OverlayChain) Error!void {
-    const chain = try createChain(self.factory, self.device, self.width, self.height, dxgi.ALPHA_MODE_PREMULTIPLIED, 0);
-    o.swap_chain = chain;
-    errdefer o.releaseChain();
-    try self.createTargets(chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &o.rtv, &o.d2d_target);
-    try self.clearOverlay(o);
-    try com.check(o.visual.setContent(chain), "IDCompositionVisual::SetContent");
+/// Make the float chain, presented clear, right under the overlay, and
+/// move the floats' pane visuals over it. While the device is lost, the
+/// visual alone: `recover` makes the chain.
+fn createFloatChain(self: *D3D11) Error!void {
+    const o = self.overlay orelse return error.HResult;
+    var visual: ?*dcomp.IVisual = null;
+    try com.check(self.comp.device.createVisual(&visual), "IDCompositionDevice2::CreateVisual");
+    var fc: LayerChain = .{ .visual = visual.? };
+    errdefer fc.deinit();
+    if (!self.released) try self.createLayerChain(&fc, "float");
+    const root = self.comp.root;
+    try com.check(root.addVisual(fc.visual, false, o.visual), "IDCompositionVisual::AddVisual");
+    for (self.pane_visuals.items) |e| {
+        if (e.props.layer != .float) continue;
+        _ = root.removeVisual(e.visual.visual());
+        try com.check(root.addVisual(e.visual.visual(), false, o.visual), "IDCompositionVisual::AddVisual");
+    }
+    self.float_chain = fc;
     self.comp.dirty = true;
-    log.info("overlay chain created {d}x{d}", .{ self.width, self.height });
 }
 
-/// Present the overlay clear. Twice: DWM can hold a flip chain's last
-/// present back until another comes (it did with no display attached),
-/// and the overlay presents nothing more until it has something to show,
-/// so a single clear left a closed dialog on screen.
-fn clearOverlay(self: *D3D11, o: *OverlayChain) Error!void {
-    const rtv = o.rtv orelse return;
+/// Make `c`'s chain, presented clear, its visual's content.
+fn createLayerChain(self: *D3D11, c: *LayerChain, name: []const u8) Error!void {
+    const chain = try createChain(self.factory, self.device, self.width, self.height, dxgi.ALPHA_MODE_PREMULTIPLIED, 0);
+    c.swap_chain = chain;
+    errdefer c.releaseChain();
+    try self.createTargets(chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &c.rtv, &c.d2d_target);
+    try self.clearLayer(c);
+    try com.check(c.visual.setContent(chain), "IDCompositionVisual::SetContent");
+    self.comp.dirty = true;
+    log.info("{s} chain created {d}x{d}", .{ name, self.width, self.height });
+}
+
+/// Present a layer's chain clear. Twice: DWM can hold a flip chain's
+/// last present back until another comes (it did with no display
+/// attached), and a layer presents nothing more until it has something
+/// to show, so a single clear left a closed dialog on screen.
+fn clearLayer(self: *D3D11, c: *LayerChain) Error!void {
+    const rtv = c.rtv orelse return;
     for (0..2) |_| {
         self.context.clearRenderTargetView(rtv, &.{ 0, 0, 0, 0 });
-        try com.check(o.swap_chain.?.present(0, 0), "IDXGISwapChain::Present(overlay)");
+        try com.check(c.swap_chain.?.present(0, 0), "IDXGISwapChain::Present(layer)");
     }
-    o.shown = false;
+    c.shown = false;
 }
 
-fn resizeOverlay(self: *D3D11, o: *OverlayChain) Error!void {
-    const chain = o.swap_chain orelse return;
-    o.releaseTargets();
+fn resizeLayer(self: *D3D11, c: *LayerChain) Error!void {
+    const chain = c.swap_chain orelse return;
+    c.releaseTargets();
     if (builtin.mode == .debug and self.debug_fail_overlay_resize) {
         self.debug_fail_overlay_resize = false;
-        log.err("IDXGISwapChain::ResizeBuffers(overlay) failed on purpose", .{});
+        log.err("IDXGISwapChain::ResizeBuffers(layer) failed on purpose", .{});
         return error.HResult;
     }
     try com.check(
         chain.resizeBuffers(0, self.width, self.height, .UNKNOWN, 0),
-        "IDXGISwapChain::ResizeBuffers(overlay)",
+        "IDXGISwapChain::ResizeBuffers(layer)",
     );
-    try self.createTargets(chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &o.rtv, &o.d2d_target);
+    try self.createTargets(chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &c.rtv, &c.d2d_target);
     // The resized buffers hold nothing presentable.
-    try self.clearOverlay(o);
+    try self.clearLayer(c);
 }
 
 const D2d = struct {

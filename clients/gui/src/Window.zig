@@ -645,9 +645,10 @@ fn fontsOf(self: *Window, grid: *const font.Grid) *const Renderer.Fonts {
 
 /// Show the shown browser panes' pages where they're placed, over their
 /// boxes inside the border, dimmed as a terminal without focus is; the
-/// others' are hidden. A page a float covers is hidden too, since its
-/// browser draws over everything in the frame: a picture of it stands
-/// in (`App.pageCovered`).
+/// others' are hidden. The shown tab's pages go under the floats and a
+/// float's over them (the renderer's layers). A float's page another
+/// float covers is hidden, since its browser draws over that float's
+/// layer too: a picture of it stands in (`App.pageCovered`).
 fn placeBrowsers(self: *Window) void {
     const app = &self.app;
     self.web.beginPlacing();
@@ -665,6 +666,7 @@ fn placeBrowsers(self: *Window) void {
             .bounds = Web.pageBounds(p.rect, border),
             .radius = @max(0, self.frame.corner - border),
             .opacity = if (several and p.session != tab.focus) 1 - PaneStrip.dim else 1,
+            .layer = if (p.tab.float != null) .float else .ground,
         });
     }
 }
