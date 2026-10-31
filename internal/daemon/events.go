@@ -19,6 +19,16 @@ func (p *Pane) event(c *conn, data []byte) {
 		p.mu.Unlock()
 		return
 	}
+	// The viewer lost its copies (a GPU reset): start it over as an
+	// attach does, minus the notices, and the full frame brings every
+	// placed image again.
+	if vt.IsRefresh(data) {
+		v.full = true
+		v.changed = true
+		p.wakeFramer()
+		p.mu.Unlock()
+		return
+	}
 	r, err := v.view.Event(p.term, p.win32InputLocked(), data)
 	if err != nil {
 		p.mu.Unlock()

@@ -15,6 +15,9 @@ factory: *d2d1.IFactory1,
 brush: *d2d1.ISolidColorBrush,
 icon: ?Icon = null,
 lucide: ?*const LucideIcons = null,
+/// The renderer's `device_generation`: images of another are the old
+/// device's.
+generation: u32 = 0,
 
 /// An SVG image parsed once, drawn at any size.
 pub const Icon = struct {
@@ -233,7 +236,15 @@ pub const Image = struct {
     bitmap: *d2d1.IBitmap1,
     w: f32,
     h: f32,
+    /// The renderer's `device_generation` when made; `image` draws
+    /// nothing for another (the bitmap is the old device's).
+    generation: u32,
 };
+
+/// Whether `img` was made on the device this painter draws with.
+fn current(self: *const Painter, img: Image) bool {
+    return img.generation == self.generation;
+}
 
 /// Draw `img` scaled into `r` with high-quality filtering, inside rounded
 /// corners of `radius`, at `opacity`.
@@ -244,6 +255,7 @@ pub fn image(self: *Painter, img: Image, r: Rect, radius: f32, opacity: f32) voi
 /// Draw `img` scaled into `r`, cut to `clip` with rounded corners of
 /// `radius`, at `opacity`.
 pub fn imageIn(self: *Painter, img: Image, r: Rect, clip: Rect, radius: f32, opacity: f32) void {
+    if (!self.current(img)) return;
     var mask: ?*d2d1.IRoundedRectangleGeometry = null;
     com.check(self.factory.createRoundedRectangleGeometry(&.{ .rect = clip.d2d(), .radiusX = radius, .radiusY = radius }, &mask), "ID2D1Factory::CreateRoundedRectangleGeometry") catch return;
     defer com.releaseOpt(&mask);
@@ -266,4 +278,13 @@ test "Rect" {
     try std.testing.expect(!r.contains(40, 20));
     try std.testing.expectEqual(Rect{ .x = 12, .y = 21, .w = 26, .h = 38 }, r.inset(2, 1));
     try std.testing.expectEqual(Rect{ .x = 20, .y = 35, .w = 10, .h = 10 }, r.center(10, 10));
+}
+
+test "an image of another device generation isn't drawn" {
+    // Drawing would call through these: the image must be skipped first.
+    var p: Painter = .{ .ctx = undefined, .factory = undefined, .brush = undefined, .generation = 2 };
+    const old: Image = .{ .bitmap = undefined, .w = 1, .h = 1, .generation = 1 };
+    try std.testing.expect(!p.current(old));
+    try std.testing.expect(p.current(.{ .bitmap = undefined, .w = 1, .h = 1, .generation = 2 }));
+    p.image(old, .{ .w = 1, .h = 1 }, 0, 1);
 }

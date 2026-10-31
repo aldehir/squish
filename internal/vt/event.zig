@@ -29,6 +29,8 @@
 //!               (empty: end the search)
 //!     search_step: u8 (0 next, 1 previous)
 //!     copy_mode: u8 (CopyMode: exit, enter, toggle)
+//!     refresh:  (the client lost what it had, its GPU's copies: the
+//!               next frame is full, with every placed image again)
 //!
 //! A win32 record is win32-input-mode's: u16 vk, u16 scan code, u16 char,
 //! u8 down, u32 control key state, u16 repeat. Mouse and wheel positions
@@ -50,6 +52,7 @@ pub const Kind = enum(u8) {
     search = 11,
     search_step = 12,
     copy_mode = 13,
+    refresh = 14,
 };
 
 /// A search event (search.zig): which way `next` goes, and what to
@@ -178,6 +181,7 @@ pub fn Codec(comptime vt: type) type {
             search: Search,
             search_step: SearchStep,
             copy_mode: CopyMode,
+            refresh,
         };
 
         pub fn encode(w: *std.Io.Writer, ev: Event) std.Io.Writer.Error!void {
@@ -250,6 +254,7 @@ pub fn Codec(comptime vt: type) type {
                 },
                 .search_step => |step| try w.writeByte(@intFromEnum(step)),
                 .copy_mode => |how| try w.writeByte(@intFromEnum(how)),
+                .refresh => {},
             }
         }
 
@@ -355,6 +360,7 @@ pub fn Codec(comptime vt: type) type {
                 } },
                 .search_step => .{ .search_step = std.enums.fromInt(SearchStep, try r.takeByte()) orelse return error.BadEvent },
                 .copy_mode => .{ .copy_mode = std.enums.fromInt(CopyMode, try r.takeByte()) orelse return error.BadEvent },
+                .refresh => .refresh,
             };
         }
 

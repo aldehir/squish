@@ -1048,6 +1048,22 @@ fn send(self: *Session, ev: Events.Event) void {
     s.conn.event(s.pane, w.buffered());
 }
 
+/// The renderer made its device again (`Renderer.recover`): what the
+/// old one held is gone. A terminal's kitty textures are the only
+/// copies of their pixels, so slime sends them again with a full frame;
+/// a browser's pictures are its view's to get again
+/// (`Web.deviceRecovered`).
+pub fn deviceRecovered(self: *Session) void {
+    if (self.term()) |t| {
+        t.textures.deinit(self.alloc);
+        t.textures = .{};
+        self.send(.refresh);
+    } else if (self.browser()) |b| {
+        Browser.setImage(&b.favicon, null);
+        Browser.setImage(&b.preview, null);
+    }
+}
+
 /// The config was reloaded: slime takes the colors and the selection's
 /// settings again, and its next frame shows them; clipboard writes go
 /// by the new setting.

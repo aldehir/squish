@@ -715,6 +715,8 @@ fn handle(self: *View, live: *vt.Terminal, win32_input: bool, ev: Events.Event, 
             }
             result.changed = true;
         },
+        // The daemon's to handle, before the view (events.go).
+        .refresh => {},
     }
 }
 

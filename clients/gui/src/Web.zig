@@ -1547,6 +1547,18 @@ pub fn capture(self: *Web, s: *Session, on: bool) void {
     };
 }
 
+/// The renderer made its device again, and the panes let their
+/// pictures go (`Session.deviceRecovered`): get each page's favicon
+/// again, and the picture of one being dragged. The views' visuals
+/// aren't the device's, so the pages show on.
+pub fn deviceRecovered(self: *Web) void {
+    for (self.views.items) |v| {
+        if (v.state != .ready) continue;
+        _ = faviconChanged(v, v.webview.?, null);
+        if (v.want_preview and v.preview_stream == null) if (v.session) |s| self.capture(s, true);
+    }
+}
+
 /// Close the views hidden longer than `idle_ms` (0: never) at tick
 /// `now`: their panes stand in, and open their url again when next
 /// placed. One asking a question is kept.

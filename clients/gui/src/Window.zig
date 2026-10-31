@@ -48,6 +48,8 @@ const WM_APP_CHILD_EXITED = messages.WM_APP_CHILD_EXITED;
 const WM_APP_TITLE_CHANGED = messages.WM_APP_TITLE_CHANGED;
 const WM_APP_CLIPBOARD_WRITE = messages.WM_APP_CLIPBOARD_WRITE;
 const WM_APP_DAEMON = messages.WM_APP_DAEMON;
+const WM_APP_DEBUG_LOSE_DEVICE = messages.WM_APP_DEBUG_LOSE_DEVICE;
+const WM_APP_DEBUG_FAIL_OVERLAY_RESIZE = messages.WM_APP_DEBUG_FAIL_OVERLAY_RESIZE;
 
 /// Room for the stats report, in UTF-16 units.
 const max_stats_len = 160;
@@ -63,6 +65,17 @@ const blink_timer_id = 4;
 const spinner_timer_id = 5;
 const tip_timer_id = 6;
 const repeat_timer_id = 7;
+/// Tries again to make a lost GPU device (`recoverDevice`).
+const device_timer_id = 8;
+
+/// How long `recoverDevice` waits between tries: soon at first, while
+/// the GPU may still be resetting, then less often.
+const device_retry_ms = 250;
+const device_retry_slow_ms = 1000;
+const device_fast_tries = 8;
+/// How long recovery holds out for a hardware device before taking a
+/// software one (WARP), which it then keeps until the displays change.
+const device_warp_after_ms = 5000;
 
 alloc: Allocator,
 io: std.Io,
@@ -87,6 +100,9 @@ frame: Ui.Frame = .{},
 /// Set last during creation; messages sent during CreateWindowExW
 /// (WM_SIZE, etc.) arrive before everything else is ready.
 renderer: ?Renderer = null,
+/// The renderer's device is being made again (`recoverDevice`): since
+/// when (GetTickCount64), and how many tries so far.
+device_lost: ?struct { at: u64, tries: u32 = 0 } = null,
 
 /// The state and what changes it. Points at `ui` and `frame`, and back
 /// here as its shell.
@@ -263,8 +279,10 @@ pub fn outputArrived(self: *Window) void {
     _ = self.app.update(.output);
 }
 
+/// Not while the device is lost: there's no chain to wait on, and the
+/// frame is drawn once it's made again.
 pub fn needsFrame(self: *const Window) bool {
-    return self.app.dirty;
+    return self.app.dirty and !self.renderer.?.lost;
 }
 
 pub fn frameGate(self: *const Window) win32.HANDLE {
@@ -273,8 +291,9 @@ pub fn frameGate(self: *const Window) win32.HANDLE {
 
 pub fn frameGateFired(self: *Window, gate: win32.HANDLE) void {
     const r = &self.renderer.?;
-    // The pace timer only moves us on to waiting for the swap chain.
-    if (gate != r.frame_waitable) return;
+    // The pace timer only moves us on to waiting for the swap chain, and
+    // a chain a lost device took isn't waited on.
+    if (r.lost or gate != r.frame_waitable) return;
     r.frameAcquired();
     // A synchronous render (resize, WM_PAINT) may have drawn it already;
     // the acquired frame then waits for the next change.
@@ -450,7 +469,54 @@ fn geometry(self: *const Window) App.Geometry {
 
 fn render(self: *Window) void {
     const r = &(self.renderer orelse return);
-    self.renderFallible(r) catch |err| log.err("render failed: {}", .{err});
+    // Drawn once the device is made again; it's still dirty.
+    if (r.lost) return;
+    self.renderFallible(r) catch |err| {
+        log.err("render failed: {}", .{err});
+        self.checkDevice();
+    };
+}
+
+/// Something the renderer did failed: if it was because its device is
+/// gone, make it again.
+fn checkDevice(self: *Window) void {
+    const r = &(self.renderer orelse return);
+    if (self.device_lost != null or !r.isLost()) return;
+    self.device_lost = .{ .at = win32.GetTickCount64() };
+    self.recoverDevice();
+}
+
+/// Try to make the renderer's device again, and if it can't be yet,
+/// try again later. Software (WARP) only after `device_warp_after_ms`,
+/// which a GPU still resetting may need. Once it's made, everything
+/// made on the old one is made again and the window is redrawn.
+fn recoverDevice(self: *Window) void {
+    const r = &(self.renderer orelse return);
+    const hwnd = self.hwnd orelse return;
+    const lost = if (self.device_lost) |*l| l else return;
+    lost.tries += 1;
+    const waited = win32.GetTickCount64() -| lost.at;
+    r.recover(hwnd, waited >= device_warp_after_ms) catch |err| {
+        const ms: u32 = if (lost.tries < device_fast_tries) device_retry_ms else device_retry_slow_ms;
+        log.warn("making the device again failed (try {d}): {}; again in {d} ms", .{ lost.tries, err, ms });
+        _ = win32.SetTimer(hwnd, device_timer_id, ms, null);
+        return;
+    };
+    _ = win32.KillTimer(hwnd, device_timer_id);
+    log.info("device recovered generation={d} tries={d} warp={}", .{ r.device_generation, lost.tries, r.warp });
+    // A resize that found it lost left the chains at the old size.
+    const size = self.clientSize();
+    if (size.width > 0 and size.height > 0) {
+        r.resize(size.width, size.height) catch |err| log.err("resize failed: {}", .{err});
+        self.updateLayout(size);
+        self.app.layout(self.geometry());
+    }
+    self.device_lost = null;
+    // Sessions first: the browsers' views get again what they let go.
+    self.app.deviceRecovered();
+    self.web.deviceRecovered();
+    // The loop draws it (app.dirty): drawing here could find the device
+    // lost again and come back in.
 }
 
 /// The widget tree, as the renderer draws it over the terminal: the app's
@@ -757,6 +823,7 @@ fn layout(self: *Window) void {
 
     r.resize(size.width, size.height) catch |err| {
         log.err("resize failed: {}", .{err});
+        self.checkDevice();
         return;
     };
     self.updateLayout(size);
@@ -1162,7 +1229,20 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
         },
 
         win32.WM_DISPLAYCHANGE => {
-            if (self.renderer) |*r| r.updateRefreshRate();
+            const r = &self.renderer.?;
+            r.updateRefreshRate();
+            // A display that went may have taken its GPU, with nothing
+            // drawing to find out; and one that came may bring a GPU
+            // for a window on software.
+            if (self.device_lost == null) {
+                if (r.isLost()) {
+                    self.checkDevice();
+                } else if (r.warp) {
+                    log.info("displays changed: trying for a hardware device", .{});
+                    self.device_lost = .{ .at = win32.GetTickCount64() -| device_warp_after_ms };
+                    self.recoverDevice();
+                }
+            }
             return 0;
         },
 
@@ -1181,6 +1261,7 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
                     if (win32.WaitForSingleObject(self.output_event, 0) == win32.WAIT_OBJECT_0) self.outputArrived();
                     if (app.dirty) self.render();
                 },
+                device_timer_id => self.recoverDevice(),
                 else => {},
             }
             return 0;
@@ -1215,6 +1296,18 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
 
         WM_APP_CLIPBOARD_WRITE => {
             _ = app.update(.{ .session = .{ .id = @intCast(wparam), .what = .clipboard } });
+            return 0;
+        },
+
+        // Debug builds only: the renderer ignores them in others.
+        WM_APP_DEBUG_LOSE_DEVICE => {
+            self.renderer.?.loseDevice();
+            self.checkDevice();
+            return 0;
+        },
+
+        WM_APP_DEBUG_FAIL_OVERLAY_RESIZE => {
+            self.renderer.?.failOverlayResize();
             return 0;
         },
 

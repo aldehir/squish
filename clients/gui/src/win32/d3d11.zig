@@ -206,6 +206,11 @@ pub const IDevice = extern struct {
     pub fn createSamplerState(self: *IDevice, desc: *const SAMPLER_DESC, out: *?*ISamplerState) HRESULT {
         return com.call(self, 23, fn (*const SAMPLER_DESC, *?*ISamplerState) HRESULT, .{ desc, out });
     }
+
+    /// S_OK while the device works; why it was removed otherwise.
+    pub fn getDeviceRemovedReason(self: *IDevice) HRESULT {
+        return com.call(self, 39, fn () HRESULT, .{});
+    }
 };
 
 pub const IDeviceContext = extern struct {

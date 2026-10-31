@@ -371,6 +371,17 @@ type Result struct {
 	SearchPrompt uint8
 }
 
+// eventRefresh is event.zig's Kind.refresh.
+const eventRefresh = 14
+
+// IsRefresh reports whether ev is a refresh event: the client lost what
+// it had of the pane (its GPU's copies) and wants a full frame, with
+// every placed image again. Not the View's: the caller handles it, and
+// doesn't pass it to Event.
+func IsRefresh(ev []byte) bool {
+	return len(ev) > 0 && ev[0] == eventRefresh
+}
+
 // Event handles an event from the client (event.zig's encoding).
 // win32Input is whether the program turned on win32-input-mode (DEC
 // 9001), which libghostty-vt leaves to us.

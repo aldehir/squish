@@ -2261,6 +2261,16 @@ pub fn configChanged(self: *App) void {
     self.markDirty();
 }
 
+/// The renderer made its device again: every session lets go of what
+/// it had on the old one.
+pub fn deviceRecovered(self: *App) void {
+    for (self.tabs.items) |t| {
+        var it = t.iterator();
+        while (it.next()) |s| s.deviceRecovered();
+    }
+    self.markDirty();
+}
+
 /// Show what's wrong with the config under the title bar: `daemon_errors`
 /// (why init.lua didn't load), then what the window's settings got
 /// wrong (`Config.errors`); nothing, for none.

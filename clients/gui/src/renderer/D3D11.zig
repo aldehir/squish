@@ -19,6 +19,13 @@
 //! transparent chain over them takes what must be over panes (dialogs,
 //! the menu, the tooltip, a dragged pane). Without them the window draws
 //! into the one chain alone.
+//!
+//! A device can be lost (a driver update or reset, a GPU going away):
+//! `isLost` says so after a failed `draw` or `resize`, and `recover`
+//! makes everything on the device again on a new one. The composition
+//! tree isn't the device's, so it stays, and browser panes' visuals with
+//! it; what others made on the device (kitty textures, decoded images)
+//! is told apart by `device_generation`.
 const D3D11 = @This();
 
 const std = @import("std");
@@ -47,17 +54,21 @@ const shader_source = @embedFile("shaders.hlsl");
 const default_refresh_period = 10_000_000 / 60;
 
 alloc: std.mem.Allocator,
-device: *d3d11.IDevice,
-context: *d3d11.IDeviceContext,
-factory: *dxgi.IFactory2,
+// Everything up to `brush` is made on the device (`createDeviceObjects`),
+// undefined while `released`.
+device: *d3d11.IDevice = undefined,
+context: *d3d11.IDeviceContext = undefined,
+/// Made with the device: one made before the adapters changed still
+/// lists the old ones.
+factory: *dxgi.IFactory2 = undefined,
 /// The ground: everything but what `overlay` takes.
-swap_chain: *dxgi.ISwapChain1,
+swap_chain: *dxgi.ISwapChain1 = undefined,
 /// Must be passed again to ResizeBuffers.
-swap_chain_flags: u32,
-present_flags: u32,
+swap_chain_flags: u32 = 0,
+present_flags: u32 = 0,
 /// Signaled when the swap chain can accept another frame. Each wait
 /// takes one frame's worth; see `waitForFrame`.
-frame_waitable: win32.HANDLE,
+frame_waitable: win32.HANDLE = undefined,
 /// Set when a wait on `frame_waitable` succeeded and no frame has been
 /// presented since.
 frame_acquired: bool = false,
@@ -77,8 +88,8 @@ rtv: ?*d3d11.IRenderTargetView = null,
 width: u32,
 height: u32,
 
-pipeline: Pipeline,
-uniforms: *d3d11.IBuffer,
+pipeline: Pipeline = undefined,
+uniforms: *d3d11.IBuffer = undefined,
 bg_cells: DynamicBuffer = .{ .stride = @sizeOf(u32) },
 instances: DynamicBuffer = .{ .stride = @sizeOf(cells.Instance) },
 
@@ -87,22 +98,40 @@ instances: DynamicBuffer = .{ .stride = @sizeOf(cells.Instance) },
 gpu_fonts: std.AutoArrayHashMapUnmanaged(u32, GpuFonts) = .empty,
 
 /// The placement being drawn (see `drawImages`).
-image_placement: *d3d11.IBuffer,
+image_placement: *d3d11.IBuffer = undefined,
 /// The pane box being drawn (see `drawBox`).
-box: *d3d11.IBuffer,
+box: *d3d11.IBuffer = undefined,
 
-d2d_factory: *d2d1.IFactory1,
-d2d_device: *d2d1.IDevice,
-d2d_context: *d2d1.IDeviceContext,
+d2d_factory: *d2d1.IFactory1 = undefined,
+d2d_device: *d2d1.IDevice = undefined,
+d2d_context: *d2d1.IDeviceContext = undefined,
 /// The back buffer as a Direct2D target. Released with `rtv`.
 d2d_target: ?*d2d1.IBitmap1 = null,
-brush: *d2d1.ISolidColorBrush,
+brush: *d2d1.ISolidColorBrush = undefined,
+/// The device is software (WARP): no hardware one could be made.
+warp: bool = false,
+/// The objects made on the device are released (`releaseDevice`), and
+/// `recover` hasn't made them again.
+released: bool = true,
+/// The device was found lost (`isLost`) and `recover` hasn't yet
+/// succeeded: `draw` does nothing, and `resize` only notes the size.
+lost: bool = false,
+/// Bumped by every `recover`. What's made on the device outside the
+/// renderer (kitty textures, decoded images) records the generation it
+/// was made at, and is dropped at another.
+device_generation: u32 = 0,
+/// Debug builds: `isLost` says so once, as if the device were gone
+/// (`loseDevice`), and the next overlay resize fails
+/// (`failOverlayResize`).
+debug_lose: bool = false,
+debug_fail_overlay_resize: bool = false,
 /// The app icon, for the title bar. Null where Direct2D can't draw SVG.
 icon: ?Painter.Icon = null,
 /// The chrome's icons. Null where Direct2D can't draw SVG.
 lucide: ?Painter.LucideIcons = null,
 /// The chrome's text antialiasing, as Direct2D takes it.
 text_antialias: u32,
+/// Not the device's: it outlives `recover`.
 comp: Composition,
 /// Browser panes' container visuals, over the ground (see `setPaneVisual`).
 pane_visuals: std.ArrayList(PaneVisualEntry) = .empty,
@@ -117,13 +146,24 @@ wic_factory: ?*wic.IImagingFactory = null,
 /// GPU copies of one terminal's kitty images (see `image.Images`), by
 /// kitty image ID. Each terminal needs its own: image IDs are per
 /// terminal, and pixels are freed once uploaded, so these are the only
-/// copies.
+/// copies; after `recover`, slime sends them again.
 pub const ImageTextures = struct {
     map: std.AutoArrayHashMapUnmanaged(u32, ImageTexture) = .empty,
+    /// The `device_generation` the textures were made at.
+    generation: u32 = 0,
 
     pub fn deinit(self: *ImageTextures, alloc: std.mem.Allocator) void {
         for (self.map.values()) |t| t.deinit();
         self.map.deinit(alloc);
+    }
+
+    /// Release the textures if they're another generation's, the old
+    /// device's, and take `generation`.
+    fn adopt(self: *ImageTextures, generation: u32) void {
+        if (self.generation == generation) return;
+        for (self.map.values()) |t| t.deinit();
+        self.map.clearRetainingCapacity();
+        self.generation = generation;
     }
 };
 
@@ -229,42 +269,6 @@ pub const Error = com.Error;
 
 /// `antialias` is for the chrome's text; the grid's comes rasterized.
 pub fn init(alloc: std.mem.Allocator, hwnd: win32.HWND, width: u32, height: u32, antialias: font.Antialias) Error!D3D11 {
-    var device: ?*d3d11.IDevice = null;
-    var context: ?*d3d11.IDeviceContext = null;
-    try createDevice(&device, &context);
-    errdefer com.releaseOpt(&device);
-    errdefer com.releaseOpt(&context);
-
-    var factory: ?*dxgi.IFactory2 = null;
-    try com.check(
-        dxgi.CreateDXGIFactory2(0, &dxgi.IFactory2.iid, @ptrCast(&factory)),
-        "CreateDXGIFactory2",
-    );
-    errdefer com.releaseOpt(&factory);
-
-    // Tearing lets a frame reach the screen without waiting for vblank
-    // when DWM hands the window an independent flip (e.g. maximized on
-    // a display with VRR or MPO support); otherwise DWM still composes
-    // at vblank and the flag just keeps Present from blocking.
-    const tearing = tearingSupported(factory.?);
-    const swap_chain_flags = dxgi.SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
-        if (tearing) dxgi.SWAP_CHAIN_FLAG_ALLOW_TEARING else 0;
-
-    const swap_chain = try createChain(factory.?, device.?, width, height, dxgi.ALPHA_MODE_IGNORE, swap_chain_flags);
-    errdefer com.release(swap_chain);
-
-    const swap_chain2 = com.query(swap_chain, dxgi.ISwapChain2) orelse {
-        log.err("swap chain has no IDXGISwapChain2", .{});
-        return error.HResult;
-    };
-    defer com.release(swap_chain2);
-    try com.check(swap_chain2.setMaximumFrameLatency(1), "IDXGISwapChain2::SetMaximumFrameLatency");
-    const frame_waitable = swap_chain2.getFrameLatencyWaitableObject() orelse {
-        log.err("swap chain has no frame latency waitable object", .{});
-        return error.HResult;
-    };
-    errdefer _ = win32.CloseHandle(frame_waitable);
-
     const pace_timer = win32.CreateWaitableTimerExW(
         null,
         null,
@@ -273,111 +277,256 @@ pub fn init(alloc: std.mem.Allocator, hwnd: win32.HWND, width: u32, height: u32,
     ) orelse return error.HResult;
     errdefer _ = win32.CloseHandle(pace_timer);
 
-    // Fullscreen is ours to implement; don't let DXGI hijack Alt+Enter.
-    _ = factory.?.makeWindowAssociation(hwnd, dxgi.MWA_NO_ALT_ENTER);
-
-    var pipeline: Pipeline = try .init(device.?);
-    errdefer pipeline.deinit();
-
-    var uniforms: ?*d3d11.IBuffer = null;
-    try com.check(device.?.createBuffer(&.{
-        .ByteWidth = @sizeOf(cells.Uniforms),
-        .Usage = d3d11.USAGE_DYNAMIC,
-        .BindFlags = d3d11.BIND_CONSTANT_BUFFER,
-        .CPUAccessFlags = d3d11.CPU_ACCESS_WRITE,
-    }, &uniforms), "ID3D11Device::CreateBuffer(uniforms)");
-    errdefer com.releaseOpt(&uniforms);
-
-    var image_placement: ?*d3d11.IBuffer = null;
-    try com.check(device.?.createBuffer(&.{
-        .ByteWidth = @sizeOf(image.Placement),
-        .Usage = d3d11.USAGE_DYNAMIC,
-        .BindFlags = d3d11.BIND_CONSTANT_BUFFER,
-        .CPUAccessFlags = d3d11.CPU_ACCESS_WRITE,
-    }, &image_placement), "ID3D11Device::CreateBuffer(image placement)");
-    errdefer com.releaseOpt(&image_placement);
-
-    var box: ?*d3d11.IBuffer = null;
-    try com.check(device.?.createBuffer(&.{
-        .ByteWidth = @sizeOf(Box),
-        .Usage = d3d11.USAGE_DYNAMIC,
-        .BindFlags = d3d11.BIND_CONSTANT_BUFFER,
-        .CPUAccessFlags = d3d11.CPU_ACCESS_WRITE,
-    }, &box), "ID3D11Device::CreateBuffer(box)");
-    errdefer com.releaseOpt(&box);
-
-    const text_antialias = textAntialiasMode(antialias);
-    const d2d = try createD2d(device.?, text_antialias);
-    errdefer d2d.deinit();
-
-    const comp: Composition = try .init(hwnd, swap_chain);
+    const comp: Composition = try .init(hwnd);
     errdefer comp.deinit();
 
     var self: D3D11 = .{
         .alloc = alloc,
-        .device = device.?,
-        .context = context.?,
-        .factory = factory.?,
-        .swap_chain = swap_chain,
-        .swap_chain_flags = swap_chain_flags,
-        .present_flags = if (tearing) dxgi.PRESENT_ALLOW_TEARING else 0,
-        .frame_waitable = frame_waitable,
         .pace_timer = pace_timer,
         .width = width,
         .height = height,
-        .pipeline = pipeline,
-        .uniforms = uniforms.?,
-        .image_placement = image_placement.?,
-        .box = box.?,
-        .d2d_factory = d2d.factory,
-        .d2d_device = d2d.device,
-        .d2d_context = d2d.context,
-        .brush = d2d.brush,
-        .icon = Painter.Icon.init(d2d.context, @embedFile("slime-small.svg"), 1024),
-        .lucide = Painter.initLucide(d2d.context),
-        .text_antialias = text_antialias,
+        .text_antialias = textAntialiasMode(antialias),
         .comp = comp,
     };
-    try self.createRenderTarget();
     self.updateRefreshRate();
-    log.info("composition swap chain: waitable, max latency 1, tearing={}, refresh {d:.1} Hz", .{
-        tearing,
-        10_000_000.0 / @as(f64, @floatFromInt(self.refresh_period)),
-    });
+    try self.createDeviceObjects(hwnd, true);
     // Signal right away: the first frame needn't wait.
     self.setPaceTimer(-1);
     return self;
 }
 
 pub fn deinit(self: *D3D11) void {
-    self.context.clearState();
-    self.d2d_context.setTarget(null);
-    com.releaseOpt(&self.d2d_target);
+    if (!self.released) self.releaseDevice();
     for (self.pane_visuals.items) |e| e.deinit();
     self.pane_visuals.deinit(self.alloc);
     if (self.overlay) |*o| o.deinit();
     self.comp.deinit();
-    if (self.icon) |icon| icon.deinit();
-    if (self.lucide) |*icons| Painter.deinitLucide(icons);
-    if (self.capture) |c| c.deinit();
     com.releaseOpt(&self.wic_factory);
+    self.gpu_fonts.deinit(self.alloc);
+    _ = win32.CloseHandle(self.pace_timer);
+    self.* = undefined;
+}
+
+/// Whether the device is gone: once a `draw` or `resize` failed, it
+/// may be. Says so until `recover` succeeds.
+pub fn isLost(self: *D3D11) bool {
+    if (self.lost) return true;
+    if (self.released) return true;
+    const hr = if (builtin.mode == .debug and self.debug_lose) dxgi.ERROR_DEVICE_REMOVED else self.device.getDeviceRemovedReason();
+    self.debug_lose = false;
+    if (hr >= 0) return false;
+    log.err("device lost: HRESULT=0x{X:0>8}", .{@as(u32, @bitCast(hr))});
+    self.lost = true;
+    return true;
+}
+
+/// Make everything on the device again on a new one, and bump
+/// `device_generation`: the composition tree and the panes' visuals
+/// stay, and the new chains become the root's and the overlay's
+/// content. Software (WARP) only if `allow_warp`. On error the old
+/// objects are already gone and it's still lost: call again later.
+/// Works on a device that isn't lost too, to move off WARP.
+pub fn recover(self: *D3D11, hwnd: win32.HWND, allow_warp: bool) Error!void {
+    self.lost = true;
+    if (!self.released) self.releaseDevice();
+    try self.createDeviceObjects(hwnd, allow_warp);
+    self.lost = false;
+    self.device_generation +%= 1;
+    // A wait the loop made on the old chain's waitable isn't this one's.
+    self.frame_acquired = false;
+    self.setPaceTimer(-1);
+}
+
+/// Debug builds: have the next `isLost` say the device is gone.
+pub fn loseDevice(self: *D3D11) void {
+    if (builtin.mode == .debug) self.debug_lose = true;
+}
+
+/// Debug builds: have the next overlay resize fail, its targets gone.
+pub fn failOverlayResize(self: *D3D11) void {
+    if (builtin.mode == .debug) self.debug_fail_overlay_resize = true;
+}
+
+/// What `createDeviceObjects` makes before handing it to the renderer.
+const Gpu = struct {
+    factory: *dxgi.IFactory2,
+    device: *d3d11.IDevice,
+    context: *d3d11.IDeviceContext,
+    warp: bool,
+    swap_chain: *dxgi.ISwapChain1,
+    swap_chain_flags: u32,
+    tearing: bool,
+    frame_waitable: win32.HANDLE,
+    pipeline: Pipeline,
+    uniforms: *d3d11.IBuffer,
+    image_placement: *d3d11.IBuffer,
+    box: *d3d11.IBuffer,
+    d2d: D2d,
+
+    fn init(hwnd: win32.HWND, width: u32, height: u32, text_antialias: u32, allow_warp: bool) Error!Gpu {
+        // A new factory each time: one made before the adapters changed
+        // still lists the old ones, and the device would be made on one.
+        var factory: ?*dxgi.IFactory2 = null;
+        try com.check(
+            dxgi.CreateDXGIFactory2(0, &dxgi.IFactory2.iid, @ptrCast(&factory)),
+            "CreateDXGIFactory2",
+        );
+        errdefer com.releaseOpt(&factory);
+
+        var device: ?*d3d11.IDevice = null;
+        var context: ?*d3d11.IDeviceContext = null;
+        const driver = try createDevice(&device, &context, allow_warp);
+        errdefer com.releaseOpt(&device);
+        errdefer com.releaseOpt(&context);
+
+        // Tearing lets a frame reach the screen without waiting for vblank
+        // when DWM hands the window an independent flip (e.g. maximized on
+        // a display with VRR or MPO support); otherwise DWM still composes
+        // at vblank and the flag just keeps Present from blocking.
+        const tearing = tearingSupported(factory.?);
+        const swap_chain_flags = dxgi.SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT |
+            if (tearing) dxgi.SWAP_CHAIN_FLAG_ALLOW_TEARING else 0;
+
+        const swap_chain = try createChain(factory.?, device.?, width, height, dxgi.ALPHA_MODE_IGNORE, swap_chain_flags);
+        errdefer com.release(swap_chain);
+
+        const swap_chain2 = com.query(swap_chain, dxgi.ISwapChain2) orelse {
+            log.err("swap chain has no IDXGISwapChain2", .{});
+            return error.HResult;
+        };
+        defer com.release(swap_chain2);
+        try com.check(swap_chain2.setMaximumFrameLatency(1), "IDXGISwapChain2::SetMaximumFrameLatency");
+        const frame_waitable = swap_chain2.getFrameLatencyWaitableObject() orelse {
+            log.err("swap chain has no frame latency waitable object", .{});
+            return error.HResult;
+        };
+        errdefer _ = win32.CloseHandle(frame_waitable);
+
+        // Fullscreen is ours to implement; don't let DXGI hijack Alt+Enter.
+        _ = factory.?.makeWindowAssociation(hwnd, dxgi.MWA_NO_ALT_ENTER);
+
+        var pipeline: Pipeline = try .init(device.?);
+        errdefer pipeline.deinit();
+
+        var uniforms: ?*d3d11.IBuffer = null;
+        try com.check(device.?.createBuffer(&.{
+            .ByteWidth = @sizeOf(cells.Uniforms),
+            .Usage = d3d11.USAGE_DYNAMIC,
+            .BindFlags = d3d11.BIND_CONSTANT_BUFFER,
+            .CPUAccessFlags = d3d11.CPU_ACCESS_WRITE,
+        }, &uniforms), "ID3D11Device::CreateBuffer(uniforms)");
+        errdefer com.releaseOpt(&uniforms);
+
+        var image_placement: ?*d3d11.IBuffer = null;
+        try com.check(device.?.createBuffer(&.{
+            .ByteWidth = @sizeOf(image.Placement),
+            .Usage = d3d11.USAGE_DYNAMIC,
+            .BindFlags = d3d11.BIND_CONSTANT_BUFFER,
+            .CPUAccessFlags = d3d11.CPU_ACCESS_WRITE,
+        }, &image_placement), "ID3D11Device::CreateBuffer(image placement)");
+        errdefer com.releaseOpt(&image_placement);
+
+        var box: ?*d3d11.IBuffer = null;
+        try com.check(device.?.createBuffer(&.{
+            .ByteWidth = @sizeOf(Box),
+            .Usage = d3d11.USAGE_DYNAMIC,
+            .BindFlags = d3d11.BIND_CONSTANT_BUFFER,
+            .CPUAccessFlags = d3d11.CPU_ACCESS_WRITE,
+        }, &box), "ID3D11Device::CreateBuffer(box)");
+        errdefer com.releaseOpt(&box);
+
+        const d2d = try createD2d(device.?, text_antialias);
+
+        return .{
+            .factory = factory.?,
+            .device = device.?,
+            .context = context.?,
+            .warp = driver == .WARP,
+            .swap_chain = swap_chain,
+            .swap_chain_flags = swap_chain_flags,
+            .tearing = tearing,
+            .frame_waitable = frame_waitable,
+            .pipeline = pipeline,
+            .uniforms = uniforms.?,
+            .image_placement = image_placement.?,
+            .box = box.?,
+            .d2d = d2d,
+        };
+    }
+};
+
+/// Make everything that's the device's (see `Gpu`) on a new device, the
+/// back buffers' targets, the chrome's icons, and the overlay's chain if
+/// there's an overlay, and make the chains the visuals' content. All or
+/// nothing.
+fn createDeviceObjects(self: *D3D11, hwnd: win32.HWND, allow_warp: bool) Error!void {
+    std.debug.assert(self.released);
+    const gpu: Gpu = try .init(hwnd, self.width, self.height, self.text_antialias, allow_warp);
+    self.factory = gpu.factory;
+    self.device = gpu.device;
+    self.context = gpu.context;
+    self.warp = gpu.warp;
+    self.swap_chain = gpu.swap_chain;
+    self.swap_chain_flags = gpu.swap_chain_flags;
+    self.present_flags = if (gpu.tearing) dxgi.PRESENT_ALLOW_TEARING else 0;
+    self.frame_waitable = gpu.frame_waitable;
+    self.pipeline = gpu.pipeline;
+    self.uniforms = gpu.uniforms;
+    self.image_placement = gpu.image_placement;
+    self.box = gpu.box;
+    self.d2d_factory = gpu.d2d.factory;
+    self.d2d_device = gpu.d2d.device;
+    self.d2d_context = gpu.d2d.context;
+    self.brush = gpu.d2d.brush;
+    self.icon = Painter.Icon.init(gpu.d2d.context, @embedFile("slime-small.svg"), 1024);
+    self.lucide = Painter.initLucide(gpu.d2d.context);
+    self.released = false;
+    errdefer self.releaseDevice();
+
+    try self.createRenderTarget();
+    if (self.overlay) |*o| try self.createOverlayChain(o);
+    try com.check(self.comp.root.setContent(self.swap_chain), "IDCompositionVisual::SetContent");
+    try self.commit();
+    log.info("composition swap chain: waitable, max latency 1, tearing={}, refresh {d:.1} Hz", .{
+        gpu.tearing,
+        10_000_000.0 / @as(f64, @floatFromInt(self.refresh_period)),
+    });
+}
+
+/// Let go of everything made on the device, leaving the composition
+/// tree (the visuals without content) and what isn't the device's.
+fn releaseDevice(self: *D3D11) void {
+    std.debug.assert(!self.released);
+    // The visuals hold the chains, and with them the old device.
+    _ = self.comp.root.setContent(null);
+    if (self.overlay) |*o| o.releaseChain();
+    _ = self.comp.device.commit();
+    self.context.clearState();
+    self.d2d_context.setTarget(null);
+    com.releaseOpt(&self.d2d_target);
+    com.releaseOpt(&self.rtv);
+    if (self.icon) |icon| icon.deinit();
+    self.icon = null;
+    if (self.lucide) |*icons| Painter.deinitLucide(icons);
+    self.lucide = null;
+    if (self.capture) |c| c.deinit();
+    self.capture = null;
     (D2d{ .factory = self.d2d_factory, .device = self.d2d_device, .context = self.d2d_context, .brush = self.brush }).deinit();
     com.release(self.image_placement);
     com.release(self.box);
     self.dropAtlases();
-    self.gpu_fonts.deinit(self.alloc);
     self.instances.deinit();
     self.bg_cells.deinit();
     com.release(self.uniforms);
     self.pipeline.deinit();
-    com.releaseOpt(&self.rtv);
     _ = win32.CloseHandle(self.frame_waitable);
-    _ = win32.CloseHandle(self.pace_timer);
     com.release(self.swap_chain);
     com.release(self.factory);
     com.release(self.context);
     com.release(self.device);
-    self.* = undefined;
+    self.frame_acquired = false;
+    self.frame_started = false;
+    self.released = true;
 }
 
 fn tearingSupported(factory: *dxgi.IFactory2) bool {
@@ -447,7 +596,7 @@ fn setPaceTimer(self: *D3D11, due: i64) void {
 /// successful wait, or frames start queueing again. Call before taking
 /// the terminal snapshot so the frame shows the newest state.
 pub fn waitForFrame(self: *D3D11) void {
-    if (self.frame_started) return;
+    if (self.lost or self.frame_started) return;
     self.frame_started = true;
     // The next frame may start a refresh period after this one starts,
     // not after it's presented, or rendering time stretches the period.
@@ -457,10 +606,16 @@ pub fn waitForFrame(self: *D3D11) void {
     self.frame_acquired = win32.WaitForSingleObject(self.frame_waitable, 1000) == win32.WAIT_OBJECT_0;
 }
 
-/// Resize the swap chain buffers to the new client area size.
+/// Resize the swap chain buffers to the new client area size. While
+/// the device is lost, only the size is noted, for `recover`.
 pub fn resize(self: *D3D11, width: u32, height: u32) Error!void {
     if (width == 0 or height == 0) return;
     if (width == self.width and height == self.height) return;
+    if (self.lost) {
+        self.width = width;
+        self.height = height;
+        return;
+    }
 
     // All references to the back buffers must be released before
     // ResizeBuffers, including the ones bound to the pipeline.
@@ -488,8 +643,10 @@ pub fn resize(self: *D3D11, width: u32, height: u32) Error!void {
 /// `paintOver` into the overlay, which is drawn while `hasOver()` says
 /// it has something; otherwise `paint` draws `.all`. Commits the
 /// composition tree if it changed. Waits for the swap chain first unless
-/// `waitForFrame` or `frameAcquired` already did.
+/// `waitForFrame` or `frameAcquired` already did. Does nothing while
+/// the device is lost.
 pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error{ DeviceLost, HResult }!void {
+    if (self.lost) return;
     const rtv = self.rtv orelse return;
     const ctx = self.context;
     self.waitForFrame();
@@ -588,10 +745,8 @@ fn presentGround(self: *D3D11) error{ DeviceLost, HResult }!void {
 }
 
 fn checkPresent(hr: win32.HRESULT) error{ DeviceLost, HResult }!void {
-    if (hr == dxgi.ERROR_DEVICE_REMOVED or hr == dxgi.ERROR_DEVICE_RESET) {
-        // TODO: recreate the device and all GPU resources.
-        return error.DeviceLost;
-    }
+    // The caller's `isLost` and `recover` deal with it.
+    if (hr == dxgi.ERROR_DEVICE_REMOVED or hr == dxgi.ERROR_DEVICE_RESET) return error.DeviceLost;
     try com.check(hr, "IDXGISwapChain::Present");
 }
 
@@ -604,8 +759,10 @@ fn drawOverlay(self: *D3D11, o: *OverlayChain, ui: anytype, capture: bool, img: 
         if (o.shown) try self.clearOverlay(o);
         return;
     }
+    // A failed resize left the overlay without targets until the next.
+    const rtv = o.rtv orelse return;
     o.shown = true;
-    self.context.clearRenderTargetView(o.rtv.?, &.{ 0, 0, 0, 0 });
+    self.context.clearRenderTargetView(rtv, &.{ 0, 0, 0, 0 });
     const d2d = self.d2d_context;
     d2d.setTarget(o.d2d_target);
     defer d2d.setTarget(self.d2d_target);
@@ -617,7 +774,7 @@ fn drawOverlay(self: *D3D11, o: *OverlayChain, ui: anytype, capture: bool, img: 
     ui.paint(&p, .over);
     if (capture) ui.paintOver(&p, img);
     try com.check(d2d.endDraw(), "ID2D1DeviceContext::EndDraw(overlay)");
-    try checkPresent(o.swap_chain.present(0, 0));
+    try checkPresent(o.swap_chain.?.present(0, 0));
 }
 
 /// Shader constants for a pane's box. Must match `Box` in shaders.hlsl.
@@ -699,7 +856,14 @@ fn drawGrid(self: *D3D11, f: Pane) Error!void {
 }
 
 fn painter(self: *const D3D11) Painter {
-    return .{ .ctx = self.d2d_context, .factory = self.d2d_factory, .brush = self.brush, .icon = self.icon, .lucide = if (self.lucide) |*icons| icons else null };
+    return .{
+        .ctx = self.d2d_context,
+        .factory = self.d2d_factory,
+        .brush = self.brush,
+        .icon = self.icon,
+        .lucide = if (self.lucide) |*icons| icons else null,
+        .generation = self.device_generation,
+    };
 }
 
 fn paintOver(self: *D3D11, ui: anytype, img: ?Painter.Image) Error!void {
@@ -735,13 +899,15 @@ fn captureRegion(self: *D3D11, region: Painter.Rect) Error!?Painter.Image {
     );
     defer com.releaseOpt(&back_buffer);
     self.context.copySubresourceRegion(c.texture.resource(), 0, 0, back_buffer.?.resource(), &.{ .left = x0, .top = y0, .right = x1, .bottom = y1 });
-    return .{ .bitmap = c.bitmap, .w = @floatFromInt(w), .h = @floatFromInt(h) };
+    return .{ .bitmap = c.bitmap, .w = @floatFromInt(w), .h = @floatFromInt(h), .generation = self.device_generation };
 }
 
 /// Decode the PNG (or JPEG) in `stream`, read from its start, into an
 /// image to draw with `Painter.image`. The caller owns it: release its
-/// bitmap, before the renderer goes.
+/// bitmap, before the renderer goes. It's this device's: after
+/// `recover`, it draws nothing, and should be decoded again.
 pub fn decodeImage(self: *D3D11, stream: *win32.IStream) Error!Painter.Image {
+    if (self.released) return error.HResult;
     if (self.wic_factory == null) {
         var out: ?*anyopaque = null;
         try com.check(win32.CoCreateInstance(&wic.CLSID_ImagingFactory, null, win32.CLSCTX_INPROC_SERVER, &wic.IImagingFactory.iid, &out), "CoCreateInstance(WICImagingFactory)");
@@ -768,7 +934,7 @@ pub fn decodeImage(self: *D3D11, stream: *win32.IStream) Error!Painter.Image {
         .pixelFormat = .{ .format = buffer_format, .alphaMode = d2d1.ALPHA_MODE_PREMULTIPLIED },
         .bitmapOptions = 0,
     }, &bitmap), "ID2D1DeviceContext::CreateBitmapFromWicBitmap");
-    return .{ .bitmap = bitmap.?, .w = @floatFromInt(w), .h = @floatFromInt(h) };
+    return .{ .bitmap = bitmap.?, .w = @floatFromInt(w), .h = @floatFromInt(h), .generation = self.device_generation };
 }
 
 fn createCapture(self: *D3D11, w: u32, h: u32) Error!Capture {
@@ -872,6 +1038,8 @@ const AtlasTexture = struct {
 /// Mirror the snapshot's images on the GPU: upload new or changed images,
 /// freeing their pixels, and release textures of images no longer in it.
 fn uploadImages(self: *D3D11, alloc: std.mem.Allocator, images: *image.Images, textures: *ImageTextures) Error!void {
+    // Made on a device that's gone: slime sends the pixels again.
+    textures.adopt(self.device_generation);
     var i: usize = 0;
     while (i < textures.map.count()) {
         if (images.images.contains(textures.map.keys()[i])) {
@@ -974,7 +1142,8 @@ fn createChain(factory: *dxgi.IFactory2, device: *d3d11.IDevice, width: u32, hei
 
 /// The window's DirectComposition tree: a root visual whose content is
 /// the swap chain, and whose children, over it, are the panes' container
-/// visuals and then the overlay's.
+/// visuals and then the overlay's. Made without a rendering device, so
+/// a lost one leaves it standing.
 const Composition = struct {
     device: *dcomp.IDesktopDevice,
     target: *dcomp.ITarget,
@@ -983,7 +1152,8 @@ const Composition = struct {
     /// none.
     dirty: bool = false,
 
-    fn init(hwnd: win32.HWND, ground: *dxgi.ISwapChain1) Error!Composition {
+    /// The root's content, the swap chain, is the caller's to set.
+    fn init(hwnd: win32.HWND) Error!Composition {
         var device: ?*dcomp.IDesktopDevice = null;
         try com.check(
             dcomp.DCompositionCreateDevice3(null, &dcomp.IDesktopDevice.iid, @ptrCast(&device)),
@@ -996,9 +1166,7 @@ const Composition = struct {
         var root: ?*dcomp.IVisual = null;
         try com.check(device.?.createVisual(&root), "IDCompositionDevice2::CreateVisual");
         errdefer com.releaseOpt(&root);
-        try com.check(root.?.setContent(ground), "IDCompositionVisual::SetContent");
         try com.check(target.?.setRoot(root.?), "IDCompositionTarget::SetRoot");
-        try com.check(device.?.commit(), "IDCompositionDevice2::Commit");
         return .{ .device = device.?, .target = target.?, .root = root.? };
     }
 
@@ -1131,10 +1299,12 @@ pub fn removePaneVisual(self: *D3D11, key: u64) void {
     };
 }
 
-/// A transparent chain over the panes' visuals, the window's size.
+/// A transparent chain over the panes' visuals, the window's size. The
+/// visual outlives a lost device; the chain and its targets don't.
 const OverlayChain = struct {
-    swap_chain: *dxgi.ISwapChain1,
     visual: *dcomp.IVisual,
+    /// Null while the device is lost.
+    swap_chain: ?*dxgi.ISwapChain1 = null,
     rtv: ?*d3d11.IRenderTargetView = null,
     d2d_target: ?*d2d1.IBitmap1 = null,
     /// What was last presented isn't clear.
@@ -1145,30 +1315,43 @@ const OverlayChain = struct {
         com.releaseOpt(&self.d2d_target);
     }
 
-    fn deinit(self: *OverlayChain) void {
+    /// Let the chain go, leaving the visual empty.
+    fn releaseChain(self: *OverlayChain) void {
         self.releaseTargets();
+        if (self.swap_chain == null) return;
+        _ = self.visual.setContent(null);
+        com.releaseOpt(&self.swap_chain);
+        self.shown = false;
+    }
+
+    fn deinit(self: *OverlayChain) void {
+        self.releaseChain();
         com.release(self.visual);
-        com.release(self.swap_chain);
     }
 };
 
-/// Make the overlay chain, presented clear, and put it over `above`.
+/// Make the overlay, its chain presented clear, and put it over `above`.
+/// While the device is lost, the visual alone: `recover` makes the
+/// chain.
 fn createOverlay(self: *D3D11, above: *dcomp.IVisual) Error!void {
-    var o: OverlayChain = .{
-        .swap_chain = try createChain(self.factory, self.device, self.width, self.height, dxgi.ALPHA_MODE_PREMULTIPLIED, 0),
-        .visual = undefined,
-    };
-    errdefer com.release(o.swap_chain);
     var visual: ?*dcomp.IVisual = null;
     try com.check(self.comp.device.createVisual(&visual), "IDCompositionDevice2::CreateVisual");
-    o.visual = visual.?;
-    errdefer com.release(o.visual);
-    try self.createTargets(o.swap_chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &o.rtv, &o.d2d_target);
-    errdefer o.releaseTargets();
-    try self.clearOverlay(&o);
-    try com.check(o.visual.setContent(o.swap_chain), "IDCompositionVisual::SetContent");
+    var o: OverlayChain = .{ .visual = visual.? };
+    errdefer o.deinit();
+    if (!self.released) try self.createOverlayChain(&o);
     try com.check(self.comp.root.addVisual(o.visual, true, above), "IDCompositionVisual::AddVisual");
     self.overlay = o;
+}
+
+/// Make `o`'s chain, presented clear, its visual's content.
+fn createOverlayChain(self: *D3D11, o: *OverlayChain) Error!void {
+    const chain = try createChain(self.factory, self.device, self.width, self.height, dxgi.ALPHA_MODE_PREMULTIPLIED, 0);
+    o.swap_chain = chain;
+    errdefer o.releaseChain();
+    try self.createTargets(chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &o.rtv, &o.d2d_target);
+    try self.clearOverlay(o);
+    try com.check(o.visual.setContent(chain), "IDCompositionVisual::SetContent");
+    self.comp.dirty = true;
     log.info("overlay chain created {d}x{d}", .{ self.width, self.height });
 }
 
@@ -1177,20 +1360,27 @@ fn createOverlay(self: *D3D11, above: *dcomp.IVisual) Error!void {
 /// and the overlay presents nothing more until it has something to show,
 /// so a single clear left a closed dialog on screen.
 fn clearOverlay(self: *D3D11, o: *OverlayChain) Error!void {
+    const rtv = o.rtv orelse return;
     for (0..2) |_| {
-        self.context.clearRenderTargetView(o.rtv.?, &.{ 0, 0, 0, 0 });
-        try com.check(o.swap_chain.present(0, 0), "IDXGISwapChain::Present(overlay)");
+        self.context.clearRenderTargetView(rtv, &.{ 0, 0, 0, 0 });
+        try com.check(o.swap_chain.?.present(0, 0), "IDXGISwapChain::Present(overlay)");
     }
     o.shown = false;
 }
 
 fn resizeOverlay(self: *D3D11, o: *OverlayChain) Error!void {
+    const chain = o.swap_chain orelse return;
     o.releaseTargets();
+    if (builtin.mode == .debug and self.debug_fail_overlay_resize) {
+        self.debug_fail_overlay_resize = false;
+        log.err("IDXGISwapChain::ResizeBuffers(overlay) failed on purpose", .{});
+        return error.HResult;
+    }
     try com.check(
-        o.swap_chain.resizeBuffers(0, self.width, self.height, .UNKNOWN, 0),
+        chain.resizeBuffers(0, self.width, self.height, .UNKNOWN, 0),
         "IDXGISwapChain::ResizeBuffers(overlay)",
     );
-    try self.createTargets(o.swap_chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &o.rtv, &o.d2d_target);
+    try self.createTargets(chain, d2d1.ALPHA_MODE_PREMULTIPLIED, &o.rtv, &o.d2d_target);
     // The resized buffers hold nothing presentable.
     try self.clearOverlay(o);
 }
@@ -1243,7 +1433,7 @@ fn dropUnseenFonts(self: *D3D11) void {
 /// Change the chrome's text antialiasing: `font-antialias` was reloaded.
 pub fn setTextAntialias(self: *D3D11, antialias: font.Antialias) void {
     self.text_antialias = textAntialiasMode(antialias);
-    self.d2d_context.setTextAntialiasMode(self.text_antialias);
+    if (!self.released) self.d2d_context.setTextAntialiasMode(self.text_antialias);
 }
 
 fn createD2d(device: *d3d11.IDevice, text_antialias: u32) Error!D2d {
@@ -1274,7 +1464,9 @@ fn createD2d(device: *d3d11.IDevice, text_antialias: u32) Error!D2d {
     return .{ .factory = factory.?, .device = d2d_device.?, .context = context.?, .brush = brush.? };
 }
 
-fn createDevice(device: *?*d3d11.IDevice, context: *?*d3d11.IDeviceContext) Error!void {
+/// A device on the default adapter, else, if `allow_warp`, a software
+/// one. Returns which.
+fn createDevice(device: *?*d3d11.IDevice, context: *?*d3d11.IDeviceContext, allow_warp: bool) Error!d3d11.DRIVER_TYPE {
     // Structured buffers in vertex/pixel shaders need feature level 11.
     const levels = [_]d3d11.FEATURE_LEVEL{ .@"11_1", .@"11_0" };
     const base_flags = d3d11.CREATE_DEVICE_BGRA_SUPPORT;
@@ -1289,6 +1481,7 @@ fn createDevice(device: *?*d3d11.IDevice, context: *?*d3d11.IDeviceContext) Erro
 
     for (attempts) |a| {
         if (builtin.mode != .debug and a.flags & d3d11.CREATE_DEVICE_DEBUG != 0) continue;
+        if (!allow_warp and a.driver == .WARP) continue;
 
         var level: d3d11.FEATURE_LEVEL = undefined;
         const hr = d3d11.D3D11CreateDevice(
@@ -1309,7 +1502,7 @@ fn createDevice(device: *?*d3d11.IDevice, context: *?*d3d11.IDeviceContext) Erro
                 @intFromEnum(level),
                 a.flags & d3d11.CREATE_DEVICE_DEBUG != 0,
             });
-            return;
+            return a.driver;
         }
         log.warn("D3D11CreateDevice driver={t} flags=0x{x} failed: HRESULT=0x{X:0>8}", .{
             a.driver,
@@ -1477,6 +1670,7 @@ const DynamicBuffer = struct {
     fn deinit(self: *DynamicBuffer) void {
         com.releaseOpt(&self.srv);
         com.releaseOpt(&self.buffer);
+        self.capacity = 0;
     }
 
     fn upload(self: *DynamicBuffer, device: *d3d11.IDevice, ctx: *d3d11.IDeviceContext, bytes: []const u8) Error!void {
@@ -1485,7 +1679,6 @@ const DynamicBuffer = struct {
 
         if (count > self.capacity) {
             self.deinit();
-            self.capacity = 0;
             const capacity = @max(64, std.math.ceilPowerOfTwoAssert(u32, count));
             try com.check(device.createBuffer(&.{
                 .ByteWidth = capacity * self.stride,
@@ -1508,3 +1701,30 @@ const DynamicBuffer = struct {
         ctx.unmap(self.buffer.?.resource());
     }
 };
+
+test "ImageTextures.adopt releases another generation's textures" {
+    const alloc = std.testing.allocator;
+    // A COM object whose every slot counts a release.
+    const Fake = struct {
+        vtable: com.VTable = &slots,
+        var released: u32 = 0;
+        fn release(_: *anyopaque) callconv(.winapi) u32 {
+            released += 1;
+            return 0;
+        }
+        const slots = [_]*const anyopaque{ @ptrCast(&release), @ptrCast(&release), @ptrCast(&release) };
+    };
+    var obj: Fake = .{};
+    var t: ImageTextures = .{};
+    defer t.deinit(alloc);
+    try t.map.put(alloc, 7, .{ .texture = @ptrCast(&obj), .srv = @ptrCast(&obj) });
+
+    t.adopt(0);
+    try std.testing.expectEqual(1, t.map.count());
+    try std.testing.expectEqual(0, Fake.released);
+
+    t.adopt(1);
+    try std.testing.expectEqual(0, t.map.count());
+    try std.testing.expectEqual(2, Fake.released);
+    try std.testing.expectEqual(1, t.generation);
+}

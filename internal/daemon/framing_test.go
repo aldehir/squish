@@ -161,6 +161,40 @@ func TestFramesImages(t *testing.T) {
 	}
 }
 
+// TestFramesRefresh checks that a refresh event, a viewer that lost its
+// GPU's copies, gets a full frame and the placed images again.
+func TestFramesRefresh(t *testing.T) {
+	h := newHarness(t)
+	d := newDrawer(t, h)
+	first := d.draw(5 * time.Second)
+	if first == nil {
+		t.Fatal("no first frame")
+	}
+	d.ack(first)
+	d.c.Send(d.pane, &Resize{Size: Size{Cols: 40, Rows: 10, CellW: 10, CellH: 20}})
+	rgb := []byte{255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255}
+	h.pty(0).emit("\x1b_Gf=24,s=2,v=2,i=7,a=T;" + base64.StdEncoding.EncodeToString(rgb) + "\x1b\\")
+	for i := 0; len(d.images) == 0 && i < 3; i++ {
+		f := d.draw(5 * time.Second)
+		if f == nil {
+			t.Fatal("no frame after the image")
+		}
+		d.ack(f)
+	}
+	if len(d.images) != 1 {
+		t.Fatalf("got %d image pieces, want 1", len(d.images))
+	}
+
+	d.event(evRefresh())
+	f := d.draw(5 * time.Second)
+	if f == nil || !fullFrame(f) {
+		t.Fatalf("frame after refresh %+v, want a full one", f)
+	}
+	if len(d.images) != 2 || d.images[1].ID != 7 {
+		t.Errorf("after refresh, %d image pieces, want the image again", len(d.images))
+	}
+}
+
 // TestFramesInFlight checks that at most two frames go unacked, and that
 // what changed meanwhile comes in the frame an Ack lets through.
 func TestFramesInFlight(t *testing.T) {
@@ -372,6 +406,8 @@ func TestEvents(t *testing.T) {
 }
 
 func evCopyModeEnter() []byte { return []byte{13, 1} }
+
+func evRefresh() []byte { return []byte{14} }
 
 // TestClientCopyKeys: copy mode's keys that a connection sends are its
 // views' own, in the panes it views and the ones it attaches later,

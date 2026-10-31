@@ -17,3 +17,10 @@ pub const WM_APP_CLIPBOARD_WRITE = win32.WM_APP + 2;
 /// sessions (`Daemon.take`), and when a host's has attached or failed
 /// to.
 pub const WM_APP_DAEMON = win32.WM_APP + 4;
+
+/// Debug builds, for tests to post to their own window: act as if the
+/// GPU device were lost (`Renderer.loseDevice`), and recover.
+pub const WM_APP_DEBUG_LOSE_DEVICE = win32.WM_APP + 5;
+/// Debug builds: the overlay chain's next resize fails
+/// (`Renderer.failOverlayResize`).
+pub const WM_APP_DEBUG_FAIL_OVERLAY_RESIZE = win32.WM_APP + 6;
