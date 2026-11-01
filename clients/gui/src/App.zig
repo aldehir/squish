@@ -3968,14 +3968,19 @@ pub fn closePalette(self: *App) void {
 }
 
 /// A key down for the command palette. Returns false for keys it
-/// doesn't take, which go on to the bindings. In the file step, Tab
-/// enters the directory focused, Backspace on an empty query leaves
-/// one, and ctrl+r scans again.
+/// doesn't take, which go on to the bindings. The arrows move, as do
+/// ctrl+n/p and ctrl+j/k (fzf's). In the file step, Tab enters the
+/// directory focused, Backspace on an empty query leaves one, and
+/// ctrl+r scans again.
 fn paletteKey(self: *App, p: *Palette, vk: u32) bool {
     const ctrl = self.shell.keyDown(win32.VK_CONTROL);
+    const shift = self.shell.keyDown(win32.VK_SHIFT);
     switch (vk) {
         win32.VK_DOWN => p.move(1),
         win32.VK_UP => p.move(-1),
+        // With ctrl alone: ctrl+shift+p is the palette's own binding.
+        'N', 'J' => if (ctrl and !shift) p.move(1) else if (!self.editKey(&p.query, vk, true)) return false,
+        'P', 'K' => if (ctrl and !shift) p.move(-1) else if (!self.editKey(&p.query, vk, true)) return false,
         win32.VK_NEXT => p.page(PaletteView.visibleRows(self.ui, self.frame, p), true),
         win32.VK_PRIOR => p.page(PaletteView.visibleRows(self.ui, self.frame, p), false),
         // Home and End move the caret; with ctrl, the focus to the ends.
@@ -5871,8 +5876,15 @@ pub const TestShell = struct {
     fn tickCount(_: *anyopaque) u64 {
         return 1000;
     }
-    fn keyDown(_: *anyopaque, _: i32) bool {
-        return false;
+    /// The modifiers are `held`; no other key is ever down.
+    fn keyDown(ctx: *anyopaque, vk: i32) bool {
+        const h = self_(ctx).held;
+        return switch (vk) {
+            win32.VK_CONTROL => h.ctrl,
+            win32.VK_SHIFT => h.shift,
+            win32.VK_MENU => h.alt,
+            else => false,
+        };
     }
     fn mods(ctx: *anyopaque) input.Mods {
         return self_(ctx).held;
@@ -6596,6 +6608,14 @@ test "ctrl+shift+p opens the command palette, which takes the keys until an entr
     const pal = &app.mode.palette;
     try std.testing.expect(pal.count() >= 1);
     try std.testing.expectEqual(Palette.Action{ .part = Id.window(.toggle_sidebar) }, pal.focused().?.action);
+    // ctrl+n and ctrl+p move the focus as the arrows do; plain n is text.
+    shell.held = .{ .ctrl = true };
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'N', .lparam = 0 } }));
+    try std.testing.expectEqual(@as(usize, @min(1, pal.count() - 1)), pal.focus);
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'P', .lparam = 0 } }));
+    try std.testing.expectEqual(@as(usize, 0), pal.focus);
+    shell.held = .{};
+    try std.testing.expectEqualSlices(u16, L("sid"), pal.query.text());
     // Enter runs the focused entry and closes the palette.
     try std.testing.expect(app.ui.sidebar_shown);
     try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = win32.VK_RETURN, .lparam = 0 } }));

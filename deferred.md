@@ -55,7 +55,11 @@ is attached.
   fallback skips dot-names and a short deny list. The box's anchor is
   taken when it opens; a prompt redrawn under it doesn't move it. The
   binding takes ctrl+i from programs that use the kitty keyboard
-  protocol (the legacy encoding sent it as Tab anyway).
+  protocol (the legacy encoding sent it as Tab anyway). The palette's
+  own keys (arrows and fzf's ctrl+n/p, ctrl+j/k to move; Enter, Tab,
+  Backspace, ctrl+r, Esc) are fixed in `App.paletteKey`; a
+  `palette_keys` table in init.lua, as copy mode has, would make them
+  rebindable.
 - **The chrome's colors** come from the configured background and
   foreground at startup. They don't follow a program's OSC 10/11, and
   switching between a light/dark theme pair waits on following the
