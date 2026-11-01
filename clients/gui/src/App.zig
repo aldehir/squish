@@ -563,7 +563,7 @@ pub const Msg = union(enum) {
     /// workspaces changed.
     daemon_posted,
     /// A session's reader posted about session `id`.
-    session: struct { id: u32, what: enum { exited, title, clipboard } },
+    session: struct { id: u32, what: enum { exited, title, clipboard, relinked } },
     /// A right click came up at a client position: what's there may
     /// open its context menu.
     context_menu: win32.POINT,
@@ -1071,6 +1071,7 @@ fn sessionEvent(self: *App, id: u32, what: @FieldType(@FieldType(Msg, "session")
             self.markDirty();
         },
         .clipboard => s.clipboardWriteFlush(),
+        .relinked => s.relinked(),
     }
 }
 

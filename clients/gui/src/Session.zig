@@ -784,11 +784,22 @@ fn daemonEnded(ctx: *anyopaque, why: ?[]const u8) void {
 }
 
 /// Sink for the connection going and coming back: the strip shows it
-/// in place of the title meanwhile. Reader thread.
+/// in place of the title meanwhile, and the pane attached again takes
+/// the settings again (`relinked`). Reader thread.
 fn daemonLink(ctx: *anyopaque, reconnecting: bool) void {
     const self: *Session = @ptrCast(@alignCast(ctx));
     self.reconnecting.store(reconnecting, .release);
     self.postTitle();
+    if (!reconnecting) _ = win32.PostMessageW(self.wake.hwnd, messages.WM_APP_RELINKED, self.id, 0);
+}
+
+/// The connection is back and the pane attached again. A daemon that
+/// restarted relaunched the pane as a new terminal, which knows nothing
+/// of our colors or selection settings: it would draw black on white
+/// until told. The settings go again; the same daemon ignores nothing
+/// it already had.
+pub fn relinked(self: *Session) void {
+    self.sendSettings();
 }
 
 /// Why the daemon pane was lost to us, once WM_APP_CHILD_EXITED says

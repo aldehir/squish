@@ -17,6 +17,10 @@ pub const WM_APP_CLIPBOARD_WRITE = win32.WM_APP + 2;
 /// sessions (`Daemon.take`), and when a host's has attached or failed
 /// to.
 pub const WM_APP_DAEMON = win32.WM_APP + 4;
+/// Posted from a daemon connection's reader when a session's pane is
+/// attached again after the connection came back: a restarted daemon's
+/// terminal is new and takes the session's settings again.
+pub const WM_APP_RELINKED = win32.WM_APP + 7;
 
 /// Debug builds, for tests to post to their own window: act as if the
 /// GPU device were lost (`Renderer.loseDevice`), and recover.

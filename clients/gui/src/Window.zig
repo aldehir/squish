@@ -48,6 +48,7 @@ const WM_APP_CHILD_EXITED = messages.WM_APP_CHILD_EXITED;
 const WM_APP_TITLE_CHANGED = messages.WM_APP_TITLE_CHANGED;
 const WM_APP_CLIPBOARD_WRITE = messages.WM_APP_CLIPBOARD_WRITE;
 const WM_APP_DAEMON = messages.WM_APP_DAEMON;
+const WM_APP_RELINKED = messages.WM_APP_RELINKED;
 const WM_APP_DEBUG_LOSE_DEVICE = messages.WM_APP_DEBUG_LOSE_DEVICE;
 const WM_APP_DEBUG_FAIL_OVERLAY_RESIZE = messages.WM_APP_DEBUG_FAIL_OVERLAY_RESIZE;
 
@@ -1325,6 +1326,11 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
 
         WM_APP_CLIPBOARD_WRITE => {
             _ = app.update(.{ .session = .{ .id = @intCast(wparam), .what = .clipboard } });
+            return 0;
+        },
+
+        WM_APP_RELINKED => {
+            _ = app.update(.{ .session = .{ .id = @intCast(wparam), .what = .relinked } });
             return 0;
         },
 
