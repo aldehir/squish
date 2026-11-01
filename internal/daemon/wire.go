@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // The wire protocol between a client and the daemon. A frame is a
@@ -137,7 +137,7 @@ type HelloReply struct {
 	FrameLayout uint64
 	// Build is the daemon's executable (rpc.Build), appended later: a
 	// client that finds it older than its own can have it replaced
-	// (slime upgrade). Decoders of the first layout ignore it.
+	// (squish upgrade). Decoders of the first layout ignore it.
 	Build rpc.Build
 }
 
@@ -158,7 +158,7 @@ type Reply struct{ Response rpc.Response }
 type Notify struct{ Notification rpc.Notification }
 
 // Bridge, as a connection's first frame instead of Hello, splices the
-// connection to `slime connect` on host Host: every frame after it goes
+// connection to `squish connect` on host Host: every frame after it goes
 // to the host's daemon, and its replies come back. Term is the TERM for
 // panes it starts (xterm-ghostty falls back where the host lacks it). A
 // bridge that can't be served gets Error and the connection closes; one

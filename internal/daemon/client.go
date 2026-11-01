@@ -6,10 +6,10 @@ import (
 	"io"
 	"sync"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
-// Client is the client end of a connection, for slime's own commands
+// Client is the client end of a connection, for squish's own commands
 // and tests: a JSON-RPC client over the wire. The GUI speaks the
 // protocol itself.
 type Client struct {
@@ -54,7 +54,7 @@ func NewClientWith(rw io.ReadWriteCloser, hello Hello) (*Client, error) {
 		return nil, fmt.Errorf("daemon: expected hello, got type %d", m.Type())
 	}
 	if c.Hello.Version != Version {
-		return nil, fmt.Errorf("daemon: slime speaks version %d, not %d", c.Hello.Version, Version)
+		return nil, fmt.Errorf("daemon: squish speaks version %d, not %d", c.Hello.Version, Version)
 	}
 	return c, nil
 }

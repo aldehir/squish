@@ -18,8 +18,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/aldehir/slime/internal/remote"
-	"github.com/aldehir/slime/internal/sshtest"
+	"github.com/aldehir/squish/internal/remote"
+	"github.com/aldehir/squish/internal/sshtest"
 )
 
 const (
@@ -127,12 +127,12 @@ var testRemote = sync.OnceValue(func() *remote.Manifest {
 
 func needPayload(t *testing.T) {
 	if _, ok := testRemote().For("linux", "amd64"); !ok {
-		t.Skip("no slime build to install (zig build writes zig-out/bin/remote)")
+		t.Skip("no squish build to install (zig build writes zig-out/bin/remote)")
 	}
 }
 
-// fakeHost answers the slime commands as a host with uname would,
-// installing builds in memory and echoing on `slime connect`.
+// fakeHost answers the squish commands as a host with uname would,
+// installing builds in memory and echoing on `squish connect`.
 type fakeHost struct {
 	uname string
 	// installErr, if set, is what installing writes to stderr before
@@ -152,9 +152,9 @@ func (f *fakeHost) exec(command string, stdin io.Reader, stdout, stderr io.Write
 	switch {
 	case strings.Contains(command, "uname -sm"):
 		f.probes++
-		fmt.Fprintf(stdout, "%s\n/home/alde/.cache/slime/bin\n", f.uname)
+		fmt.Fprintf(stdout, "%s\n/home/alde/.cache/squish/bin\n", f.uname)
 		for name := range f.installed {
-			fmt.Fprintf(stdout, "%s\n", strings.TrimSuffix(strings.TrimPrefix(name, "/home/alde/.cache/slime/bin/"), "/slime"))
+			fmt.Fprintf(stdout, "%s\n", strings.TrimSuffix(strings.TrimPrefix(name, "/home/alde/.cache/squish/bin/"), "/squish"))
 		}
 		return 0
 	case strings.Contains(command, "gzip -dc"):
@@ -176,7 +176,7 @@ func (f *fakeHost) exec(command string, stdin io.Reader, stdout, stderr io.Write
 		f.connects = append(f.connects, args[1])
 		f.mu.Unlock()
 		defer f.mu.Lock()
-		// An echo for slime: what comes in goes back out.
+		// An echo for squish: what comes in goes back out.
 		io.Copy(stdout, stdin)
 		return 0
 	}

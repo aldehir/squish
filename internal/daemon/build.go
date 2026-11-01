@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // CurrentBuild identifies this executable (rpc.Build): the name of the
-// build directory it sits in (bin/<id>/slime, as slime-gui copies it
-// and hosts install it), else "<size>-<mtime>" in hex as slime-gui
+// build directory it sits in (bin/<id>/squish, as squish-gui copies it
+// and hosts install it), else "<size>-<mtime>" in hex as squish-gui
 // names its copies; and its mtime, which orders takeovers.
 var CurrentBuild = sync.OnceValue(func() rpc.Build {
 	exe, err := os.Executable()

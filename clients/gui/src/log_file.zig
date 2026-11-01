@@ -1,7 +1,7 @@
 //! The window's log in a file, as well as on stderr: a release build is
 //! a GUI program, with no console to show stderr. The file is
-//! %LOCALAPPDATA%\slime\slime-gui.log (slime-gui-<instance>.log with
-//! SLIME_INSTANCE), cut to its last `keep` bytes when a window starts.
+//! %LOCALAPPDATA%\squish\squish-gui.log (squish-gui-<instance>.log with
+//! SQUISH_INSTANCE), cut to its last `keep` bytes when a window starts.
 //! Windows running at once share it: each line goes in whole.
 
 const std = @import("std");
@@ -22,12 +22,12 @@ pub fn open() void {
     var buf: [600]u16 = undefined;
     var len: usize = win32.GetEnvironmentVariableW(L("LOCALAPPDATA"), &buf, 260);
     if (len == 0 or len >= 260) return;
-    const dir = L("\\slime");
+    const dir = L("\\squish");
     @memcpy(buf[len..][0..dir.len], dir);
     len += dir.len;
     buf[len] = 0;
     _ = win32.CreateDirectoryW(@ptrCast(&buf), null);
-    const name = L("\\slime-gui");
+    const name = L("\\squish-gui");
     @memcpy(buf[len..][0..name.len], name);
     len += name.len;
     var inst: [64]u16 = undefined;

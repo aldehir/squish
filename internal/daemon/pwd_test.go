@@ -6,7 +6,7 @@ import (
 	goruntime "runtime"
 	"testing"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // TestPwdPath: every form a shell reports its directory in, from this

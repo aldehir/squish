@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // BrowserPane is a pane a window's browser fills. The page, its

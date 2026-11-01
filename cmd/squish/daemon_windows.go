@@ -14,10 +14,10 @@ func isNotRunning(err error) bool {
 	return errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, os.ErrNotExist)
 }
 
-// startDaemon runs `slime serve` with extra arguments so it outlives
+// startDaemon runs `squish serve` with extra arguments so it outlives
 // us: detached from our console, and out of our job object if we're in
-// one (slime-gui puts its children in a kill-on-close job). Its log goes to
-// %LOCALAPPDATA%\slime\slime.log.
+// one (squish-gui puts its children in a kill-on-close job). Its log goes to
+// %LOCALAPPDATA%\squish\squish.log.
 func startDaemon(extra ...string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -25,9 +25,9 @@ func startDaemon(extra ...string) error {
 	}
 	args := append([]string{"serve"}, extra...)
 	if dir, err := os.UserCacheDir(); err == nil {
-		dir = filepath.Join(dir, "slime")
+		dir = filepath.Join(dir, "squish")
 		if os.MkdirAll(dir, 0o700) == nil {
-			args = append(args, "--log", filepath.Join(dir, "slime.log"))
+			args = append(args, "--log", filepath.Join(dir, "squish.log"))
 		}
 	}
 	const flags = windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP

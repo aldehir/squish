@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     defer png_dir.close(io);
     for (png_sizes) |size| {
         const png = try r.png(arena, if (size <= small_max) small else full, size);
-        const name = try std.fmt.allocPrint(arena, "slime-{d}.png", .{size});
+        const name = try std.fmt.allocPrint(arena, "squish-{d}.png", .{size});
         try png_dir.writeFile(io, .{ .sub_path = name, .data = png });
     }
 

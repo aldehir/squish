@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // pane is what fills a leaf of a tab: a terminal (*Pane) or a browser

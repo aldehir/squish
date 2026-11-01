@@ -14,11 +14,11 @@ package vt
 #include <ghostty/vt.h>
 
 // In callbacks.c, which can see the exported Go callbacks.
-extern GhosttyResult slime_install_callbacks(GhosttyTerminal t, uintptr_t userdata);
-extern void slime_install_log(void);
-extern void slime_install_decode_png(void);
-// In slime.zig.
-extern void slime_vt_terminal_defaults(GhosttyTerminal t, bool fresh);
+extern GhosttyResult squish_install_callbacks(GhosttyTerminal t, uintptr_t userdata);
+extern void squish_install_log(void);
+extern void squish_install_decode_png(void);
+// In squish.zig.
+extern void squish_vt_terminal_defaults(GhosttyTerminal t, bool fresh);
 */
 import "C"
 
@@ -90,10 +90,10 @@ func NewRuntime(_ context.Context, log *slog.Logger) (*Runtime, error) {
 	logger.Lock()
 	logger.l = log
 	logger.Unlock()
-	C.slime_install_log()
+	C.squish_install_log()
 	// Kitty graphics come as PNGs more often than not, and the library
 	// rejects them without a decoder.
-	C.slime_install_decode_png()
+	C.squish_install_decode_png()
 	return &Runtime{}, nil
 }
 
@@ -167,11 +167,11 @@ func (r *Runtime) Decode(snapshot []byte) (*Terminal, error) {
 	return t, nil
 }
 
-// finish gives a terminal slime's defaults and registers it for its
+// finish gives a terminal squish's defaults and registers it for its
 // callbacks once its handle exists. A fresh one takes the default modes
 // too; a restored one keeps its program's.
 func (t *Terminal) finish(fresh bool) error {
-	C.slime_vt_terminal_defaults(t.term, C.bool(fresh))
+	C.squish_vt_terminal_defaults(t.term, C.bool(fresh))
 	limit := C.uint64_t(ImageStorageLimit)
 	if err := check("terminal_set", C.ghostty_terminal_set(t.term, C.GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, unsafe.Pointer(&limit))); err != nil {
 		return err
@@ -188,7 +188,7 @@ func (t *Terminal) finish(fresh bool) error {
 	t.id = registry.nextID
 	registry.terms[t.id] = t
 	registry.Unlock()
-	return check("terminal_set", C.slime_install_callbacks(t.term, C.uintptr_t(t.id)))
+	return check("terminal_set", C.squish_install_callbacks(t.term, C.uintptr_t(t.id)))
 }
 
 // SetEvents sets the handlers for what the terminal reports.

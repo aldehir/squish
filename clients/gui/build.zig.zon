@@ -1,7 +1,7 @@
 .{
-    .name = .slime_gui,
+    .name = .squish_gui,
     .version = "0.5.1",
-    .fingerprint = 0xeb2525db07672daf,
+    .fingerprint = 0x7f96c2446ec9f944,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         // The fork at the repository root, shared with the daemon's

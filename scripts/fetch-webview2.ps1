@@ -18,7 +18,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $id = 'microsoft.web.webview2'
 $url = "https://api.nuget.org/v3-flatcontainer/$id/$Version/$id.$Version.nupkg"
-$tmp = Join-Path ([IO.Path]::GetTempPath()) "slime-webview2-$Version"
+$tmp = Join-Path ([IO.Path]::GetTempPath()) "squish-webview2-$Version"
 $zip = "$tmp.zip"
 
 Write-Host "fetching $url"

@@ -3,7 +3,7 @@ package daemon
 import (
 	"time"
 
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // Events: input from a viewer, which its View turns into input for the

@@ -13,17 +13,17 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/aldehir/slime/internal/remote"
+	"github.com/aldehir/squish/internal/remote"
 )
 
-// Setting slime up on a host runs these, each under the user's login
+// Setting squish up on a host runs these, each under the user's login
 // shell, so under sh -c: the login shell may not be POSIX (fish, csh).
 // None has a single quote or a !, which csh expands even in quotes.
 const (
 	// daemonProbe prints `uname -sm`, the directory builds are kept in,
 	// and the builds there: each is a directory named for the build,
-	// holding `slime`, so a pane's PATH can name its daemon's build.
-	daemonProbe = `uname -sm; d="${XDG_CACHE_HOME:-$HOME/.cache}/slime/bin"; echo "$d"; for f in "$d"/*/slime; do [ -x "$f" ] && b="${f%/slime}" && echo "${b##*/}"; done; true`
+	// holding `squish`, so a pane's PATH can name its daemon's build.
+	daemonProbe = `uname -sm; d="${XDG_CACHE_HOME:-$HOME/.cache}/squish/bin"; echo "$d"; for f in "$d"/*/squish; do [ -x "$f" ] && b="${f%/squish}" && echo "${b##*/}"; done; true`
 	// daemonInstall unpacks a build from stdin to $0, beside which
 	// nothing half-written is left.
 	daemonInstall = `set -e; umask 077; mkdir -p "${0%/*}"; t="$0.$$"; trap "rm -f \"$t\"" EXIT; gzip -dc >"$t"; chmod 700 "$t"; mv -f "$t" "$0"; trap - EXIT`
@@ -31,7 +31,7 @@ const (
 	// needed with panes on TERM $1.
 	daemonConnect = `exec "$0" connect --term "$1"`
 	// daemonUpgrade replaces a daemon of an older build with $0's,
-	// keeping its layout (slime upgrade).
+	// keeping its layout (squish upgrade).
 	daemonUpgrade = `exec "$0" upgrade`
 )
 
@@ -39,7 +39,7 @@ const (
 // new one starts and restores.
 const daemonUpgradeTimeout = 2 * time.Minute
 
-// DaemonBuild is the id of the build of slime installed on the host
+// DaemonBuild is the id of the build of squish installed on the host
 // (EnsureDaemon), "" before it's known.
 func (c *Conn) DaemonBuild() string {
 	c.mu.Lock()
@@ -51,7 +51,7 @@ func (c *Conn) DaemonBuild() string {
 	return path.Base(path.Dir(exe))
 }
 
-// Upgrade runs `slime upgrade` on the host with the build installed
+// Upgrade runs `squish upgrade` on the host with the build installed
 // there: a daemon of an older build stops keeping its layout and the
 // installed one starts in its place. It returns what the command
 // printed; a failure says why.
@@ -71,9 +71,9 @@ const (
 	daemonInstallTimeout = 2 * time.Minute
 )
 
-// EnsureDaemon returns the path to our build of slime on the host,
+// EnsureDaemon returns the path to our build of squish on the host,
 // installing it if it isn't there yet. Progress, if any, is reported
-// through status: "installing slime".
+// through status: "installing squish".
 func (c *Conn) EnsureDaemon(status func(string)) (string, error) {
 	c.mu.Lock()
 	exe := c.daemonExe
@@ -84,44 +84,44 @@ func (c *Conn) EnsureDaemon(status func(string)) (string, error) {
 
 	out, err := run(c.client, shCommand(daemonProbe), nil, daemonProbeTimeout)
 	if err != nil {
-		return "", fmt.Errorf("looking for slime: %w", err)
+		return "", fmt.Errorf("looking for squish: %w", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	if len(lines) < 2 {
-		return "", fmt.Errorf("looking for slime: unexpected answer %q", out)
+		return "", fmt.Errorf("looking for squish: unexpected answer %q", out)
 	}
 	goos, goarch, ok := goPlatform(lines[0])
 	if !ok {
-		return "", fmt.Errorf("slime doesn't run on %s", strings.TrimSpace(lines[0]))
+		return "", fmt.Errorf("squish doesn't run on %s", strings.TrimSpace(lines[0]))
 	}
 	builds := c.opts.Remote
 	if builds == nil {
 		if builds, err = remote.Beside(); err != nil {
-			return "", fmt.Errorf("looking for builds of slime: %w", err)
+			return "", fmt.Errorf("looking for builds of squish: %w", err)
 		}
 	}
 	build, ok := builds.For(goos, goarch)
 	if !ok {
-		return "", fmt.Errorf("no build of slime for %s/%s", goos, goarch)
+		return "", fmt.Errorf("no build of squish for %s/%s", goos, goarch)
 	}
-	exe = strings.TrimSpace(lines[1]) + "/" + build.ID + "/slime"
+	exe = strings.TrimSpace(lines[1]) + "/" + build.ID + "/squish"
 	installed := false
 	for _, l := range lines[2:] {
 		installed = installed || strings.TrimSpace(l) == build.ID
 	}
 	if !installed {
-		log.Printf("installing slime (%s/%s, %d KiB) as %s", goos, goarch, build.Size>>10, exe)
+		log.Printf("installing squish (%s/%s, %d KiB) as %s", goos, goarch, build.Size>>10, exe)
 		if status != nil {
-			status("installing slime")
+			status("installing squish")
 		}
 		gz, err := build.Open()
 		if err != nil {
-			return "", fmt.Errorf("installing slime: %w", err)
+			return "", fmt.Errorf("installing squish: %w", err)
 		}
 		_, err = run(c.client, shCommand(daemonInstall, exe), gz, daemonInstallTimeout)
 		gz.Close()
 		if err != nil {
-			return "", fmt.Errorf("installing slime: %w", err)
+			return "", fmt.Errorf("installing squish: %w", err)
 		}
 	}
 	c.mu.Lock()
@@ -130,7 +130,7 @@ func (c *Conn) EnsureDaemon(status func(string)) (string, error) {
 	return exe, nil
 }
 
-// Daemon is `slime connect` running on the host, bridging a stream to
+// Daemon is `squish connect` running on the host, bridging a stream to
 // the host's daemon.
 type Daemon struct {
 	sess   *ssh.Session
@@ -139,14 +139,14 @@ type Daemon struct {
 	err    error
 }
 
-// DaemonError is slime on the host ending with a failure: it couldn't
+// DaemonError is squish on the host ending with a failure: it couldn't
 // start the daemon, say. Why is its last line of stderr, under its own
-// "slime: ".
+// "squish: ".
 type DaemonError struct{ Why string }
 
 func (e *DaemonError) Error() string { return e.Why }
 
-// StartDaemon runs slime on the host, installing it first if the host
+// StartDaemon runs squish on the host, installing it first if the host
 // lacks this build, with stdin and stdout as its streams: what stdin
 // gives goes to the host's daemon, and the daemon's replies to stdout.
 // Panes it starts get Term (see Conn.Term).
@@ -165,12 +165,12 @@ func (c *Conn) StartDaemon(term string, stdin io.Reader, stdout io.Writer, statu
 	sess.Stderr = &s.stderr
 	if err := sess.Start(shCommand(daemonConnect, exe, c.Term(term))); err != nil {
 		sess.Close()
-		return nil, fmt.Errorf("starting slime: %w", err)
+		return nil, fmt.Errorf("starting squish: %w", err)
 	}
 	return s, nil
 }
 
-// Wait waits for slime to end: nil when it exited cleanly (the other
+// Wait waits for squish to end: nil when it exited cleanly (the other
 // end hung up), a DaemonError when it failed, or the connection's error
 // when that ended first. Every call returns the same answer.
 func (s *Daemon) Wait() error {
@@ -190,8 +190,8 @@ func (s *Daemon) wait() error {
 		return nil
 	}
 	why := s.stderr.String(ex)
-	if !strings.HasPrefix(why, "slime: ") {
-		why = "slime: " + why
+	if !strings.HasPrefix(why, "squish: ") {
+		why = "squish: " + why
 	}
 	return &DaemonError{Why: why}
 }

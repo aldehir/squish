@@ -3,8 +3,8 @@ package sshbridge
 import (
 	"testing"
 
-	"github.com/aldehir/slime/internal/sshtest"
-	"github.com/aldehir/slime/internal/terminfo"
+	"github.com/aldehir/squish/internal/sshtest"
+	"github.com/aldehir/squish/internal/terminfo"
 )
 
 // dialTerminfo logs in to a host whose terminfo answers per mode.

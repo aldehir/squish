@@ -6,17 +6,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 const definedWorkspace = `
-slime.workspace.define{
+squish.workspace.define{
   name = "dev",
   tabs = {
-    slime.layout.horizontal(0.7,
-      slime.layout.pane{ command = "a" },
-      slime.layout.pane{}),
-    slime.layout.vertical(slime.layout.pane{ command = "b" }, slime.layout.browser{ url = "http://x/" }, slime.layout.pane{ command = "c" }),
+    squish.layout.horizontal(0.7,
+      squish.layout.pane{ command = "a" },
+      squish.layout.pane{}),
+    squish.layout.vertical(squish.layout.pane{ command = "b" }, squish.layout.browser{ url = "http://x/" }, squish.layout.pane{ command = "c" }),
   },
 }
 `
@@ -69,7 +69,7 @@ func TestWorkspaceDefineOpenExport(t *testing.T) {
 	if err := c.Call(rpc.WorkspaceExport, rpc.WorkspaceParams{ID: ws.ID}, &ex); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`name = "dev"`, `slime.layout.horizontal(0.7,`, `command = "a"`, `slime.layout.browser{ url = "http://x/" }`, `command = "c"`} {
+	for _, want := range []string{`name = "dev"`, `squish.layout.horizontal(0.7,`, `command = "a"`, `squish.layout.browser{ url = "http://x/" }`, `command = "c"`} {
 		if !strings.Contains(ex.Lua, want) {
 			t.Errorf("export lacks %q:\n%s", want, ex.Lua)
 		}

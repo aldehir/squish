@@ -1,9 +1,9 @@
-//! Frames: what slime sends a client to draw a pane. A frame carries the
+//! Frames: what squish sends a client to draw a pane. A frame carries the
 //! grid size, colors, the cursor, the rows of the viewport that changed
 //! since the last one (all of them in a full frame), with the selection
 //! on each row, and the kitty images placed in the viewport.
 //!
-//! Both ends use this file. slime's library (slime.zig) instantiates
+//! Both ends use this file. squish's library (squish.zig) instantiates
 //! `Codec` with libghostty-vt's root, the GUI with its ghostty-vt module:
 //! the same source either way, so the types agree. A raw cell is a
 //! `packed struct(u64)` and goes over as is; styles, whose layout isn't
@@ -44,7 +44,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 /// Bumped with any change to the encoding. It's also derived from the
-/// cell and style layouts (`layout_id`), so a client and a slime built
+/// cell and style layouts (`layout_id`), so a client and a squish built
 /// from different libghostty-vt versions refuse each other's frames.
 pub const version = 3;
 

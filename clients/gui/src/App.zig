@@ -1,5 +1,5 @@
 //! The window's state and what changes it, apart from Win32 and Direct3D:
-//! the tabs and their sessions, slime's workspaces and hosts as it last
+//! the tabs and their sessions, squish's workspaces and hosts as it last
 //! described them, which pane has the keys and what else might (`Mode`),
 //! and the mouse's drags. The window turns its messages into a `Msg` and
 //! hands each to `update`; what the UI draws is `view`, a tree of widgets
@@ -44,7 +44,7 @@ const Tree = Ui.Tree;
 const log = std.log.scoped(.app);
 
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
-const app_name = L("slime");
+const app_name = L("squish");
 
 const spinner_ms = 100;
 /// How long after a tooltip hides the next shows without waiting.
@@ -68,11 +68,11 @@ keymap: binding.Keymap,
 /// follow the daemon's `config.changed` too.
 actions: []Daemon.ConfigAction = &.{},
 /// The names of init.lua's workspace definitions
-/// (slime.workspace.define), which the palette opens. Owned; they
+/// (squish.workspace.define), which the palette opens. Owned; they
 /// follow `config.changed` too.
 workspace_defs: []const []const u16 = &.{},
 /// init.lua's copy mode bindings as client.copy_keys takes them, which
-/// every host's slime gets for this window's panes there. Owned; they
+/// every host's squish gets for this window's panes there. Owned; they
 /// follow `config.changed` too.
 copy_keys: []const u8 = "",
 /// What local sessions run, in CreateProcessW syntax; empty for the
@@ -145,7 +145,7 @@ mode: Mode = .terminal,
 /// most. Empty for none. Owned.
 notice: []u16 = &.{},
 
-/// The connection to slime: local sessions are panes of the workspaces
+/// The connection to squish: local sessions are panes of the workspaces
 /// it holds, those shown here. Null if it couldn't be reached.
 daemon: ?*Daemon = null,
 /// A connection the window opened for its config before the app
@@ -167,7 +167,7 @@ activate_new: ?*Daemon = null,
 /// when it arrives focused, its URL bar takes the keys, so a site can be
 /// typed at once.
 browser_asked: ?*Daemon = null,
-/// Connections to slime on SSH hosts, bridged through the local daemon,
+/// Connections to squish on SSH hosts, bridged through the local daemon,
 /// one per host it has connected: each lists its host's workspaces as
 /// `daemon` lists the local ones, and attaches the ones shown here.
 remotes: std.ArrayList(Remote) = .empty,
@@ -441,7 +441,7 @@ const Drop = struct {
 };
 
 /// A float being moved or resized. Its rect changes here as the mouse
-/// moves, and slime hears the last on release.
+/// moves, and squish hears the last on release.
 const FloatDrag = struct {
     tab: *Tab,
     /// The edges that follow the mouse: all four to move it.
@@ -477,7 +477,7 @@ const SidebarDrag = struct {
 /// is dragged toward it.
 const min_terminal_width = 200;
 
-/// A host's slime, bridged through the local daemon from when it has the
+/// A host's squish, bridged through the local daemon from when it has the
 /// host connected until the bridge is lost and nothing shows its panes.
 /// While a user waits for a pane there, a session stands in for the
 /// host's panes until they come (`standIn`).
@@ -656,7 +656,7 @@ pub const Shell = struct {
         clipboardHasText: *const fn (*anyopaque) bool,
         clipboardGet: *const fn (*anyopaque, Allocator) anyerror!?[]u8,
         clipboardSet: *const fn (*anyopaque, []const u8) anyerror!void,
-        /// The least time between a pane's frames to ask slime for, in
+        /// The least time between a pane's frames to ask squish for, in
         /// microseconds.
         frameInterval: *const fn (*anyopaque) u32,
         /// The font size in points, and changing it, which lays the
@@ -685,7 +685,7 @@ pub const Shell = struct {
         webMouse: *const fn (*anyopaque, *Session, u32, win32.WPARAM, win32.POINT) void,
         /// A browser pane's history buttons.
         webGo: *const fn (*anyopaque, *Session, Nav) void,
-        /// A browser pane's url changed in slime: its browser goes
+        /// A browser pane's url changed in squish: its browser goes
         /// there, unless it's there.
         webFollow: *const fn (*anyopaque, *Session) void,
         /// A host's state or proxy changed (`browserHost`): its browser
@@ -903,10 +903,10 @@ pub fn init(opts: Options) !App {
     };
 }
 
-/// Connect to slime (or go on with the connection the window opened for
+/// Connect to squish (or go on with the connection the window opened for
 /// its config, `Options.daemon`) and show the workspaces the last window
-/// did (or what slime has, or a new one running `command_line`,
-/// CreateProcessW syntax; empty for slime's shell). An `ssh://` URL
+/// did (or what squish has, or a new one running `command_line`,
+/// CreateProcessW syntax; empty for squish's shell). An `ssh://` URL
 /// opens that host too, and is remembered in `hosts`. After `layout`,
 /// so the panes get their sizes.
 pub fn start(self: *App, command_line: []const u16) !void {
@@ -936,7 +936,7 @@ pub fn deinit(self: *App) void {
     Daemon.freeWorkspaceDefs(self.alloc, self.workspace_defs);
     self.alloc.free(self.copy_keys);
     self.alloc.free(self.notice);
-    // Hanging up detaches the workspaces; slime keeps them for the next
+    // Hanging up detaches the workspaces; squish keeps them for the next
     // window.
     if (self.daemon) |conn| conn.deinit();
     if (self.pending_daemon) |conn| conn.deinit();
@@ -967,7 +967,7 @@ pub fn destroyTabs(self: *App) void {
 
 /// Free a tab and its sessions, which only lets go of daemon panes. Its
 /// floats, if it's listed no longer, show as tabs of their own until
-/// slime says otherwise.
+/// squish says otherwise.
 fn destroyTab(self: *App, t: *Tab) void {
     // Its panes may be placed.
     self.placement_stale = true;
@@ -1173,7 +1173,7 @@ pub fn floatsOver(self: *const App, host: *const Tab, buf: *[max_floats]*Tab) []
     return buf[0..n];
 }
 
-/// Put float `t` on top of its host's others, restored, as slime does
+/// Put float `t` on top of its host's others, restored, as squish does
 /// when the focus goes to it: this window doesn't hear its own change.
 fn raiseFloat(self: *App, t: *Tab) void {
     const f = if (t.float) |*f| f else return;
@@ -1260,43 +1260,43 @@ fn nextTabKey(self: *App) u32 {
 
 /// What a new session shows.
 const Target = union(enum) {
-    /// A pane of a workspace slime holds for us.
+    /// A pane of a workspace squish holds for us.
     daemon: struct { conn: *Daemon, arrival: *const Daemon.Arrival },
     /// Nothing yet, on a host (its destination as the sidebar remembers
-    /// it): standing in for its slime's panes until they come.
+    /// it): standing in for its squish's panes until they come.
     waiting: []const u16,
     /// Why nothing can run, titled `title`.
     failed: struct { title: []const u16, why: []const u8 },
 };
 
-/// Connect to slime (or go on with `opened`) and show the workspaces the
-/// last window did (else what slime has, else a new one running
+/// Connect to squish (or go on with `opened`) and show the workspaces the
+/// last window did (else what squish has, else a new one running
 /// `command`), making a tab of each of their tabs. If that fails, a tab
 /// says why.
 fn connectDaemon(self: *App, command: []const u16, opened: ?*Daemon) !void {
     const conn = if (opened) |c| begin: {
         c.begin(self.notify, self.shell.frameInterval(), self.daemonArea(), self.daemonSize(), command, self.shown.wanted(null)) catch |err| {
-            log.err("attaching to slime failed: {}", .{err});
+            log.err("attaching to squish failed: {}", .{err});
             c.deinit();
-            return self.spawnFailed("couldn't attach to slime", err);
+            return self.spawnFailed("couldn't attach to squish", err);
         };
         break :begin c;
     } else Daemon.connect(self.alloc, self.notify, self.shell.frameInterval(), self.daemonArea(), self.daemonSize(), command, self.shown.wanted(null)) catch |err| {
-        log.err("connecting to slime failed: {}", .{err});
-        return self.spawnFailed("couldn't start slime", err);
+        log.err("connecting to squish failed: {}", .{err});
+        return self.spawnFailed("couldn't start squish", err);
     };
     self.daemon = conn;
     self.workspacesChanged(conn);
     self.daemonChanged(conn);
     conn.start() catch |err| {
-        log.err("starting slime's reader failed: {}", .{err});
+        log.err("starting squish's reader failed: {}", .{err});
         self.destroyTabs();
         self.dropWorkspacesOf(conn);
         conn.deinit();
         self.daemon = null;
-        return self.spawnFailed("couldn't read from slime", err);
+        return self.spawnFailed("couldn't read from squish", err);
     };
-    if (self.tabs.items.len == 0) return self.spawnFailed("slime showed nothing", error.NoPanes);
+    if (self.tabs.items.len == 0) return self.spawnFailed("squish showed nothing", error.NoPanes);
 }
 
 /// A local tab saying why nothing could run in it: `what`, failing with
@@ -1308,7 +1308,7 @@ fn spawnFailed(self: *App, what: []const u8, err: anyerror) !void {
 }
 
 /// Take up what `conn` sent: make sessions of the panes that arrived,
-/// and lay out tabs as their workspaces have them, focused as slime
+/// and lay out tabs as their workspaces have them, focused as squish
 /// says: a pane we asked for (a new tab or split) is shown and focused;
 /// a script's is added without taking focus.
 fn daemonChanged(self: *App, conn: *Daemon) void {
@@ -1334,7 +1334,7 @@ fn daemonChanged(self: *App, conn: *Daemon) void {
         // One the user just showed or made is what they want to see.
         const key = if (self.workspaceIn(conn, st.id)) |w| w.key else 0;
         const wanted = (self.activate_ws != null and self.activate_ws.? == key) or (!was_shown and self.activate_new == conn);
-        self.applyStructure(conn, st, &arrived) catch |err| log.err("laying out slime's tabs failed: {}", .{err});
+        self.applyStructure(conn, st, &arrived) catch |err| log.err("laying out squish's tabs failed: {}", .{err});
         if (!wanted) continue;
         self.activate_ws = null;
         self.activate_new = null;
@@ -1357,7 +1357,7 @@ fn daemonChanged(self: *App, conn: *Daemon) void {
             };
         }
     }
-    // Panes no tab holds (which slime doesn't send) aren't shown.
+    // Panes no tab holds (which squish doesn't send) aren't shown.
     var left = arrived.valueIterator();
     while (left.next()) |s| s.*.destroy();
 
@@ -1536,7 +1536,7 @@ fn showWorkspace(self: *App, key: u32) void {
     self.markDirty();
 }
 
-/// Hide workspace `key`: let go of its tabs, which its slime keeps
+/// Hide workspace `key`: let go of its tabs, which its squish keeps
 /// running.
 fn hideWorkspace(self: *App, key: u32) void {
     const entry = self.workspaceEntry(key) orelse return;
@@ -1598,7 +1598,7 @@ fn askKillWorkspace(self: *App, key: u32) void {
 }
 
 /// Whether a newer build than the daemon's is waiting: the local
-/// daemon runs an older build than the slime.exe beside us, or host
+/// daemon runs an older build than the squish.exe beside us, or host
 /// `host`'s daemon another build than the one the local daemon
 /// installed there. The sidebar shows an upgrade button then.
 pub fn upgradeWaiting(self: *App, host: ?usize) bool {
@@ -1626,7 +1626,7 @@ fn askUpgrade(self: *App, host: ?u32) void {
     self.mode = .{ .confirm = .{ .about = .{ .upgrade = host }, .dialog = undefined } };
     const c = &self.mode.confirm;
     const where: []const u16 = if (host) |id| (if (self.hostEntryById(id)) |e| Hosts.label(e.dest) else L("the host")) else L("this machine");
-    const prefix = L("Upgrade slime on ");
+    const prefix = L("Upgrade squish on ");
     const suffix = L("?");
     const name = where[0..@min(where.len, c.title.len - prefix.len - suffix.len)];
     @memcpy(c.title[0..prefix.len], prefix);
@@ -1654,9 +1654,9 @@ fn upgradeNow(self: *App, host: ?u32) void {
     const conn = self.daemon orelse return;
     if (conn.isLost()) return;
     if (host) |id| {
-        conn.hostUpgrade(id) catch |err| log.err("upgrading slime on host {d} failed: {}", .{ id, err });
+        conn.hostUpgrade(id) catch |err| log.err("upgrading squish on host {d} failed: {}", .{ id, err });
     } else {
-        conn.relaunch() catch |err| log.err("replacing slime failed: {}", .{err});
+        conn.relaunch() catch |err| log.err("replacing squish failed: {}", .{err});
     }
 }
 
@@ -1768,7 +1768,7 @@ fn cancelRename(self: *App) void {
 }
 
 /// Send the name in the field and close it. The name comes back from
-/// slime.
+/// squish.
 fn submitRename(self: *App) void {
     const r = switch (self.mode) {
         .rename => |*r| r,
@@ -1865,22 +1865,22 @@ fn openMenu(self: *App, target: Id.Target, anchor: Menu.Anchor) void {
             const found = self.sessionOf(target) orelse return;
             const s = found.s;
             const t = self.tabs.items[found.tab];
-            // Only slime's panes split and zoom.
-            const in_slime = s.daemonPane() != null;
+            // Only squish's panes split and zoom.
+            const in_squish = s.daemonPane() != null;
             m.add(.{ .label = L("Copy"), .icon = .copy, .action = .{ .binding = .copy_to_clipboard }, .disabled = !s.hasSelection() });
             m.add(.{ .label = L("Paste"), .icon = .clipboard, .action = .{ .binding = .paste_from_clipboard }, .disabled = !self.shell.clipboardHasText() });
             m.separator();
-            m.add(.{ .label = L("Split right"), .icon = .columns_2, .action = .{ .binding = .{ .new_split = .right } }, .disabled = !in_slime });
-            m.add(.{ .label = L("Split down"), .icon = .rows_2, .action = .{ .binding = .{ .new_split = .down } }, .disabled = !in_slime });
+            m.add(.{ .label = L("Split right"), .icon = .columns_2, .action = .{ .binding = .{ .new_split = .right } }, .disabled = !in_squish });
+            m.add(.{ .label = L("Split down"), .icon = .rows_2, .action = .{ .binding = .{ .new_split = .down } }, .disabled = !in_squish });
             if (t.count() > 1) {
                 const zoomed = t.zoom == s;
                 m.add(.{ .label = if (zoomed) L("Unzoom") else L("Zoom"), .icon = if (zoomed) .minimize_2 else .maximize_2, .action = .{ .binding = .toggle_split_zoom } });
             }
             m.separator();
-            m.add(.{ .label = L("Open browser"), .icon = .globe, .action = .{ .part = .open_browser }, .disabled = !in_slime });
+            m.add(.{ .label = L("Open browser"), .icon = .globe, .action = .{ .part = .open_browser }, .disabled = !in_squish });
             if (t.float != null) {
                 m.add(.{ .label = L("Dock tab"), .icon = .square_arrow_down_left, .action = .{ .part = .dock } });
-            } else if (in_slime and self.canFloatPane(t)) {
+            } else if (in_squish and self.canFloatPane(t)) {
                 m.add(.{ .label = L("Float"), .icon = .app_window, .action = .{ .part = .float } });
             }
             m.separator();
@@ -1928,8 +1928,8 @@ fn menuTargetExists(self: *App) bool {
 /// A right click came up at `pos`: open the menu of the row or pane
 /// there, in place of any open. A field being edited keeps its click,
 /// and a browser's page keeps it too: its browser got the click
-/// (`paneMouse`) and shows its own menu, so slime's would be a second.
-/// The pane's chrome still opens slime's.
+/// (`paneMouse`) and shows its own menu, so squish's would be a second.
+/// The pane's chrome still opens squish's.
 fn contextMenu(self: *App, pos: win32.POINT) void {
     self.closeMenu();
     const hit = self.hitAt(pos);
@@ -2039,7 +2039,7 @@ pub fn workspaceGroup(self: *const App, key: u32) ?usize {
 
 /// Lay out `conn`'s tabs of workspace `st.id` as `st` has them, in its
 /// order: replace the trees of tabs we have, add tabs we don't, and drop
-/// tabs and panes it no longer has. Its focus is slime's, shared with
+/// tabs and panes it no longer has. Its focus is squish's, shared with
 /// every window on the workspace: each tab's focused and zoomed pane,
 /// and the tab shown, which is followed when one of the workspace's tabs
 /// is the one shown here. Sessions placed from `arrived` are taken out
@@ -2075,7 +2075,7 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
     }
     try self.tabs.ensureUnusedCapacity(alloc, st.tabs.len);
 
-    // Panes of ours slime no longer has, freed once no tree holds them.
+    // Panes of ours squish no longer has, freed once no tree holds them.
     var dropped: std.ArrayList(*Session) = .empty;
     defer dropped.deinit(alloc);
     for (self.tabs.items) |t| {
@@ -2084,8 +2084,8 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
         while (it.next()) |s| if (!used.contains(s)) try dropped.append(alloc, s);
     }
 
-    // The workspace's tabs as slime orders them: ours with their new
-    // trees, and new ones. Each takes slime's focus, unless a focus call
+    // The workspace's tabs as squish orders them: ours with their new
+    // trees, and new ones. Each takes squish's focus, unless a focus call
     // of ours is still out, which it may predate.
     var ordered: std.ArrayList(*Tab) = .empty;
     defer ordered.deinit(alloc);
@@ -2106,7 +2106,7 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
         }
     }
     // They go where the workspace's tabs were, else at the end of their
-    // group; the tabs slime no longer has go.
+    // group; the tabs squish no longer has go.
     var at: ?usize = null;
     var i: usize = 0;
     while (i < self.tabs.items.len) {
@@ -2165,7 +2165,7 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
     }
 
     // Where the active tab was, if it's still here; else the one in its
-    // place. slime's active tab is followed while this workspace's tabs
+    // place. squish's active tab is followed while this workspace's tabs
     // are what's shown: a tab of another workspace or daemon stays.
     const still: ?usize = if (was_active) |t| self.tabIndex(t) else null;
     var active = still orelse @min(self.active, self.tabs.items.len - 1);
@@ -2203,7 +2203,7 @@ fn syncFocus(self: *App) void {
     if (self.activeTabIn(conn, t.ws).eql(t.id) and t.sent_focus != null and std.meta.eql(t.sent_focus.?, f)) return;
     t.sent_focus = f;
     self.setActiveTabIn(conn, t.ws, t.id);
-    conn.focus(f) catch |err| log.warn("telling slime the focus failed: {}", .{err});
+    conn.focus(f) catch |err| log.warn("telling squish the focus failed: {}", .{err});
 }
 
 /// The grid a daemon pane gets: the terminal area, as for any session.
@@ -2295,7 +2295,7 @@ fn nextSessionId(self: *App) u32 {
 }
 
 /// Where `t` is listed, as the sidebar orders tabs: its workspace's
-/// place, or its section's tabs in no workspace (there while slime
+/// place, or its section's tabs in no workspace (there while squish
 /// couldn't be reached or no longer lists it, or standing in for a
 /// host's panes). Tabs are kept in this order.
 pub fn groupOf(self: *const App, t: *const Tab) usize {
@@ -2377,8 +2377,8 @@ fn localDaemon(self: *App) ?*Daemon {
         return null;
     };
     if (conn.isLost()) {
-        // Its tabs say how; slime comes back with the next window.
-        self.spawnFailed("lost slime", error.Disconnected) catch |err| log.err("new session failed: {}", .{err});
+        // Its tabs say how; squish comes back with the next window.
+        self.spawnFailed("lost squish", error.Disconnected) catch |err| log.err("new session failed: {}", .{err});
         return null;
     }
     return conn;
@@ -2391,16 +2391,16 @@ fn newTabInWorkspace(self: *App, key: u32) void {
     const conn = w.conn;
     if (conn.isLost()) return;
     if (!w.shown) self.showWorkspace(key);
-    conn.tabNew(w.id, self.daemonCommand(conn), self.daemonSize()) catch |err| log.err("new tab in slime failed: {}", .{err});
+    conn.tabNew(w.id, self.daemonCommand(conn), self.daemonSize()) catch |err| log.err("new tab in squish failed: {}", .{err});
 }
 
-/// Open remembered host `h`: a workspace on its slime, through the
+/// Open remembered host `h`: a workspace on its squish, through the
 /// connection that lists them, once the daemon has the host connected
 /// and the connection has attached. While either is under way, show the
 /// session standing in, where logging in asks what it needs; the host's
 /// panes replace it once they come (`remoteChanged`). Otherwise ask the
 /// daemon to connect the host, with a stand-in for the login. A host the
-/// daemon can't connect, or slime can't run on, gets the reason there;
+/// daemon can't connect, or squish can't run on, gets the reason there;
 /// ssh.exe in a local tab still reaches it.
 fn openOnHost(self: *App, h: usize) !void {
     const dest = self.hosts.items.items[h];
@@ -2415,7 +2415,7 @@ fn openOnHost(self: *App, h: usize) !void {
     };
     const daemon = self.daemon orelse {
         try self.spawnSession(.{ .waiting = dest });
-        self.activeSession().showEnded("no local slime to connect through");
+        self.activeSession().showEnded("no local squish to connect through");
         return;
     };
     if (self.standIn(dest)) |found| {
@@ -2456,11 +2456,11 @@ fn remoteOn(self: *App, dest: []const u16) ?*Remote {
     return null;
 }
 
-/// Bridge to the slime on host `e`, which the daemon has connected, to
+/// Bridge to the squish on host `e`, which the daemon has connected, to
 /// list its workspaces and show the ones the last window did there. With
 /// `make`, a user is waiting for a pane there: a session stands in for
 /// the host's panes (one already, if logging in made it) until they come,
-/// and its slime makes a workspace if it has none to show.
+/// and its squish makes a workspace if it has none to show.
 fn bridgeHost(self: *App, e: *HostEntry, make: bool) !void {
     try self.remotes.ensureUnusedCapacity(self.alloc, 1);
     if (make and self.standIn(e.dest) == null) try self.spawnSession(.{ .waiting = e.dest });
@@ -2469,14 +2469,14 @@ fn bridgeHost(self: *App, e: *HostEntry, make: bool) !void {
     var want = self.shown.wanted(e.dest);
     want.make = make;
     const remote = Daemon.connectRemote(self.alloc, self.notify, self.shell.frameInterval(), e.id, e.dest, Session.sshTerm(self.config), self.copy_keys, self.daemonArea(), self.daemonSize(), want) catch |err| {
-        log.err("bridging to slime on {f} failed: {}", .{ std.unicode.fmtUtf16Le(e.dest), err });
+        log.err("bridging to squish on {f} failed: {}", .{ std.unicode.fmtUtf16Le(e.dest), err });
         if (stand_in) |s| s.showEnded(@errorName(err));
         return;
     };
     self.remotes.appendAssumeCapacity(.{ .conn = remote, .host = e.id });
 }
 
-/// Take up what slime connections posted: panes that arrived, what each
+/// Take up what squish connections posted: panes that arrived, what each
 /// daemon said about its workspaces (and the local one about hosts),
 /// workspaces to show here, how attaching to hosts' went, and
 /// connections lost.
@@ -2631,9 +2631,9 @@ fn openWorkspaces(self: *App, conn: *Daemon) void {
 }
 
 /// Perform the window actions scripts on `conn` asked for
-/// (slime.client.queue): each as if its key were pressed, on this
+/// (squish.client.queue): each as if its key were pressed, on this
 /// window's focus. A name that isn't a window action's is logged;
-/// init.lua's own actions are for slime.invoke.
+/// init.lua's own actions are for squish.invoke.
 fn performClientActions(self: *App, conn: *Daemon) void {
     const actions = conn.takeClientActions();
     defer {
@@ -2655,7 +2655,7 @@ fn performClientActions(self: *App, conn: *Daemon) void {
     }
 }
 
-/// Take up what host's slime `r` sent. Once its panes have come, they
+/// Take up what host's squish `r` sent. Once its panes have come, they
 /// replace the session that stood in for them, if one did, and the tabs
 /// of connections we lost on the host, which showed the same panes as
 /// they were.
@@ -2689,7 +2689,7 @@ fn remoteChanged(self: *App, r: *Remote) void {
     if (show) self.activate(self.tabIndex(first).?);
 }
 
-/// Host's slime `remotes[i]` couldn't attach: let it go. Its stand-in
+/// Host's squish `remotes[i]` couldn't attach: let it go. Its stand-in
 /// says why, if a user was waiting; else only the log does, and the next
 /// try from the host's header gets a stand-in.
 fn remoteFailed(self: *App, i: usize) void {
@@ -2855,7 +2855,7 @@ fn daemonCommand(self: *const App, conn: *const Daemon) []const u16 {
 }
 
 /// Split the active tab's pane `s`, starting a shell on side `dir` of
-/// it. The new pane comes from slime (`daemon_posted`).
+/// it. The new pane comes from squish (`daemon_posted`).
 fn splitPane(self: *App, s: *Session, dir: Daemon.Direction) void {
     const pane = s.daemonPane() orelse return;
     const t = self.tabs.items[(self.findSession(s.id) orelse return).tab];
@@ -2886,7 +2886,7 @@ fn openBrowser(self: *App, s: *Session) void {
 }
 
 /// A double click on the title of pane `s`: toggle its zoom when the
-/// tab has several slime panes, the cases its title shows a zoom button.
+/// tab has several squish panes, the cases its title shows a zoom button.
 fn zoomFromTitle(self: *App, s: *Session) void {
     const t = self.tabs.items[(self.findSession(s.id) orelse return).tab];
     if (t.conn == null or s.daemonPane() == null) return;
@@ -2931,7 +2931,7 @@ fn gotoPane(self: *App, to: binding.GotoSplit) void {
 }
 
 /// Move the divider beside the focused pane `cells` cells toward `side`,
-/// as dragging it would, and send slime the tree.
+/// as dragging it would, and send squish the tree.
 fn resizePane(self: *App, side: Daemon.Direction, cells: u16) void {
     const t = self.activeTab();
     self.unzoom(t);
@@ -2949,7 +2949,7 @@ fn resizePane(self: *App, side: Daemon.Direction, cells: u16) void {
     self.markDirty();
 }
 
-/// Give the active tab's panes the same sizes, and send slime the tree.
+/// Give the active tab's panes the same sizes, and send squish the tree.
 fn equalizePanes(self: *App) void {
     const t = self.activeTab();
     if (t.count() < 2) return;
@@ -2959,7 +2959,7 @@ fn equalizePanes(self: *App) void {
     self.markDirty();
 }
 
-/// Start dragging divider `i` of the active tab, if slime has its tree.
+/// Start dragging divider `i` of the active tab, if squish has its tree.
 fn startDrag(self: *App, i: usize, pos: win32.POINT) void {
     const dividers = self.placed().dividers.items;
     if (i >= dividers.len) return;
@@ -3020,7 +3020,7 @@ fn dragTo(self: *App, d: Drag, pos: win32.POINT) void {
     self.markDirty();
 }
 
-/// Let go of the dragged dividers and send slime the tree they left.
+/// Let go of the dragged dividers and send squish the tree they left.
 fn endDrag(self: *App) void {
     const d = self.drag orelse return;
     // First: releasing the capture comes back as `capture_lost`.
@@ -3033,7 +3033,7 @@ fn endDrag(self: *App) void {
     self.sendLayout(d.tab);
 }
 
-/// Send slime tab `t`'s tree, changed here.
+/// Send squish tab `t`'s tree, changed here.
 fn sendLayout(self: *App, t: *const Tab) void {
     const conn = t.conn orelse return;
     var arena: std.heap.ArenaAllocator = .init(self.alloc);
@@ -3110,7 +3110,7 @@ fn floatDragTo(self: *App, d: FloatDrag, pos: win32.POINT) void {
     self.markDirty();
 }
 
-/// Let go of the dragged float and tell slime where it is.
+/// Let go of the dragged float and tell squish where it is.
 fn endFloatDrag(self: *App) void {
     const d = self.float_drag orelse return;
     // First: releasing the capture comes back as `capture_lost`.
@@ -3149,7 +3149,7 @@ fn endSidebarDrag(self: *App) void {
 }
 
 /// Drop a drag (of a divider or a pane) whose tree is about to change, as
-/// it stands: slime's tree, or the pane closing, decides the layout now.
+/// it stands: squish's tree, or the pane closing, decides the layout now.
 fn cancelDrag(self: *App) void {
     if (self.drag == null and self.pane_drag == null and self.float_drag == null) return;
     self.drag = null;
@@ -3206,7 +3206,7 @@ fn endPaneDrag(self: *App) void {
     self.markDirty();
     const drop = d.drop orelse return;
     if (drop.tab != d.tab) {
-        // Into another tab: slime moves it, and the structure that
+        // Into another tab: squish moves it, and the structure that
         // follows shows it there under a new id.
         const pane = d.source.daemonPane() orelse return;
         const conn = d.tab.conn orelse return;
@@ -3332,7 +3332,7 @@ fn focusPane(self: *App, s: *Session) void {
 }
 
 /// Whether remembered host `h` is in use: a tab is on it, or a
-/// connection to its slime lists its workspaces.
+/// connection to its squish lists its workspaces.
 pub fn hostInUse(self: *const App, h: usize) bool {
     const dest = self.hosts.items.items[h];
     for (self.tabs.items) |t| if (t.focus.hostDest()) |d| {
@@ -3397,7 +3397,7 @@ fn closeTab(self: *App, i: usize) void {
 }
 
 /// Take tab `i` out and free it with its sessions, which lets go of
-/// slime's panes without ending them.
+/// squish's panes without ending them.
 fn dropTab(self: *App, i: usize) void {
     const was_active = i == self.active;
     if (was_active) self.deactivate();
@@ -3547,7 +3547,7 @@ fn runBinding(self: *App, k: Msg.Key, drop_chars: bool) bool {
 
 /// Browser pane `s`'s page opens a window at `url`: a browser pane split
 /// off its right shows it. Returns false if the pane can't be split (it
-/// isn't slime's, or it ended).
+/// isn't squish's, or it ended).
 pub fn browserNewWindow(self: *App, s: *Session, url: []const u16) bool {
     if (s.ended) return false;
     const pane = s.daemonPane() orelse return false;
@@ -3585,7 +3585,7 @@ pub fn browserTabOut(self: *App, s: *Session, next: bool) void {
 }
 
 /// Returns false if the action couldn't run: copy with no selection,
-/// paste with no text on the clipboard, a pane action in a tab slime
+/// paste with no text on the clipboard, a pane action in a tab squish
 /// doesn't run, or with nothing shown. init.lua's actions always run,
 /// in the daemon, for the focused pane if it's the local daemon's.
 fn runAction(self: *App, action: binding.Action) bool {
@@ -3672,7 +3672,7 @@ fn runAction(self: *App, action: binding.Action) bool {
     return true;
 }
 
-/// Whether pane menus offer to float a pane of tab `t`: a slime tab of
+/// Whether pane menus offer to float a pane of tab `t`: a squish tab of
 /// several panes, or of one that isn't the tab shown (a lone pane can't
 /// float over its own tab).
 fn canFloatPane(self: *const App, t: *const Tab) bool {
@@ -3688,7 +3688,7 @@ fn canFloatOver(self: *const App, t: *const Tab) bool {
     return t != host and t.conn == host.conn and t.ws == host.ws;
 }
 
-/// Float pane `s` over its tab: slime moves it into a new tab, which
+/// Float pane `s` over its tab: squish moves it into a new tab, which
 /// comes back focused under a new id.
 fn floatPane(self: *App, s: *Session) void {
     const pane = s.daemonPane() orelse return;
@@ -3698,7 +3698,7 @@ fn floatPane(self: *App, s: *Session) void {
 }
 
 /// Float tab `t` over the tab shown, with the keys. Shown so at once:
-/// slime's structure says the same.
+/// squish's structure says the same.
 fn floatTabOver(self: *App, t: *Tab) void {
     if (!self.canFloatOver(t)) return;
     const host = self.shownHost();
@@ -4414,7 +4414,7 @@ fn utf16Into(buf: []u16, utf8: []const u8) usize {
 
 /// Open the file picker (ctrl+i): the palette's file step over the
 /// focused pane's shell's directory, at its cursor. False without a
-/// terminal pane of slime's focused.
+/// terminal pane of squish's focused.
 fn pickFile(self: *App) bool {
     const s = self.focusedSession() orelse return false;
     if (s.content != .terminal) return false;
@@ -4633,12 +4633,12 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .action = .toggle_stats,
     });
     if (self.upgradeWaiting(null)) {
-        try p.add(.{ .label = L("Upgrade slime"), .detail = L("a newer build is waiting"), .icon = .circle_arrow_up, .section = .command, .action = .{ .upgrade = std.math.maxInt(u32) } });
+        try p.add(.{ .label = L("Upgrade squish"), .detail = L("a newer build is waiting"), .icon = .circle_arrow_up, .section = .command, .action = .{ .upgrade = std.math.maxInt(u32) } });
     }
     for (self.hosts.items.items, 0..) |dest, h| {
         if (!self.upgradeWaiting(h)) continue;
         const e = self.hostEntry(dest) orelse continue;
-        var n = appendUnits(&buf, 0, L("Upgrade slime on "));
+        var n = appendUnits(&buf, 0, L("Upgrade squish on "));
         n = appendUnits(&buf, n, Hosts.label(dest));
         try p.add(.{ .label = buf[0..n], .detail = L("a newer build is waiting"), .icon = .circle_arrow_up, .section = .command, .action = .{ .upgrade = e.id } });
     }
@@ -5416,7 +5416,7 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
             if (hit.part == .title) if (self.shownPane(hit.target)) |pane| {
                 // Double-clicking a pane's title zooms it, as its button
                 // does. The release may then land on the zoomed pane's
-                // cells; slime ignores a release without a press.
+                // cells; squish ignores a release without a press.
                 if (msg == win32.WM_LBUTTONDBLCLK) return self.zoomFromTitle(pane);
                 return self.startPaneDrag(pane, pos);
             };
@@ -5730,7 +5730,7 @@ fn showTitle(self: *App) void {
 }
 
 /// Fit tab `t`'s panes to the terminal area, whether it's shown or not:
-/// a tab's panes keep their sizes in slime while it's out of sight. The
+/// a tab's panes keep their sizes in squish while it's out of sight. The
 /// active tab's are placed again before they're drawn (`placed`), as
 /// anything that changes them makes the placement stale.
 fn layoutTab(self: *App, t: *Tab) void {
@@ -6514,7 +6514,7 @@ test "the tabs can all go and a new one come while the active index is past them
     try app.spawnFailed("b", error.B);
     try std.testing.expectEqual(@as(usize, 1), app.active);
 
-    // slime's reader couldn't start: the tabs go, and a tab says why.
+    // squish's reader couldn't start: the tabs go, and a tab says why.
     app.destroyTabs();
     try std.testing.expectEqual(@as(usize, 0), app.active);
     try std.testing.expect(app.focusedSession() == null);
@@ -6655,12 +6655,12 @@ test "ctrl+i opens the file step at the pane's cursor, and Escape closes it" {
     defer t.deinit();
     const app = &t.app;
     const panes = try t.twoPanes();
-    // A pane slime doesn't run has no directory to search: nothing opens.
+    // A pane squish doesn't run has no directory to search: nothing opens.
     shell.held = .{ .ctrl = true };
     try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'I', .lparam = 0 } }));
     shell.held = .{};
     try std.testing.expect(app.mode == .terminal);
-    // Slime's pane, its cursor at column 3 of row 2: the box goes there.
+    // Squish's pane, its cursor at column 3 of row 2: the box goes there.
     const b = panes[1];
     b.transport = .{ .daemon = .{ .conn = &t.daemon, .pane = .{ .ws = 1, .tab = 1, .n = 2 } } };
     b.term().?.screen.cursor.viewport = .{ .x = 3, .y = 2, .wide_tail = false };
@@ -7203,7 +7203,7 @@ test "a pane drags between a float and the tab under it: along an edge, or besid
     defer t.deinit();
     const app = &t.app;
     const tabs = try testFloats(&t);
-    // Slime's panes, so they can go between tabs.
+    // Squish's panes, so they can go between tabs.
     const a2 = app.placed().panes.items[1].session;
     for ([_]*Session{ tabs.a.focus, a2, tabs.f.focus }, [_]Daemon.PaneRef{ .{ .ws = 1, .tab = 1, .n = 1 }, .{ .ws = 1, .tab = 1, .n = 2 }, .{ .ws = 1, .tab = 2, .n = 1 } }) |s, ref| {
         s.transport = .{ .daemon = .{ .conn = &t.daemon, .pane = ref } };
@@ -7234,7 +7234,7 @@ test "a pane drags between a float and the tab under it: along an edge, or besid
     try std.testing.expectEqual(Tab.Place{ .beside = .{ .target = a2, .side = .up } }, drop.place);
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = .{ .x = @intFromFloat(fp.x + fp.w / 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
     try std.testing.expect(app.pane_drag.?.drop == null);
-    // Let go over A: slime is asked (and can't answer here); the trees
+    // Let go over A: squish is asked (and can't answer here); the trees
     // here wait for its structure.
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = beside_a2 } });
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = beside_a2 } });

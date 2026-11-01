@@ -13,7 +13,7 @@ import (
 
 	glua "github.com/yuin/gopher-lua"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // syncHost is a fakeHost safe for hooks, which print from goroutines
@@ -58,17 +58,17 @@ func TestSleepAndTimers(t *testing.T) {
 	defer r.Close()
 	start := time.Now()
 	res, err := r.Run(context.Background(), "t", `
-		slime.after(0.05, function(ctx) print("fired", ctx.origin, ctx.pane_id) end)
-		local no = slime.after(10, function() print("never") end)
+		squish.after(0.05, function(ctx) print("fired", ctx.origin, ctx.pane_id) end)
+		local no = squish.after(10, function() print("never") end)
 		assert(no:active())
 		no:cancel()
 		assert(not no:active())
 		no:cancel()
-		slime.sleep(0.02)
+		squish.sleep(0.02)
 		print("slept")
 		local n = 0
 		local tick
-		tick = slime.every(0.01, function()
+		tick = squish.every(0.01, function()
 			n = n + 1
 			if n == 3 then tick:cancel() end
 		end)
@@ -95,15 +95,15 @@ func TestHooks(t *testing.T) {
 	deliver(r, `tab.created {"id":"1.4"}`, `pane.exited {"id":"1.2.9","status":7}`, `pane.exited {"id":"1.2.3","status":0}`)
 	res, err := r.Run(context.Background(), "t", `
 		-- The first hook blocks; the second runs meanwhile.
-		slime.on("pane.*", function(ctx, ev)
-			slime.sleep(0.01)
-			print("a", ctx.event, ctx.pane_id, ctx.tab_id, ctx.workspace_id, ev.status, slime.pane_id)
+		squish.on("pane.*", function(ctx, ev)
+			squish.sleep(0.01)
+			print("a", ctx.event, ctx.pane_id, ctx.tab_id, ctx.workspace_id, ev.status, squish.pane_id)
 		end)
-		slime.on("pane.exited", function(ctx, ev)
+		squish.on("pane.exited", function(ctx, ev)
 			print("b", ev.id)
-			if ev.id == "1.2.3" then slime.stop({ done = ev.status }) end
+			if ev.id == "1.2.3" then squish.stop({ done = ev.status }) end
 		end)
-		slime.on("tab.created", function(ctx, ev) print("tab", ev.id, ctx.tab_id, ctx.pane_id) end)
+		squish.on("tab.created", function(ctx, ev) print("tab", ev.id, ctx.tab_id, ctx.pane_id) end)
 		return "main"
 	`)
 	if err != nil {
@@ -130,7 +130,7 @@ func TestHookCancelEndsRun(t *testing.T) {
 	res, err := r.Run(context.Background(), "t", `
 		local n = 0
 		local hook
-		hook = slime.on("x", function() n = n + 1 print("x", n) hook:cancel() end)
+		hook = squish.on("x", function() n = n + 1 print("x", n) hook:cancel() end)
 		return "main"
 	`)
 	if err != nil {
@@ -150,8 +150,8 @@ func TestHookErrorFailsRun(t *testing.T) {
 	defer r.Close()
 	deliver(r, `x {}`)
 	_, err := r.Run(context.Background(), "t", `
-		slime.on("x", function() error("boom") end)
-		slime.every(1, function() end)
+		squish.on("x", function() error("boom") end)
+		squish.every(1, function() end)
 	`)
 	if err == nil || !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), "traceback") {
 		t.Errorf("err %v", err)
@@ -164,11 +164,11 @@ func TestWait(t *testing.T) {
 	defer r.Close()
 	deliver(r, `pane.exited {"id":"1.2.9","status":7}`, `pane.exited {"id":"1.2.3","status":4}`, `tab.closed {"id":"1.2"}`)
 	res, err := r.Run(context.Background(), "t", `
-		local ev, why = slime.wait("pane.exited", { pane_id = "1.2.3" }, 0.001)
+		local ev, why = squish.wait("pane.exited", { pane_id = "1.2.3" }, 0.001)
 		assert(ev == nil and why == "timeout", why)
-		ev = assert(slime.wait("pane.exited", { pane_id = "1.2.3" }, 5))
-		local tab = assert(slime.wait("tab.*", nil, 5))
-		local none, why2 = slime.wait("pane.exited", { status = 99 }, 0.05)
+		ev = assert(squish.wait("pane.exited", { pane_id = "1.2.3" }, 5))
+		local tab = assert(squish.wait("tab.*", nil, 5))
+		local none, why2 = squish.wait("pane.exited", { status = 99 }, 0.05)
 		return { status = ev.status, id = ev.id, tab = tab.id, none = none, why = why2 }
 	`)
 	if err != nil {
@@ -190,9 +190,9 @@ func TestCancelWhileBlocked(t *testing.T) {
 	}()
 	start := time.Now()
 	_, err := r.Run(ctx, "t", `
-		slime.on("x", function() end)
-		slime.every(0.001, function() end)
-		slime.sleep(30)
+		squish.on("x", function() end)
+		squish.every(0.001, function() end)
+		squish.sleep(30)
 	`)
 	if !errors.Is(err, ErrCancelled) {
 		t.Errorf("err %v", err)
@@ -207,11 +207,11 @@ func TestPersistent(t *testing.T) {
 	r := New(h, Context{Persistent: true})
 	defer r.Close()
 	res, err := r.Run(context.Background(), "init", `
-		slime.on("pane.exited", function(ctx, ev) print("exited", ev.id, slime.pane_id) end)
-		slime.on("boom", function() error("bad hook") end)
+		squish.on("pane.exited", function(ctx, ev) print("exited", ev.id, squish.pane_id) end)
+		squish.on("boom", function() error("bad hook") end)
 		function twice(ctx, n)
-			slime.sleep(0.01)
-			return { n = n * 2, pane = ctx.pane_id, mine = slime.pane_id }
+			squish.sleep(0.01)
+			return { n = n * 2, pane = ctx.pane_id, mine = squish.pane_id }
 		end
 		return "loaded"
 	`)
@@ -266,7 +266,7 @@ func TestPersistent(t *testing.T) {
 func TestCloseCancelsCalls(t *testing.T) {
 	h := &syncHost{}
 	r := New(h, Context{Persistent: true})
-	if _, err := r.Run(context.Background(), "init", `function nap() slime.sleep(30) end`); err != nil {
+	if _, err := r.Run(context.Background(), "init", `function nap() squish.sleep(30) end`); err != nil {
 		t.Fatal(err)
 	}
 	errc := make(chan error, 1)
@@ -290,8 +290,8 @@ func TestStopFromMainThenHooksEnd(t *testing.T) {
 	r := New(h, Context{})
 	defer r.Close()
 	res, err := r.Run(context.Background(), "t", `
-		slime.every(1, function() end)
-		slime.stop("early")
+		squish.every(1, function() end)
+		squish.stop("early")
 	`)
 	if err != nil || string(res) != `"early"` {
 		t.Errorf("result %s, %v", res, err)
@@ -302,7 +302,7 @@ func TestStopFromMainThenHooksEnd(t *testing.T) {
 // binary, told what to be by the arguments after "--" (a Go trick, so
 // the tests depend on no program of the machine's).
 func TestHelperProcess(t *testing.T) {
-	if os.Getenv("SLIME_HELPER") == "" {
+	if os.Getenv("SQUISH_HELPER") == "" {
 		return
 	}
 	args := os.Args
@@ -331,7 +331,7 @@ func TestHelperProcess(t *testing.T) {
 			}
 		}
 	case "env":
-		fmt.Println(os.Getenv("SLIME_T"))
+		fmt.Println(os.Getenv("SQUISH_T"))
 	case "pwd":
 		dir, _ := os.Getwd()
 		fmt.Println(dir)
@@ -353,14 +353,14 @@ func TestExec(t *testing.T) {
 	defer r.Close()
 	dir := t.TempDir()
 	res, err := r.Run(context.Background(), "t", `
-		local env = { SLIME_HELPER = "1", SLIME_T = "yes" }
+		local env = { SQUISH_HELPER = "1", SQUISH_T = "yes" }
 		local function clean(s) return (s:gsub("\r", "")) end
-		local r = assert(slime.exec(`+helper("echo", "hi", "there")+`, { env = env }))
-		local nothing, why = slime.exec({ "no-such-program-slime" })
-		local cat = assert(slime.exec(`+helper("cat")+`, { stdin = "b\na\n", env = env }))
-		local e = assert(slime.exec(`+helper("env")+`, { env = env }))
-		local pwd = assert(slime.exec(`+helper("pwd")+`, { env = env, cwd = [[`+dir+`]] }))
-		local bad, why2 = slime.exec("")
+		local r = assert(squish.exec(`+helper("echo", "hi", "there")+`, { env = env }))
+		local nothing, why = squish.exec({ "no-such-program-squish" })
+		local cat = assert(squish.exec(`+helper("cat")+`, { stdin = "b\na\n", env = env }))
+		local e = assert(squish.exec(`+helper("env")+`, { env = env }))
+		local pwd = assert(squish.exec(`+helper("pwd")+`, { env = env, cwd = [[`+dir+`]] }))
+		local bad, why2 = squish.exec("")
 		return { status = r.status, ok = r.ok, out = clean(r.stdout), err = clean(r.stderr),
 			nothing = nothing, why = why ~= nil, cat = clean(cat.stdout), env = clean(e.stdout),
 			pwd = clean(pwd.stdout), why2 = why2 }
@@ -396,9 +396,9 @@ func TestExecStart(t *testing.T) {
 	r := New(h, Context{})
 	defer r.Close()
 	res, err := r.Run(context.Background(), "t", `
-		local env = { SLIME_HELPER = "1" }
+		local env = { SQUISH_HELPER = "1" }
 		local pieces = {}
-		local p = assert(slime.exec.start(`+helper("cat")+`, { env = env, stdin = true,
+		local p = assert(squish.exec.start(`+helper("cat")+`, { env = env, stdin = true,
 			stdout = function(d) pieces[#pieces + 1] = (d:gsub("\r", "")) end }))
 		assert(p:running() and p.pid > 0)
 		assert(p:write("z\n"))
@@ -408,11 +408,11 @@ func TestExecStart(t *testing.T) {
 		p:close_stdin()
 		local r = assert(p:wait(5))
 		assert(not p:running())
-		local long = assert(slime.exec.start(`+helper("sleep")+`, { env = env }))
+		local long = assert(squish.exec.start(`+helper("sleep")+`, { env = env }))
 		assert(long:running())
 		long:kill()
 		local k = assert(long:wait(5))
-		local to, why2 = slime.exec(`+helper("sleep")+`, { env = env, timeout = 0.05 })
+		local to, why2 = squish.exec(`+helper("sleep")+`, { env = env, timeout = 0.05 })
 		return { status = r.status, out = table.concat(pieces), buffered = r.stdout, killed = k.status ~= 0, to = to, why2 = why2 }
 	`)
 	if err != nil {

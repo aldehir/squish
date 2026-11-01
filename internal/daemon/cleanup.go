@@ -5,15 +5,15 @@ import (
 	"path/filepath"
 )
 
-// cleanBuilds removes the builds beside this one: slime-gui runs the
-// daemon from a copy in bin/<build>/slime.exe and a host installs it as
-// bin/<build>/slime, one directory per build, and a build in use can't
+// cleanBuilds removes the builds beside this one: squish-gui runs the
+// daemon from a copy in bin/<build>/squish.exe and a host installs it as
+// bin/<build>/squish, one directory per build, and a build in use can't
 // be replaced, so they pile up. The daemon's own stays; one another
 // daemon still runs from can't be removed on Windows (in use) and is
-// harmless to on Unix. Not under SLIME_INSTANCE, so a test daemon
+// harmless to on Unix. Not under SQUISH_INSTANCE, so a test daemon
 // leaves the user's builds alone.
 func (s *Server) cleanBuilds() {
-	if os.Getenv("SLIME_INSTANCE") != "" {
+	if os.Getenv("SQUISH_INSTANCE") != "" {
 		return
 	}
 	exe, err := os.Executable()
@@ -44,7 +44,7 @@ func (s *Server) cleanBuilds() {
 	}
 }
 
-// isBuildDir says whether dir holds nothing but a slime executable: what
+// isBuildDir says whether dir holds nothing but a squish executable: what
 // an install leaves, and all cleanBuilds removes.
 func isBuildDir(dir string) bool {
 	entries, err := os.ReadDir(dir)
@@ -52,7 +52,7 @@ func isBuildDir(dir string) bool {
 		return false
 	}
 	for _, e := range entries {
-		if e.IsDir() || (e.Name() != "slime" && e.Name() != "slime.exe") {
+		if e.IsDir() || (e.Name() != "squish" && e.Name() != "squish.exe") {
 			return false
 		}
 	}

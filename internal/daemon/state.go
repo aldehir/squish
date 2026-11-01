@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // The model on disk: model.json in the state directory describes the
@@ -142,7 +142,7 @@ func (s *Server) modelLocked() *Model {
 		Version:    modelVersion,
 		Build:      s.build,
 		Written:    time.Now().UnixMilli(),
-		Instance:   os.Getenv("SLIME_INSTANCE"),
+		Instance:   os.Getenv("SQUISH_INSTANCE"),
 		NextWS:     s.nextWS,
 		Workspaces: []ModelWorkspace{},
 		Hosts:      s.hostsModelLocked(),
@@ -267,7 +267,7 @@ func (s *Server) clearState() {
 
 // restoreBanner is the first line of a restored pane: its program is a
 // new one, however familiar the prompt.
-const restoreBanner = "\x1b[0m[slime restarted; this pane was relaunched]\r\n"
+const restoreBanner = "\x1b[0m[squish restarted; this pane was relaunched]\r\n"
 
 // restore rebuilds the structure in m with the same ids and relaunches
 // every pane: a terminal's command in the directory its shell last

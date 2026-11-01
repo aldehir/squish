@@ -1,8 +1,8 @@
 # Third-party notices
 
-slime is built on [libghostty-vt](https://github.com/ghostty-org/ghostty),
+squish is built on [libghostty-vt](https://github.com/ghostty-org/ghostty),
 the terminal emulation core of Ghostty, which is compiled into both
-executables, `slime.exe` (the daemon) and `slime-gui.exe` (the window).
+executables, `squish.exe` (the daemon) and `squish-gui.exe` (the window).
 Ghostty's bundled color themes are also installed alongside them,
 and its sprite drawing code (box drawing, blocks, and similar glyphs) is
 vendored in `clients/gui/src/font/sprite`.
@@ -93,14 +93,14 @@ SOFTWARE.
 
 ## ConPTY
 
-slime ships `conpty.dll` and `OpenConsole.exe` from the
+squish ships `conpty.dll` and `OpenConsole.exe` from the
 [Microsoft.Windows.Console.ConPTY](https://www.nuget.org/packages/Microsoft.Windows.Console.ConPTY)
 package, built from [microsoft/terminal](https://github.com/microsoft/terminal)
 under the MIT License, Copyright (c) Microsoft Corporation.
 
 ## WebView2
 
-slime ships `WebView2Loader.dll` from the
+squish ships `WebView2Loader.dll` from the
 [Microsoft.Web.WebView2](https://www.nuget.org/packages/Microsoft.Web.WebView2)
 package, unmodified, for browser panes; the browser itself is the
 WebView2 runtime installed with Windows.
@@ -135,13 +135,13 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-## slime.exe
+## squish.exe
 
-`slime.exe` is written in Go, and statically links the Go standard
+`squish.exe` is written in Go, and statically links the Go standard
 library and the modules below, unmodified. It also links libghostty-vt
 (above) as a static library, with the C runtime Zig provides for each
 target: MinGW-w64's on Windows, musl on Linux (see below). Builds of
-`slime` for Linux sit beside it in `remote/`, to install on SSH hosts.
+`squish` for Linux sit beside it in `remote/`, to install on SSH hosts.
 
 The Go standard library, [golang.org/x/crypto](https://go.googlesource.com/crypto),
 [golang.org/x/sys](https://go.googlesource.com/sys), and
@@ -238,7 +238,7 @@ SOFTWARE.
 ```
 
 [yuin/gopher-lua](https://github.com/yuin/gopher-lua), the Lua
-runtime `slime do` and the config file run on:
+runtime `squish do` and the config file run on:
 
 ```
 The MIT License (MIT)
@@ -265,7 +265,7 @@ SOFTWARE.
 ```
 
 [creack/pty](https://github.com/creack/pty), in the Linux builds of
-`slime`:
+`squish`:
 
 ```
 Copyright (c) 2011 Keith Rarick
@@ -504,7 +504,7 @@ Copyright 2022 Alan Shreve, are licensed under the Apache License 2.0:
       of your accepting any such warranty or additional liability.
 ```
 
-[musl](https://musl.libc.org/), linked into the Linux builds of `slime`,
+[musl](https://musl.libc.org/), linked into the Linux builds of `squish`,
 is licensed as follows:
 
 ```
@@ -533,7 +533,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 The [MinGW-w64](https://www.mingw-w64.org/) runtime, linked into
-`slime.exe`, is licensed as follows:
+`squish.exe`, is licensed as follows:
 
 ```
 With exception of certain parts that are prominently marked as being

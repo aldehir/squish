@@ -13,9 +13,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/aldehir/slime/internal/daemon"
-	"github.com/aldehir/slime/internal/remote"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/daemon"
+	"github.com/aldehir/squish/internal/remote"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // hostOptions configures the daemon's hosts: the builds to install come
@@ -38,7 +38,7 @@ func hostCommands() []*cobra.Command {
 		Use:   "connect <destination>",
 		Short: "Log in to a host and keep the connection in the daemon",
 		Long: "Logs in to destination ([user@]host[:port], ssh://[user@]host[:port], or a Host\n" +
-			"from ~/.ssh/config), answering its prompts on this console, and puts slime\n" +
+			"from ~/.ssh/config), answering its prompts on this console, and puts squish\n" +
 			"there. The daemon keeps the connection for windows to use.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -62,7 +62,7 @@ func hostCommands() []*cobra.Command {
 		Long: "Lists the hosts the daemon knows and their state. A connected host has a SOCKS5\n" +
 			"proxy into its network, on loopback with no auth (as ssh -D's), shown as\n" +
 			"socks5://127.0.0.1:<port>; curl --proxy socks5h://127.0.0.1:<port> http://intranet/\n" +
-			"has the host resolve and reach intranet. slime.config{ host = { proxy = false } }\n" +
+			"has the host resolve and reach intranet. squish.config{ host = { proxy = false } }\n" +
 			"turns it off for the hosts that connect after it's set; one already connected\n" +
 			"keeps its proxy until it reconnects.",
 		Args: cobra.NoArgs,

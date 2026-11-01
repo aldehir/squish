@@ -1,6 +1,6 @@
 //! The chrome's colors, derived from the terminal's default background
 //! and foreground, so the chrome matches whatever theme is configured,
-//! light or dark. Everything is a mix of the two, except the accent (slime
+//! light or dark. Everything is a mix of the two, except the accent (squish
 //! blue, from the app icon) and the close button's red, which is Windows'.
 
 const std = @import("std");

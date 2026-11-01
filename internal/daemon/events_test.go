@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
-// Stage 8: scripts and the config see the daemon's events (slime.on,
-// slime.wait), including the ones a pane's terminal gives rise to, and
-// ask the windows to act (slime.client.queue).
+// Stage 8: scripts and the config see the daemon's events (squish.on,
+// squish.wait), including the ones a pane's terminal gives rise to, and
+// ask the windows to act (squish.client.queue).
 
 func TestScriptHooksAndWait(t *testing.T) {
 	h := newHarness(t)
@@ -24,23 +24,23 @@ func TestScriptHooksAndWait(t *testing.T) {
 	var started rpc.ScriptRunResult
 	if err := c.Call(rpc.ScriptRun, rpc.ScriptRunParams{Name: "watch.lua", Pane: pane, Source: `
 		local seen = {}
-		slime.on("pane.title", function(ctx, ev)
+		squish.on("pane.title", function(ctx, ev)
 			seen[#seen + 1] = "title " .. ev.title .. " for " .. ctx.pane_id
 		end)
-		slime.on("pane.bell", function(ctx, ev) seen[#seen + 1] = "bell " .. ev.id end)
+		squish.on("pane.bell", function(ctx, ev) seen[#seen + 1] = "bell " .. ev.id end)
 		-- A hook for the exit keeps one that comes before the wait below
 		-- is registered (the test ends the child as soon as it sees it).
-		slime.on("pane.exited", function() end)
-		local p = assert(slime.pane.split{ direction = "down", command = "child" })
-		local ev = assert(slime.wait("pane.exited", { pane_id = p.pane }, 10))
+		squish.on("pane.exited", function() end)
+		local p = assert(squish.pane.split{ direction = "down", command = "child" })
+		local ev = assert(squish.wait("pane.exited", { pane_id = p.pane }, 10))
 		seen[#seen + 1] = "exited " .. ev.id .. " " .. ev.status
 		-- The pwd event too, then stop with what was seen: the hooks are
 		-- live, so a return wouldn't end the script.
-		assert(slime.wait("pane.pwd", { pane_id = slime.pane_id }, 10))
+		assert(squish.wait("pane.pwd", { pane_id = squish.pane_id }, 10))
 		-- One pane's exit and another's title come from different
 		-- goroutines: any order.
 		table.sort(seen)
-		slime.stop(seen)
+		squish.stop(seen)
 	`}, &started); err != nil {
 		t.Fatal(err)
 	}
@@ -136,11 +136,11 @@ func TestClientQueue(t *testing.T) {
 	c := h.connect()
 	// From a script, for its pane's workspace; and the method itself.
 	_, done := runScript(t, c, rpc.ScriptRunParams{Pane: pane, Source: `
-		assert(slime.client.queue("increase_font_size", { amount = 2 }))
-		local ok, err = slime.client.queue("")
+		assert(squish.client.queue("increase_font_size", { amount = 2 }))
+		local ok, err = squish.client.queue("")
 		assert(not ok and err:find("name"), err)
 		-- One that changes the workspace would run once per window.
-		local split, why = slime.client.queue("new_split", { direction = "down" })
+		local split, why = squish.client.queue("new_split", { direction = "down" })
 		assert(not split and why:find("pane.split"), why)
 		return "queued"
 	`})
@@ -168,7 +168,7 @@ func TestClientQueue(t *testing.T) {
 	// No workspace: not from a script run for none, nor for one that
 	// doesn't exist.
 	_, done = runScript(t, c, rpc.ScriptRunParams{Source: `
-		local ok, err = slime.client.queue("new_tab")
+		local ok, err = squish.client.queue("new_tab")
 		return err
 	`})
 	if !done.OK || !strings.Contains(string(done.Result), "no workspace") {
@@ -182,17 +182,17 @@ func TestClientQueue(t *testing.T) {
 func TestConfigHooksAndTimers(t *testing.T) {
 	h, _ := newConfigHarness(t, `
 		local exits = 0
-		slime.on("pane.exited", function(ctx, ev)
+		squish.on("pane.exited", function(ctx, ev)
 			exits = exits + 1
-			slime.log("exited " .. ev.id .. " " .. ev.status .. " origin " .. ctx.origin)
+			squish.log("exited " .. ev.id .. " " .. ev.status .. " origin " .. ctx.origin)
 		end)
-		slime.action{ name = "exits", run = function() return exits end }
-		slime.action{ name = "slow", args = { n = "number" }, run = function(ctx, args)
-			slime.sleep(0.05)
+		squish.action{ name = "exits", run = function() return exits end }
+		squish.action{ name = "slow", args = { n = "number" }, run = function(ctx, args)
+			squish.sleep(0.05)
 			return args.n
 		end }
-		slime.action{ name = "later", run = function(ctx, args)
-			slime.after(0.01, function(ctx) slime.log("later ran for " .. tostring(ctx.pane_id)) end)
+		squish.action{ name = "later", run = function(ctx, args)
+			squish.after(0.01, function(ctx) squish.log("later ran for " .. tostring(ctx.pane_id)) end)
 			return "scheduled"
 		end }
 	`)

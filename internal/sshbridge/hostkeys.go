@@ -19,7 +19,7 @@ var errHostKeyRejected = errors.New("host key verification failed")
 
 // hostKeys checks host keys against known_hosts files the way OpenSSH
 // does: unknown hosts are asked about (per StrictHostKeyChecking), and
-// changed keys are refused, unless slime's dialog asks and the user
+// changed keys are refused, unless squish's dialog asks and the user
 // connects anyway.
 type hostKeys struct {
 	// files are the user's, read in order; accepted keys are added to
@@ -92,7 +92,7 @@ func (h *hostKeys) unknown(hostname string, key ssh.PublicKey) error {
 		q := &Query{Prompt: Prompt{
 			Kind:   PromptUnknownHost,
 			Title:  "First connection to " + displayHost(hostname),
-			Text:   "slime hasn't seen this host's key before. If you can, check the fingerprint against one from the server's admin before trusting it.",
+			Text:   "squish hasn't seen this host's key before. If you can, check the fingerprint against one from the server's admin before trusting it.",
 			Detail: keyName(key) + " " + fp,
 		}}
 		if len(h.files) > 0 {
@@ -141,7 +141,7 @@ func (h *hostKeys) add(hostname string, key ssh.PublicKey) {
 		displayHost(hostname), keyName(key)))
 }
 
-// changed handles a key that isn't the one known for the host. slime's
+// changed handles a key that isn't the one known for the host. squish's
 // dialog lets the user connect anyway, this once: known_hosts is left
 // alone, so it asks again next time.
 func (h *hostKeys) changed(hostname string, key ssh.PublicKey, known knownhosts.KnownKey) error {

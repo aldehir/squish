@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // fakeHost records calls and output, answering each call from answers
@@ -82,14 +82,14 @@ func TestErrorHasTrace(t *testing.T) {
 
 func TestStop(t *testing.T) {
 	h := &fakeHost{}
-	res, err := run(t, h, Context{}, `slime.stop("early") print("not reached")`)
+	res, err := run(t, h, Context{}, `squish.stop("early") print("not reached")`)
 	if err != nil || string(res) != `"early"` {
 		t.Errorf("stop: %s, %v", res, err)
 	}
 	if len(h.out) != 0 {
 		t.Errorf("ran on after stop: %q", h.out)
 	}
-	res, err = run(t, h, Context{}, `slime.stop()`)
+	res, err = run(t, h, Context{}, `squish.stop()`)
 	if err != nil || res != nil {
 		t.Errorf("bare stop: %s, %v", res, err)
 	}
@@ -116,26 +116,26 @@ func TestContextAndNamespaces(t *testing.T) {
 	}}
 	ctx := Context{Pane: rpc.PaneID{WS: 1, Tab: 2, N: 3}, Args: json.RawMessage(`{"file":"app.log","n":2}`)}
 	res, err := run(t, h, ctx, `
-		assert(slime.workspace_id == 1 and slime.tab_id == "1.2" and slime.pane_id == "1.2.3")
-		assert(slime.args.file == "app.log" and slime.args.n == 2)
-		local p = slime.pane.split{ direction = "down", ratio = 0.3, command = "htop" }
+		assert(squish.workspace_id == 1 and squish.tab_id == "1.2" and squish.pane_id == "1.2.3")
+		assert(squish.args.file == "app.log" and squish.args.n == 2)
+		local p = squish.pane.split{ direction = "down", ratio = 0.3, command = "htop" }
 		assert(p.pane == "1.2.9")
-		local t = slime.pane.text{ id = p.pane }
-		slime.pane.kill{}
-		slime.tab.new{ name = "x" }
-		slime.tab.rename{ name = "y" }
-		slime.workspace.info{}
-		slime.workspace.list{}
-		slime.workspace.new{ name = "z" }
-		slime.workspace.new{ name = "d", attach = false }
-		slime.workspace.new{ name = "t", attach = true }
-		slime.workspace.new{ name = "e", attach = 5 }
-		slime.workspace.focus{}
-		slime.workspace.focus{ tab = "1.4" }
-		slime.pane_id = "1.2.7"
-		slime.pane.info()
-		slime.call("host.list")
-		slime.call("workspace.focus", { tab = 2 })
+		local t = squish.pane.text{ id = p.pane }
+		squish.pane.kill{}
+		squish.tab.new{ name = "x" }
+		squish.tab.rename{ name = "y" }
+		squish.workspace.info{}
+		squish.workspace.list{}
+		squish.workspace.new{ name = "z" }
+		squish.workspace.new{ name = "d", attach = false }
+		squish.workspace.new{ name = "t", attach = true }
+		squish.workspace.new{ name = "e", attach = 5 }
+		squish.workspace.focus{}
+		squish.workspace.focus{ tab = "1.4" }
+		squish.pane_id = "1.2.7"
+		squish.pane.info()
+		squish.call("host.list")
+		squish.call("workspace.focus", { tab = 2 })
 		return t.text
 	`)
 	if err != nil {
@@ -172,26 +172,26 @@ func TestContextAndNamespaces(t *testing.T) {
 	}
 }
 
-// Ids come apart with slime.id.parse and together with slime.id.tab
-// and slime.id.pane.
+// Ids come apart with squish.id.parse and together with squish.id.tab
+// and squish.id.pane.
 func TestIDs(t *testing.T) {
 	res, err := run(t, &fakeHost{}, Context{}, `
-		assert(slime.pane_id == nil and slime.tab_id == nil and slime.workspace_id == nil)
-		local p = slime.id.parse("1.2.3")
+		assert(squish.pane_id == nil and squish.tab_id == nil and squish.workspace_id == nil)
+		local p = squish.id.parse("1.2.3")
 		assert(p.workspace == 1 and p.tab == 2 and p.pane == 3)
-		local t = slime.id.parse("4.5")
+		local t = squish.id.parse("4.5")
 		assert(t.workspace == 4 and t.tab == 5 and t.pane == nil)
-		local w = slime.id.parse(6)
+		local w = squish.id.parse(6)
 		assert(w.workspace == 6 and w.tab == nil)
-		assert(slime.id.tab(1, 2) == "1.2" and slime.id.pane(1, 2, 3) == "1.2.3")
-		assert(slime.id.pane(p.workspace, p.tab, p.pane) == "1.2.3")
+		assert(squish.id.tab(1, 2) == "1.2" and squish.id.pane(1, 2, 3) == "1.2.3")
+		assert(squish.id.pane(p.workspace, p.tab, p.pane) == "1.2.3")
 		for _, bad in ipairs({ "", "0.1.1", "1.2.3.4", "a.b", "1..2", true }) do
-			local v, err = slime.id.parse(bad)
+			local v, err = squish.id.parse(bad)
 			assert(v == nil and err, tostring(bad))
 		end
-		assert(not pcall(slime.id.pane, 0, 1, 1))
-		assert(not pcall(slime.id.tab, 1.5, 1))
-		return slime.id.tab(p.workspace, p.tab)
+		assert(not pcall(squish.id.pane, 0, 1, 1))
+		assert(not pcall(squish.id.tab, 1.5, 1))
+		return squish.id.tab(p.workspace, p.tab)
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -204,9 +204,9 @@ func TestIDs(t *testing.T) {
 func TestCallErrors(t *testing.T) {
 	h := &fakeHost{errs: map[string]*rpc.Error{"pane.kill": rpc.Errorf(rpc.CodeNotFound, "no such pane")}}
 	res, err := run(t, h, Context{}, `
-		local r, err, code = slime.pane.kill{ id = 5 }
+		local r, err, code = squish.pane.kill{ id = 5 }
 		assert(r == nil and err == "no such pane" and code == 1000)
-		local r2, err2 = slime.call("x.y", { f = print })
+		local r2, err2 = squish.call("x.y", { f = print })
 		return { err2 }
 	`)
 	if err != nil {
@@ -220,12 +220,12 @@ func TestCallErrors(t *testing.T) {
 func TestLayout(t *testing.T) {
 	h := &fakeHost{}
 	res, err := run(t, h, Context{}, `
-		return slime.layout.horizontal(0.7,
-			slime.layout.pane{ command = "nvim" },
-			slime.layout.vertical(
-				slime.layout.pane{ command = "tail", cwd = "/tmp", env = { A = "1" } },
-				slime.layout.pane{},
-				slime.layout.pane()))
+		return squish.layout.horizontal(0.7,
+			squish.layout.pane{ command = "nvim" },
+			squish.layout.vertical(
+				squish.layout.pane{ command = "tail", cwd = "/tmp", env = { A = "1" } },
+				squish.layout.pane{},
+				squish.layout.pane()))
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -255,11 +255,11 @@ func TestLayout(t *testing.T) {
 	if p := inner.Children[0].Node.Pane; p.Cwd != "/tmp" || p.Env["A"] != "1" {
 		t.Errorf("tail leaf: %+v", p)
 	}
-	_, err = run(t, h, Context{}, `slime.layout.horizontal(slime.layout.pane{})`)
+	_, err = run(t, h, Context{}, `squish.layout.horizontal(squish.layout.pane{})`)
 	if err == nil || !strings.Contains(err.Error(), "at least two children") {
 		t.Errorf("one child: %v", err)
 	}
-	_, err = run(t, h, Context{}, `slime.layout.vertical(1.5, slime.layout.pane{}, slime.layout.pane{})`)
+	_, err = run(t, h, Context{}, `squish.layout.vertical(1.5, squish.layout.pane{}, squish.layout.pane{})`)
 	if err == nil || !strings.Contains(err.Error(), "between 0 and 1") {
 		t.Errorf("bad ratio: %v", err)
 	}
@@ -268,14 +268,14 @@ func TestLayout(t *testing.T) {
 func TestJSON(t *testing.T) {
 	h := &fakeHost{}
 	res, err := run(t, h, Context{}, `
-		local s = slime.json.encode({ a = { 1, 2.5, "x" }, b = {}, c = true, d = { [1] = "one", k = "v" } })
-		local v = slime.json.decode('{"n":null,"l":[1,{"x":2}],"s":"t"}')
+		local s = squish.json.encode({ a = { 1, 2.5, "x" }, b = {}, c = true, d = { [1] = "one", k = "v" } })
+		local v = squish.json.decode('{"n":null,"l":[1,{"x":2}],"s":"t"}')
 		assert(v.n == nil and v.l[2].x == 2 and v.s == "t")
-		local bad, err = slime.json.decode("{")
+		local bad, err = squish.json.decode("{")
 		assert(bad == nil and err)
 		local cyc = {}
 		cyc.self = cyc
-		local _, err2 = slime.json.encode(cyc)
+		local _, err2 = squish.json.encode(cyc)
 		return { s, err2 }
 	`)
 	if err != nil {
@@ -295,7 +295,7 @@ func TestJSON(t *testing.T) {
 
 func TestLogAndNoExit(t *testing.T) {
 	h := &fakeHost{}
-	_, err := run(t, h, Context{}, `slime.log("hi", 2) assert(os.exit == nil) assert(io == nil)`)
+	_, err := run(t, h, Context{}, `squish.log("hi", 2) assert(os.exit == nil) assert(io == nil)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,15 +304,15 @@ func TestLogAndNoExit(t *testing.T) {
 	}
 }
 
-// slime.layout.browser is a browser leaf; slime.pane.navigate takes the
+// squish.layout.browser is a browser leaf; squish.pane.navigate takes the
 // pane as split does, from pane_id when left out.
 func TestBrowser(t *testing.T) {
 	h := &fakeHost{}
 	ctx := Context{Pane: rpc.PaneID{WS: 1, Tab: 2, N: 3}}
 	res, err := run(t, h, ctx, `
-		slime.pane.navigate{ url = "https://a.example" }
-		slime.pane.navigate{ pane = "1.2.5", url = "https://b.example" }
-		return slime.layout.vertical(slime.layout.pane{}, slime.layout.browser{ url = "https://c.example" })
+		squish.pane.navigate{ url = "https://a.example" }
+		squish.pane.navigate{ pane = "1.2.5", url = "https://b.example" }
+		return squish.layout.vertical(squish.layout.pane{}, squish.layout.browser{ url = "https://c.example" })
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -344,13 +344,13 @@ func TestBrowser(t *testing.T) {
 	}
 }
 
-// slime.layout.browser leaves its table alone, so reusing it for
-// slime.layout.pane makes a terminal leaf.
+// squish.layout.browser leaves its table alone, so reusing it for
+// squish.layout.pane makes a terminal leaf.
 func TestBrowserReusedTable(t *testing.T) {
 	res, err := run(t, &fakeHost{}, Context{}, `
 		local spec = { cwd = "/tmp" }
-		local b = slime.layout.browser(spec)
-		return slime.layout.vertical(b, slime.layout.pane(spec))
+		local b = squish.layout.browser(spec)
+		return squish.layout.vertical(b, squish.layout.pane(spec))
 	`)
 	if err != nil {
 		t.Fatal(err)

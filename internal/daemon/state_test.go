@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // newStateHarness is a harness whose server keeps its model in dir.
@@ -192,7 +192,7 @@ func TestModelWrittenAndRestored(t *testing.T) {
 		t.Errorf("relaunched %v", relaunched)
 	}
 	w2.attach(pane.WS, Area{Width: 400, Height: 100, CellW: 10, CellH: 10})
-	w2.until(pane, "slime restarted")
+	w2.until(pane, "squish restarted")
 
 	// A plain stop clears the model.
 	if err := w2.c.Call(rpc.DaemonStop, nil, nil); err != nil {

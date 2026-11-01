@@ -18,7 +18,7 @@ static bool is_text_mime(GhosttyString mime) {
 // goes to Go for the client. The reply has to be made here, through
 // the write's function pointer, which Go can't call. The client applies
 // its own policy (clipboard-write); the program is told it worked.
-static void slime_clipboard_write(GhosttyTerminal t, void* userdata, const GhosttyClipboardWrite* w) {
+static void squish_clipboard_write(GhosttyTerminal t, void* userdata, const GhosttyClipboardWrite* w) {
 	GhosttyClipboardWriteReply reply = {.size = sizeof(reply), .result = GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED};
 	// Windows has one clipboard, so there's no selection or primary.
 	if (w->location == GHOSTTY_CLIPBOARD_LOCATION_STANDARD) {
@@ -36,7 +36,7 @@ static void slime_clipboard_write(GhosttyTerminal t, void* userdata, const Ghost
 	w->reply(w, &reply);
 }
 
-GhosttyResult slime_install_callbacks(GhosttyTerminal t, uintptr_t userdata) {
+GhosttyResult squish_install_callbacks(GhosttyTerminal t, uintptr_t userdata) {
 	struct {
 		GhosttyTerminalOption opt;
 		const void* value;
@@ -51,7 +51,7 @@ GhosttyResult slime_install_callbacks(GhosttyTerminal t, uintptr_t userdata) {
 		{GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE, (const void*)(GhosttyTerminalUnknownSequenceFn)goUnknownSequence},
 		{GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT, (const void*)(GhosttyTerminalSemanticPromptFn)goSemanticPrompt},
 		{GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, (const void*)(GhosttyTerminalProgramStatusFn)goProgramStatus},
-		{GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, (const void*)(GhosttyTerminalClipboardWriteFn)slime_clipboard_write},
+		{GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, (const void*)(GhosttyTerminalClipboardWriteFn)squish_clipboard_write},
 	};
 	for (size_t i = 0; i < sizeof(opts) / sizeof(opts[0]); i++) {
 		GhosttyResult r = ghostty_terminal_set(t, opts[i].opt, opts[i].value);
@@ -60,10 +60,10 @@ GhosttyResult slime_install_callbacks(GhosttyTerminal t, uintptr_t userdata) {
 	return GHOSTTY_SUCCESS;
 }
 
-void slime_install_log(void) {
+void squish_install_log(void) {
 	ghostty_sys_set(GHOSTTY_SYS_OPT_LOG, (const void*)(GhosttySysLogFn)goLog);
 }
 
-void slime_install_decode_png(void) {
+void squish_install_decode_png(void) {
 	ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, (const void*)(GhosttySysDecodePngFn)goDecodePng);
 }

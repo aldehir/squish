@@ -11,7 +11,7 @@ import (
 
 	glua "github.com/yuin/gopher-lua"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // The loop: tasks and what starts them. A task is one run of a
@@ -39,15 +39,15 @@ type task struct {
 	unhook func() bool
 	// out takes what it prints, if it has one of its own.
 	out Output
-	// ids are slime.workspace_id and the rest while it runs, kept here
+	// ids are squish.workspace_id and the rest while it runs, kept here
 	// while it doesn't.
 	ids IDs
 	// cur is the coroutine the task was in when it let the baton go.
 	cur *glua.LState
-	// callL is the state slime.invoke was called from, for a nested
+	// callL is the state squish.invoke was called from, for a nested
 	// call to run in.
 	callL *glua.LState
-	// stopResult is what slime.stop was given.
+	// stopResult is what squish.stop was given.
 	stopResult glua.LValue
 	// parked is closed the first time the task lets the baton go, or
 	// ends: the dispatcher waits for it after handing a task the baton.
@@ -109,7 +109,7 @@ func (t *task) block(wait func(ctx context.Context)) {
 
 // runTask runs fn with args in t, whose baton the caller holds, to its
 // end, and reports how it went: the result as JSON, or the error,
-// errStopped for slime.stop (the result is then what it was given).
+// errStopped for squish.stop (the result is then what it was given).
 func (r *Runner) runTask(t *task, fn glua.LValue, args ...glua.LValue) (result json.RawMessage, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -187,7 +187,7 @@ func (r *Runner) unliveLocked() {
 	r.cond.Broadcast()
 }
 
-// handle is a hook (slime.on) or a timer (after, every), as Lua holds
+// handle is a hook (squish.on) or a timer (after, every), as Lua holds
 // it: cancel ends it, active says whether it's still to run.
 type handle struct {
 	r *Runner
@@ -204,7 +204,7 @@ type handle struct {
 	active bool
 }
 
-// waiter is one slime.wait: the event it waits for, by pattern and
+// waiter is one squish.wait: the event it waits for, by pattern and
 // filter, and the result once it came.
 type waiter struct {
 	event  string
@@ -498,9 +498,9 @@ func filterMatches(filter *glua.LTable, ids IDs, ev glua.LValue) bool {
 	return ok
 }
 
-// The Lua side: slime.on, wait, sleep, after, every, and the handles.
+// The Lua side: squish.on, wait, sleep, after, every, and the handles.
 
-// luaOn is slime.on(event, fn): fn(ctx, ev) runs for each event the
+// luaOn is squish.on(event, fn): fn(ctx, ev) runs for each event the
 // pattern names, in a task of its own, until the handle is cancelled.
 func (r *Runner) luaOn(L *glua.LState) int {
 	event := L.CheckString(1)
@@ -517,7 +517,7 @@ func (r *Runner) luaOn(L *glua.LState) int {
 	return 1
 }
 
-// luaWait is slime.wait(event, filter, timeout): the next event the
+// luaWait is squish.wait(event, filter, timeout): the next event the
 // pattern names whose fields match filter (a table, or nil), or nil,
 // "timeout" after timeout seconds (none waits until the run ends).
 func (r *Runner) luaWait(L *glua.LState) int {
@@ -563,7 +563,7 @@ func (r *Runner) luaWait(L *glua.LState) int {
 	return 1
 }
 
-// luaSleep is slime.sleep(seconds): the task waits; the others run.
+// luaSleep is squish.sleep(seconds): the task waits; the others run.
 func (r *Runner) luaSleep(L *glua.LState) int {
 	d := seconds(L, 1)
 	t := r.current
@@ -581,9 +581,9 @@ func (r *Runner) luaSleep(L *glua.LState) int {
 	return 0
 }
 
-// luaAfter is slime.after(seconds, fn): fn(ctx) runs once, after the
+// luaAfter is squish.after(seconds, fn): fn(ctx) runs once, after the
 // delay, unless the handle is cancelled first. luaEvery is
-// slime.every(seconds, fn): again after each delay, until cancelled.
+// squish.every(seconds, fn): again after each delay, until cancelled.
 func (r *Runner) luaAfter(L *glua.LState) int { return r.timer(L, false) }
 
 func (r *Runner) luaEvery(L *glua.LState) int { return r.timer(L, true) }
@@ -619,7 +619,7 @@ func (r *Runner) newHandle(L *glua.LState, h *handle) *glua.LUserData {
 	return ud
 }
 
-const handleType = "slime.handle"
+const handleType = "squish.handle"
 
 // installHandles registers the handle type.
 func (r *Runner) installHandles() {

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/sshtest"
+	"github.com/aldehir/squish/internal/sshtest"
 )
 
 func gunzip(r io.Reader) ([]byte, error) {
@@ -30,8 +30,8 @@ func dialHost(t *testing.T, host *fakeHost) *Conn {
 	return d.expectConnected()
 }
 
-// bridge is the client's end of a `slime connect` session: what it writes
-// goes to the host's slime, and what that sends comes back.
+// bridge is the client's end of a `squish connect` session: what it writes
+// goes to the host's squish, and what that sends comes back.
 type bridge struct {
 	in  *io.PipeWriter
 	out *io.PipeReader
@@ -82,9 +82,9 @@ func TestDaemonInstallsThenBridges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b.echo(t, "hello slime")
+	b.echo(t, "hello squish")
 	build, _ := testRemote().For("linux", "amd64")
-	exe := "/home/alde/.cache/slime/bin/" + build.ID + "/slime"
+	exe := "/home/alde/.cache/squish/bin/" + build.ID + "/squish"
 	host.mu.Lock()
 	got, ok := host.installed[exe]
 	connects := host.connects
@@ -110,7 +110,7 @@ func TestDaemonInstallsThenBridges(t *testing.T) {
 		t.Errorf("probed %d times", probes)
 	}
 
-	// Hanging up our end ends slime there cleanly.
+	// Hanging up our end ends squish there cleanly.
 	b2.in.Close()
 	if err := b2.sl.Wait(); err != nil {
 		t.Errorf("Wait after hanging up = %v", err)
@@ -125,7 +125,7 @@ func TestDaemonInstallsThenBridges(t *testing.T) {
 func TestDaemonFoundNotInstalled(t *testing.T) {
 	needPayload(t)
 	build, _ := testRemote().For("linux", "amd64")
-	exe := "/home/alde/.cache/slime/bin/" + build.ID + "/slime"
+	exe := "/home/alde/.cache/squish/bin/" + build.ID + "/squish"
 	host := &fakeHost{uname: "Linux x86_64", installed: map[string][]byte{exe: nil}}
 	conn := dialHost(t, host)
 	if got, err := conn.EnsureDaemon(nil); err != nil || got != exe {
@@ -138,15 +138,15 @@ func TestDaemonFoundNotInstalled(t *testing.T) {
 	}
 }
 
-// Where slime can't run, setting it up fails and says why; the
+// Where squish can't run, setting it up fails and says why; the
 // connection stays up.
 func TestDaemonUnsupported(t *testing.T) {
 	for _, tc := range []struct {
 		name, uname, installErr, want string
 	}{
-		{"os", "FreeBSD amd64", "", "slime doesn't run on FreeBSD amd64"},
-		{"no build", "Darwin arm64", "", "no build of slime for darwin/arm64"},
-		{"install", "Linux x86_64", "sh: gzip: not found", "installing slime: sh: gzip: not found"},
+		{"os", "FreeBSD amd64", "", "squish doesn't run on FreeBSD amd64"},
+		{"no build", "Darwin arm64", "", "no build of squish for darwin/arm64"},
+		{"install", "Linux x86_64", "sh: gzip: not found", "installing squish: sh: gzip: not found"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.uname == "Linux x86_64" {
@@ -159,7 +159,7 @@ func TestDaemonUnsupported(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("EnsureDaemon = %v, want %q", err, tc.want)
 			}
-			if tc.installErr != "" && (len(status) != 1 || status[0] != "installing slime") {
+			if tc.installErr != "" && (len(status) != 1 || status[0] != "installing squish") {
 				t.Errorf("status = %q", status)
 			}
 			select {
@@ -171,7 +171,7 @@ func TestDaemonUnsupported(t *testing.T) {
 	}
 }
 
-// slime failing on the host (it couldn't start its daemon, say) is a
+// squish failing on the host (it couldn't start its daemon, say) is a
 // DaemonError with its last line of stderr.
 func TestDaemonFails(t *testing.T) {
 	needPayload(t)
@@ -186,17 +186,17 @@ func TestDaemonFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	var failed *DaemonError
-	if err := sl.Wait(); !errors.As(err, &failed) || failed.Why != "slime: no socket directory" {
+	if err := sl.Wait(); !errors.As(err, &failed) || failed.Why != "squish: no socket directory" {
 		t.Errorf("Wait = %v", err)
 	}
 }
 
-// failingHost's slime exits with an error instead of bridging.
+// failingHost's squish exits with an error instead of bridging.
 type failingHost struct{ fakeHost }
 
 func (f *failingHost) exec(command string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if strings.Contains(command, " connect --term ") {
-		io.WriteString(stderr, "slime: no socket directory\n")
+		io.WriteString(stderr, "squish: no socket directory\n")
 		return 1
 	}
 	return f.fakeHost.exec(command, stdin, stdout, stderr)

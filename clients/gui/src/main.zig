@@ -41,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
     // comes before the window; one that can't be reached leaves the
     // defaults, and the window's tab says why.
     const daemon = Daemon.open(init.gpa) catch |err| blk: {
-        std.log.err("connecting to slime failed: {}", .{err});
+        std.log.err("connecting to squish failed: {}", .{err});
         break :blk null;
     };
     var config: Config = undefined;
@@ -63,7 +63,7 @@ pub fn main(init: std.process.Init) !void {
     }
     if (daemon) |conn| {
         var result = conn.config() catch |err| blk: {
-            std.log.err("asking slime for its config failed: {}", .{err});
+            std.log.err("asking squish for its config failed: {}", .{err});
             break :blk null;
         };
         defer if (result) |*r| r.deinit();
@@ -86,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
     const command_line = try shellCommand(init.gpa);
     defer init.gpa.free(command_line);
     // What the sidebar's "Local" runs when the command is an ssh:// URL:
-    // slime's shell.
+    // squish's shell.
     const local_command = if (isSshUrl(command_line)) try init.gpa.dupeSentinel(u16, &.{}, 0) else try init.gpa.dupeSentinel(u16, command_line, 0);
     defer init.gpa.free(local_command);
 
@@ -138,8 +138,8 @@ fn decodePng(alloc: std.mem.Allocator, data: []const u8) ghostty_vt.sys.DecodeEr
 }
 
 /// The command to run in the terminal: our own command line after the
-/// program name, verbatim (`slime-gui pwsh -NoLogo`), else empty for
-/// slime's shell (init.lua's shell.command, else %COMSPEC%).
+/// program name, verbatim (`squish-gui pwsh -NoLogo`), else empty for
+/// squish's shell (init.lua's shell.command, else %COMSPEC%).
 fn shellCommand(alloc: std.mem.Allocator) ![:0]u16 {
     return alloc.dupeSentinel(u16, argsAfterProgram(std.mem.span(win32.GetCommandLineW())), 0);
 }

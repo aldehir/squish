@@ -5,7 +5,7 @@ package main
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/aldehir/slime/internal/daemon"
+	"github.com/aldehir/squish/internal/daemon"
 )
 
 // hostCommands: the daemon here is the one on a host, which connects to

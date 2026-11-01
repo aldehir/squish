@@ -1,10 +1,10 @@
-//! One pane in a window: what slime draws of it, and the input it sends.
-//! A pane is a terminal or a browser (`content`). slime runs the
-//! terminal (cmd/slime); the session applies the frames slime sends to
+//! One pane in a window: what squish draws of it, and the input it sends.
+//! A pane is a terminal or a browser (`content`). squish runs the
+//! terminal (cmd/squish); the session applies the frames squish sends to
 //! its `screen`, and turns window messages into events
-//! (internal/vt/event.zig) that slime handles against the terminal:
+//! (internal/vt/event.zig) that squish handles against the terminal:
 //! keys, mouse reports and selection, the wheel, pastes. A browser's
-//! page is the window's; slime keeps its url and title, which the
+//! page is the window's; squish keeps its url and title, which the
 //! session follows. Heap allocated, as the connection's reader holds a
 //! pointer to it.
 //!
@@ -61,7 +61,7 @@ default_title: []const u16,
 /// none. UI thread only.
 title_buf: [max_title_len]u16 = undefined,
 title_len: usize = 0,
-/// The title as slime last said, for `titleUpdate` to take. Guarded by
+/// The title as squish last said, for `titleUpdate` to take. Guarded by
 /// `lock`.
 next_title_buf: [max_title_len]u16 = undefined,
 next_title_len: usize = 0,
@@ -85,7 +85,7 @@ transport: ?Transport = null,
 ended: bool = false,
 
 /// The daemon pane was lost to us while its program ran (its workspace
-/// was taken by another window, or slime went away). Written by the
+/// was taken by another window, or squish went away). Written by the
 /// connection's reader before it posts WM_APP_CHILD_EXITED.
 daemon_loss: ?DaemonLoss = null,
 /// The daemon pane's program exited, so there's nothing left to kill.
@@ -103,7 +103,7 @@ unseen: std.atomic.Value(bool) = .init(false),
 /// A frame arrived while another session was shown. UI thread only.
 activity: bool = false,
 
-/// What programs in the session report doing (OSC 7501), as slime
+/// What programs in the session report doing (OSC 7501), as squish
 /// keeps it. Guarded by `lock`.
 program_status: ProgramStatus = .{},
 /// `program_status` changed since the window last looked. Set by the
@@ -135,7 +135,7 @@ pub const Content = union(enum) {
 /// A terminal pane's screen, and what drawing it and talking to its
 /// program take.
 pub const Terminal = struct {
-    /// Frames slime sent that aren't applied yet, each u32 seq, u32
+    /// Frames squish sent that aren't applied yet, each u32 seq, u32
     /// length, then the frame. Guarded by `lock`.
     frames: std.ArrayList(u8) = .empty,
     /// What `applyFrames` swaps `frames` for, to apply them unlocked.
@@ -146,11 +146,11 @@ pub const Terminal = struct {
     applied: u32 = 0,
     acked: u32 = 0,
     cells: Cells = .{},
-    /// The kitty images slime sent and where the last frame placed them.
+    /// The kitty images squish sent and where the last frame placed them.
     /// UI thread only.
     images: Images = .{},
     textures: Renderer.ImageTextures = .{},
-    /// The image slime is sending in pieces, until it's whole. Reader
+    /// The image squish is sending in pieces, until it's whole. Reader
     /// thread only.
     image_in: ImageIn = .{},
     /// Images received, inflated, for `applyFrames` to install before the
@@ -164,7 +164,7 @@ pub const Terminal = struct {
     /// session's to know: the window's `Placement` has it.
     cols: u16 = 0,
     rows: u16 = 0,
-    /// What slime was last told of the pane's size and geometry, so a
+    /// What squish was last told of the pane's size and geometry, so a
     /// layout that changes nothing sends nothing.
     sized: ?Daemon.Size = null,
     geometry: ?event.Geometry = null,
@@ -200,23 +200,23 @@ pub const Terminal = struct {
     }
 };
 
-/// A browser pane: where its page is. slime keeps the url and the page's
+/// A browser pane: where its page is. squish keeps the url and the page's
 /// title (the session's `title`); the page itself, its history, and the
 /// browser showing it are the window's (`view`).
 pub const Browser = struct {
-    /// Where the page is: as slime last said (pane.url), the URL bar
+    /// Where the page is: as squish last said (pane.url), the URL bar
     /// sent, or the browser went. Owned. UI thread only.
     url: []u16 = &.{},
-    /// The url slime last said, for `titleUpdate` to take. Owned.
+    /// The url squish last said, for `titleUpdate` to take. Owned.
     /// Guarded by `lock`.
     next_url: ?[]u16 = null,
-    /// The url slime sent the page to, until the user takes it elsewhere
+    /// The url squish sent the page to, until the user takes it elsewhere
     /// here (`ownNavigation`): where the page lands, a redirect, is
     /// shown but reported as this, so two windows on a page that
     /// bounces to a fresh url don't send each other round. Owned. UI
     /// thread only, as `typed`.
     followed: ?[]u16 = null,
-    /// The url the URL bar sent, until slime's echo of it comes, which
+    /// The url the URL bar sent, until squish's echo of it comes, which
     /// is the user's and not followed. Owned.
     typed: ?[]u16 = null,
     /// What the strip's back, forward, and reload buttons go by, as the
@@ -269,7 +269,7 @@ pub const Browser = struct {
 
 /// What a session shows.
 const Transport = union(enum) {
-    /// A pane slime holds, which outlives us. Its messages come from the
+    /// A pane squish holds, which outlives us. Its messages come from the
     /// connection's reader through our sink.
     daemon: Pane,
     /// Nothing yet: standing in for an SSH host's daemon panes until they
@@ -283,7 +283,7 @@ const Pane = struct { conn: *Daemon, pane: Daemon.PaneRef };
 
 /// What a new session shows.
 pub const Launch = union(enum) {
-    /// A pane of the workspace slime keeps for this window: a terminal or
+    /// A pane of the workspace squish keeps for this window: a terminal or
     /// a browser, as the arrival says. The arrival stays the caller's.
     daemon: struct {
         conn: *Daemon,
@@ -360,7 +360,7 @@ pub fn create(alloc: Allocator, wake: Wake, env: Env, id: u32, launch: Launch, c
     const default_title = try alloc.dupe(u16, switch (launch) {
         .daemon => |s| if (browsing != null)
             &.{}
-            // A host's shell, which slime lists with no command, goes by
+            // A host's shell, which squish lists with no command, goes by
             // the host until it sets a title.
         else if (s.arrival.command.len == 0 and s.conn.host() != null)
             s.conn.hostLabel()
@@ -380,7 +380,7 @@ pub fn create(alloc: Allocator, wake: Wake, env: Env, id: u32, launch: Launch, c
     };
     if (browsing) |a| {
         self.content = .{ .browser = .{ .url = try alloc.dupe(u16, a.url) } };
-        // As slime last heard; kept as the next too, so the first url
+        // As squish last heard; kept as the next too, so the first url
         // that comes doesn't take it.
         self.title_len = @min(a.title.len, max_title_len);
         @memcpy(self.title_buf[0..self.title_len], a.title[0..self.title_len]);
@@ -459,7 +459,7 @@ pub fn browser(self: *Session) ?*Browser {
     };
 }
 
-/// Let go of the pane. It runs on in slime; once released, the
+/// Let go of the pane. It runs on in squish; once released, the
 /// connection's reader no longer calls our sink.
 fn stopTransport(self: *Session) void {
     const transport = self.transport orelse return;
@@ -472,7 +472,7 @@ fn stopTransport(self: *Session) void {
 
 /// End a daemon pane for good, not just our view of it, before the
 /// session is destroyed: the user closed it. Destroying alone leaves it
-/// to slime, as closing the window does. A pane already lost to us is
+/// to squish, as closing the window does. A pane already lost to us is
 /// left alone.
 pub fn kill(self: *Session) void {
     if (self.daemon_loss != null or self.exited) return;
@@ -521,7 +521,7 @@ fn queueFrame(alloc: Allocator, t: *Terminal, seq: u32, data: []const u8) !void 
     t.frames.appendSliceAssumeCapacity(data);
 }
 
-/// A kitty image on its way from slime, in pieces (Daemon.ImagePiece).
+/// A kitty image on its way from squish, in pieces (Daemon.ImagePiece).
 const ImageIn = struct {
     id: u32 = 0,
     generation: u64 = 0,
@@ -615,7 +615,7 @@ test inflateImage {
     try std.testing.expectError(error.BadImage, inflateImage(alloc, &in));
 }
 
-/// Apply the frames slime sent since the last draw to `screen`, with
+/// Apply the frames squish sent since the last draw to `screen`, with
 /// the images that came before them, and lay the images out for the
 /// renderer. UI thread.
 pub fn applyFrames(self: *Session) void {
@@ -644,7 +644,7 @@ pub fn applyFrames(self: *Session) void {
         rest = rest[8 + len ..];
         t.applied = seq;
         // Half applied, the screen is wrong until the next full frame.
-        t.screen.apply(self.alloc, data) catch |err| log.err("bad frame {d} from slime: {}", .{ seq, err });
+        t.screen.apply(self.alloc, data) catch |err| log.err("bad frame {d} from squish: {}", .{ seq, err });
     }
     for (t.screen.dropped.items) |id| t.images.remove(self.alloc, id);
     t.screen.dropped.clearRetainingCapacity();
@@ -655,7 +655,7 @@ pub fn applyFrames(self: *Session) void {
     t.images.update(self.alloc, t.screen.placements.items, cell.width, cell.height) catch |err| log.err("laying out images failed: {}", .{err});
 }
 
-/// Tell slime the frames applied are drawn, which lets more come. UI
+/// Tell squish the frames applied are drawn, which lets more come. UI
 /// thread, after drawing.
 pub fn drawn(self: *Session) void {
     const t = self.term() orelse return;
@@ -732,7 +732,7 @@ fn daemonUrl(ctx: *anyopaque, url: []const u8) void {
 fn daemonCopied(ctx: *anyopaque, tag: u32, text: []const u8) void {
     const self: *Session = @ptrCast(@alignCast(ctx));
     const t = self.term() orelse return;
-    // Nothing was selected by the time slime looked. Tag 0 is a copy
+    // Nothing was selected by the time squish looked. Tag 0 is a copy
     // nobody here asked for: copy mode's.
     if (text.len == 0 or (tag != 0 and tag != @atomicLoad(u32, &t.copy_tag, .monotonic))) return;
     self.queueClipboard(text);
@@ -905,7 +905,7 @@ pub fn unlockTerminal(self: *Session) void {
 /// The program's title, or its name if it set none. A browser's page
 /// title, or with none its url's host.
 pub fn title(self: *const Session) []const u16 {
-    if (self.reconnecting.load(.acquire)) return std.unicode.utf8ToUtf16LeStringLiteral("reconnecting to slime\u{2026}");
+    if (self.reconnecting.load(.acquire)) return std.unicode.utf8ToUtf16LeStringLiteral("reconnecting to squish\u{2026}");
     if (self.title_len > 0) return self.title_buf[0..self.title_len];
     return switch (self.content) {
         .terminal => self.default_title,
@@ -916,7 +916,7 @@ pub fn title(self: *const Session) []const u16 {
 /// Take the program's new title, and a browser's url. Clears the
 /// pending flag before reading, so a change made after the read posts
 /// again. Returns true if a url came, which the browser goes to, as
-/// slime's (`Browser.followed`) unless the URL bar sent it.
+/// squish's (`Browser.followed`) unless the URL bar sent it.
 pub fn titleUpdate(self: *Session) bool {
     self.title_pending.store(false, .release);
     self.lockTerminal();
@@ -949,9 +949,9 @@ pub fn ownNavigation(self: *Session) void {
 }
 
 /// The pane's browser went to `url`, whose page is titled `title`: the
-/// pane shows them, and slime hears, for its other windows to follow;
-/// on a page slime sent it to (`Browser.followed`), slime hears that
-/// url, with the title. Returns the url slime is told, null if nothing
+/// pane shows them, and squish hears, for its other windows to follow;
+/// on a page squish sent it to (`Browser.followed`), squish hears that
+/// url, with the title. Returns the url squish is told, null if nothing
 /// changed. UI thread.
 pub fn visited(self: *Session, url: []const u16, page_title: []const u16) ?[]const u16 {
     const b = self.browser() orelse return null;
@@ -971,7 +971,7 @@ pub fn visited(self: *Session, url: []const u16, page_title: []const u16) ?[]con
     self.unlockTerminal();
     const told = b.followed orelse b.url;
     const s = self.live() orelse return told;
-    s.conn.paneVisited(s.pane, told, page_title) catch |err| log.warn("telling slime where the browser went failed: {}", .{err});
+    s.conn.paneVisited(s.pane, told, page_title) catch |err| log.warn("telling squish where the browser went failed: {}", .{err});
     return told;
 }
 
@@ -983,8 +983,8 @@ pub fn pageUrl(self: *const Session) ?[]const u16 {
     };
 }
 
-/// Send a browser pane to `to`, as the URL bar does: slime is told, and
-/// the pane shows it now rather than when slime's echo comes. Its title
+/// Send a browser pane to `to`, as the URL bar does: squish is told, and
+/// the pane shows it now rather than when squish's echo comes. Its title
 /// was the last page's. UI thread.
 pub fn navigate(self: *Session, to: []const u16) !void {
     const b = self.browser() orelse return;
@@ -1027,7 +1027,7 @@ pub fn cursorBlinks(self: *const Session) bool {
 }
 
 /// Fit the pane to its place `p` from the window's layout: a new grid or
-/// cell size, and where the grid is in the pane, which slime is told for
+/// cell size, and where the grid is in the pane, which squish is told for
 /// mapping the mouse to cells. UI thread.
 pub fn resize(self: *Session, p: Placement.Pane) void {
     const t = self.term() orelse return;
@@ -1069,8 +1069,8 @@ pub fn resize(self: *Session, p: Placement.Pane) void {
     self.send(.{ .geometry = g });
 }
 
-/// Send slime an event for the pane, if it's a live terminal: a
-/// browser's page takes no events through slime.
+/// Send squish an event for the pane, if it's a live terminal: a
+/// browser's page takes no events through squish.
 fn send(self: *Session, ev: Events.Event) void {
     if (self.content != .terminal) return;
     const s = self.live() orelse return;
@@ -1082,7 +1082,7 @@ fn send(self: *Session, ev: Events.Event) void {
 
 /// The renderer made its device again (`Renderer.recover`): what the
 /// old one held is gone. A terminal's kitty textures are the only
-/// copies of their pixels, so slime sends them again with a full frame;
+/// copies of their pixels, so squish sends them again with a full frame;
 /// a browser's pictures are its view's to get again
 /// (`Web.deviceRecovered`).
 pub fn deviceRecovered(self: *Session) void {
@@ -1096,7 +1096,7 @@ pub fn deviceRecovered(self: *Session) void {
     }
 }
 
-/// The config was reloaded: slime takes the colors and the selection's
+/// The config was reloaded: squish takes the colors and the selection's
 /// settings again, and its next frame shows them; clipboard writes go
 /// by the new setting.
 pub fn configChanged(self: *Session) void {
@@ -1104,14 +1104,14 @@ pub fn configChanged(self: *Session) void {
     self.sendSettings();
 }
 
-/// Tell slime what selection and the terminal's colors go by here.
+/// Tell squish what selection and the terminal's colors go by here.
 fn sendSettings(self: *Session) void {
     const config = self.env.config;
     const words = config.@"selection-word-chars".codepoints;
     self.send(.{
         .settings = .{
             .double_click_ms = win32.GetDoubleClickTime(),
-            // What slime has room for.
+            // What squish has room for.
             .word_boundary = words[0..@min(words.len, Events.max_word_boundary)],
             .colors = .{
                 .background = config.background,
@@ -1129,7 +1129,7 @@ fn sendSettings(self: *Session) void {
 }
 
 /// Send a key message: the key, and the same key as win32-input-mode
-/// (mode 9001) has it, which slime sends instead while the program asks
+/// (mode 9001) has it, which squish sends instead while the program asks
 /// for that. A browser pane takes none: its text, posted as WM_CHAR,
 /// comes to `charInput`, which drops it too.
 pub fn keyInput(self: *Session, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM) void {
@@ -1185,7 +1185,7 @@ pub fn hasSelection(self: *const Session) bool {
     return false;
 }
 
-/// Have slime copy the selected text to the clipboard: it comes back
+/// Have squish copy the selected text to the clipboard: it comes back
 /// through `daemonCopied`. Returns false if the screen shows no
 /// selection.
 pub fn copySelection(self: *Session) bool {
@@ -1200,7 +1200,7 @@ pub fn copySelection(self: *Session) bool {
 /// Which way a search's next match lies.
 pub const SearchDirection = event.SearchDirection;
 
-/// Search the pane for `needle` (search.zig, in slime), `direction`
+/// Search the pane for `needle` (search.zig, in squish), `direction`
 /// being the way the next match lies; an empty needle ends the search.
 /// In copy mode, its search: from its cursor, that way.
 pub fn search(self: *Session, direction: SearchDirection, needle: []const u8) void {
@@ -1291,7 +1291,7 @@ pub fn selectedRowText(self: *const Session, buf: []u16) ?[]const u16 {
     return if (text.len == 0) null else text;
 }
 
-/// Put the pane in copy mode, or take it out (copymode.zig, in slime).
+/// Put the pane in copy mode, or take it out (copymode.zig, in squish).
 /// Returns false for a browser pane.
 pub fn toggleCopyMode(self: *Session) bool {
     if (self.content != .terminal) return false;
@@ -1307,7 +1307,7 @@ pub fn inCopyMode(self: *const Session) bool {
     };
 }
 
-/// Send the clipboard's text, which slime brackets if the program asked
+/// Send the clipboard's text, which squish brackets if the program asked
 /// for that (mode 2004) and makes safe.
 pub fn paste(self: *Session) void {
     if (self.content != .terminal) return;
@@ -1359,14 +1359,14 @@ pub fn typeText(self: *Session, text: []const u8) void {
     self.send(.{ .text = text });
 }
 
-/// Tell slime about a focus change, which it reports to a program that
+/// Tell squish about a focus change, which it reports to a program that
 /// asked (mode 1004). ConPTY always asks, and passes them on to console
 /// programs as FOCUS_EVENT records.
 pub fn reportFocus(self: *Session, focused: bool) void {
     self.send(.{ .focus = focused });
 }
 
-/// Send a mouse button press or release, or motion: slime reports it to
+/// Send a mouse button press or release, or motion: squish reports it to
 /// the program or selects with it. Motion without a button goes only to
 /// a program that asked for it.
 pub fn mouseInput(self: *Session, msg: u32, wparam: win32.WPARAM, pos: win32.POINT) void {
@@ -1394,7 +1394,7 @@ pub fn cancelSelection(self: *Session) void {
     self.send(.cancel);
 }
 
-/// Send the wheel: slime reports it, sends arrow keys for alternate
+/// Send the wheel: squish reports it, sends arrow keys for alternate
 /// scroll (mode 1007), or scrolls back.
 pub fn mouseWheel(self: *Session, msg: u32, wparam: win32.WPARAM, pos: win32.POINT) void {
     if (self.content != .terminal) return;
@@ -1507,7 +1507,7 @@ pub fn testBrowser(alloc: Allocator, config: *const Config, url: []const u16) !S
     };
 }
 
-test "a browser goes by its page's title, else its host, and takes slime's url" {
+test "a browser goes by its page's title, else its host, and takes squish's url" {
     const alloc = std.testing.allocator;
     const L = std.unicode.utf8ToUtf16LeStringLiteral;
     var config: Config = .init(alloc);
@@ -1545,7 +1545,7 @@ test "a browser goes by its page's title, else its host, and takes slime's url" 
     try std.testing.expect(!s.browser().?.live());
 }
 
-test "a url slime sent that redirects elsewhere isn't reported, but its title is" {
+test "a url squish sent that redirects elsewhere isn't reported, but its title is" {
     const alloc = std.testing.allocator;
     const L = std.unicode.utf8ToUtf16LeStringLiteral;
     var config: Config = .init(alloc);
@@ -1556,7 +1556,7 @@ test "a url slime sent that redirects elsewhere isn't reported, but its title is
     s.title_pending.store(true, .release);
     daemonUrl(&s, "https://example.org/login");
     try std.testing.expect(s.titleUpdate());
-    // The page lands on a fresh url: shown here, and slime hears the
+    // The page lands on a fresh url: shown here, and squish hears the
     // url it sent, with the page's title.
     try std.testing.expectEqualSlices(u16, L("https://example.org/login"), s.visited(L("https://example.org/login?nonce=1"), L("Log in")).?);
     try std.testing.expectEqualSlices(u16, L("https://example.org/login?nonce=1"), s.pageUrl().?);

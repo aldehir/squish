@@ -13,7 +13,7 @@ import (
 )
 
 // The pseudoconsole API, from the conpty.dll next to our executable (the
-// Microsoft.Windows.Console.ConPTY package slime ships) or else kernel32's
+// Microsoft.Windows.Console.ConPTY package squish ships) or else kernel32's
 // inbox version, as src/win32/conpty.zig loads it.
 type conptyAPI struct {
 	create, resize, close proc
@@ -37,7 +37,7 @@ var conptyDir string
 func SetTerm(string) {}
 
 // SetConptyDir loads conpty.dll from dir instead of from next to our
-// executable: slime-gui runs slime from a copy, and points it back at its
+// executable: squish-gui runs squish from a copy, and points it back at its
 // own. Call it before the first Start.
 func SetConptyDir(dir string) { conptyDir = dir }
 
@@ -75,7 +75,7 @@ var loadAPI = sync.OnceValues(func() (*conptyAPI, error) {
 	}, nil
 })
 
-// Bundled says whether ConPTY comes from slime's conpty.dll rather than
+// Bundled says whether ConPTY comes from squish's conpty.dll rather than
 // the system's.
 func Bundled() bool {
 	api, err := loadAPI()

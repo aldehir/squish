@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // runScript starts a script over c and follows it to its end,
@@ -77,26 +77,26 @@ func TestScriptBuildsWorkspace(t *testing.T) {
 	h := newHarness(t)
 	c := h.connect()
 	out, done := runScript(t, c, rpc.ScriptRunParams{Name: "dev.lua", Args: json.RawMessage(`{"file":"app.log"}`), Source: `
-		local ws, err = slime.workspace.new{
+		local ws, err = squish.workspace.new{
 			name = "dev",
 			tabs = {
-				slime.layout.horizontal(0.7,
-					slime.layout.pane{ command = "nvim" },
-					slime.layout.vertical(0.5,
-						slime.layout.pane{ command = "tail -f " .. slime.args.file },
-						slime.layout.pane{})),
+				squish.layout.horizontal(0.7,
+					squish.layout.pane{ command = "nvim" },
+					squish.layout.vertical(0.5,
+						squish.layout.pane{ command = "tail -f " .. squish.args.file },
+						squish.layout.pane{})),
 			},
 		}
 		assert(ws, err)
-		assert(ws.name == "dev" and #ws.tabs == 1 and ws.active_tab == ws.tabs[1].id, slime.json.encode(ws))
+		assert(ws.name == "dev" and #ws.tabs == 1 and ws.active_tab == ws.tabs[1].id, squish.json.encode(ws))
 		local first = ws.tabs[1].tree.split.children[1].node.pane
-		local p = assert(slime.pane.split{ pane = first, direction = "down", share = 3000, command = "htop" })
-		assert(slime.pane.write{ id = p.pane, text = "q" })
+		local p = assert(squish.pane.split{ pane = first, direction = "down", share = 3000, command = "htop" })
+		assert(squish.pane.write{ id = p.pane, text = "q" })
 		print("made", p.pane)
-		local info = assert(slime.pane.info{ id = p.pane })
-		local id = slime.id.parse(info.id)
+		local info = assert(squish.pane.info{ id = p.pane })
+		local id = squish.id.parse(info.id)
 		return { workspace = ws.id, pane = p.pane, command = info.command,
-			tab = slime.id.tab(id.workspace, id.tab) == ws.tabs[1].id and id.workspace == ws.id }
+			tab = squish.id.tab(id.workspace, id.tab) == ws.tabs[1].id and id.workspace == ws.id }
 	`})
 	if !done.OK {
 		t.Fatalf("script failed: %s", done.Error)
@@ -163,15 +163,15 @@ func TestScriptOpensWorkspaceInWindow(t *testing.T) {
 	pane := w.newWorkspace()
 	c := h.connect()
 	_, done := runScript(t, c, rpc.ScriptRunParams{Pane: pane, Source: `
-		local shown = assert(slime.workspace.new{ name = "shown", tabs = { slime.layout.pane{} } })
-		local quiet = assert(slime.workspace.new{ name = "quiet", tabs = { slime.layout.pane{} }, attach = false })
-		local _, err, code = slime.workspace.new{ name = "nowhere", tabs = { slime.layout.pane{} }, attach = 999 }
+		local shown = assert(squish.workspace.new{ name = "shown", tabs = { squish.layout.pane{} } })
+		local quiet = assert(squish.workspace.new{ name = "quiet", tabs = { squish.layout.pane{} }, attach = false })
+		local _, err, code = squish.workspace.new{ name = "nowhere", tabs = { squish.layout.pane{} }, attach = 999 }
 		assert(code == 1000, err)
-		local again = assert(slime.workspace.new{ name = "again", tabs = { slime.layout.pane{} } })
-		local tab = assert(slime.tab.new{})
-		local split = assert(slime.pane.split{ direction = "down" })
+		local again = assert(squish.workspace.new{ name = "again", tabs = { squish.layout.pane{} } })
+		local tab = assert(squish.tab.new{})
+		local split = assert(squish.pane.split{ direction = "down" })
 		return { shown = shown.id, quiet = quiet.id, again = again.id,
-			tab = slime.id.parse(tab.pane).workspace, split = slime.id.parse(split.pane).workspace }
+			tab = squish.id.parse(tab.pane).workspace, split = squish.id.parse(split.pane).workspace }
 	`})
 	if !done.OK {
 		t.Fatalf("script failed: %s", done.Error)
@@ -211,7 +211,7 @@ func TestScriptOpensWorkspaceInWindow(t *testing.T) {
 func TestScriptErrorsAndLog(t *testing.T) {
 	h := newHarness(t)
 	c := h.connect()
-	out, done := runScript(t, c, rpc.ScriptRunParams{Name: "bad.lua", Source: "slime.log('about to fail')\nlocal r, err, code = slime.pane.kill{ id = \"99.1.1\" }\nerror(err .. ' ' .. code)"})
+	out, done := runScript(t, c, rpc.ScriptRunParams{Name: "bad.lua", Source: "squish.log('about to fail')\nlocal r, err, code = squish.pane.kill{ id = \"99.1.1\" }\nerror(err .. ' ' .. code)"})
 	if done.OK {
 		t.Fatal("ok?")
 	}
@@ -296,13 +296,13 @@ func TestScriptPaneContext(t *testing.T) {
 	pane := w.newWorkspace()
 	c := h.connect()
 	_, done := runScript(t, c, rpc.ScriptRunParams{Pane: pane, Source: `
-		local info = assert(slime.pane.info{})
-		local id = slime.id.parse(info.id)
-		assert(info.id == slime.pane_id and slime.id.tab(id.workspace, id.tab) == slime.tab_id and id.workspace == slime.workspace_id)
-		local p = assert(slime.pane.split{ direction = "down" })
-		local tab = assert(slime.tab.info{})
-		assert(tab.id == slime.tab_id)
-		local ws = assert(slime.workspace.info{})
+		local info = assert(squish.pane.info{})
+		local id = squish.id.parse(info.id)
+		assert(info.id == squish.pane_id and squish.id.tab(id.workspace, id.tab) == squish.tab_id and id.workspace == squish.workspace_id)
+		local p = assert(squish.pane.split{ direction = "down" })
+		local tab = assert(squish.tab.info{})
+		assert(tab.id == squish.tab_id)
+		local ws = assert(squish.workspace.info{})
 		return { split = p.pane, focus = tab.focus, ws = ws.id }
 	`})
 	if !done.OK {
@@ -328,7 +328,7 @@ func TestScriptPaneContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.absorb(a)
-	_, done = runScript(t, c, rpc.ScriptRunParams{Pane: pane, Source: `return slime.pane_id`})
+	_, done = runScript(t, c, rpc.ScriptRunParams{Pane: pane, Source: `return squish.pane_id`})
 	if !done.OK || string(done.Result) != `"`+moved.Pane.String()+`"` {
 		t.Errorf("context after a move: %s, %s", done.Result, done.Error)
 	}

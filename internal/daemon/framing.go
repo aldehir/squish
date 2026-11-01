@@ -5,8 +5,8 @@ import (
 	"compress/flate"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // Framing: how a pane's frames reach its viewers.

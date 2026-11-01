@@ -85,7 +85,7 @@ pub fn ask(self: *Login, prompt: *Daemon.Prompt) void {
 }
 
 /// A status line while waiting: the server's, or the daemon's
-/// ("installing slime").
+/// ("installing squish").
 pub fn info(self: *Login, text: []const u16) void {
     self.setStatus(&.{text});
 }

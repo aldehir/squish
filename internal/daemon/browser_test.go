@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // Browser panes: a pane a window's browser fills, of which the daemon
@@ -396,8 +396,8 @@ func TestBrowserMove(t *testing.T) {
 	}
 }
 
-// TestBrowserScript: Lua builds browser panes (slime.layout.browser,
-// kind on a split) and navigates them (slime.pane.navigate, the pane
+// TestBrowserScript: Lua builds browser panes (squish.layout.browser,
+// kind on a split) and navigates them (squish.pane.navigate, the pane
 // from pane_id when left out).
 func TestBrowserScript(t *testing.T) {
 	h := newHarness(t)
@@ -405,12 +405,12 @@ func TestBrowserScript(t *testing.T) {
 	first := w.newWorkspace()
 	c := h.connect()
 	_, done := runScript(t, c, rpc.ScriptRunParams{Pane: first, Source: `
-		local p = assert(slime.pane.split{ direction = "down", kind = "browser", url = "https://a.example" })
-		local t = assert(slime.tab.new{ layout = slime.layout.horizontal(slime.layout.pane{}, slime.layout.browser{ url = "https://b.example" }) })
-		assert(slime.pane.navigate{ pane = p.pane, url = "https://c.example" })
-		slime.pane_id = p.pane
-		assert(slime.pane.navigate{ url = "https://d.example" })
-		local info = assert(slime.pane.info{})
+		local p = assert(squish.pane.split{ direction = "down", kind = "browser", url = "https://a.example" })
+		local t = assert(squish.tab.new{ layout = squish.layout.horizontal(squish.layout.pane{}, squish.layout.browser{ url = "https://b.example" }) })
+		assert(squish.pane.navigate{ pane = p.pane, url = "https://c.example" })
+		squish.pane_id = p.pane
+		assert(squish.pane.navigate{ url = "https://d.example" })
+		local info = assert(squish.pane.info{})
 		return { info.kind, info.url }
 	`})
 	if !done.OK || string(done.Result) != `["browser","https://d.example"]` {

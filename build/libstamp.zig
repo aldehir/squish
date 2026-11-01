@@ -1,7 +1,7 @@
 //! Writes a Go source file that changes with libghostty-vt
-//! (internal/vt/lib), so `go build` relinks slime when the library does:
+//! (internal/vt/lib), so `go build` relinks squish when the library does:
 //! cgo hashes its flags, not a static library's bytes, so a daemon built
-//! after a change to slime.zig alone would otherwise keep the old link.
+//! after a change to squish.zig alone would otherwise keep the old link.
 //! build.zig runs it on the host:
 //!
 //!   libstamp <out.go> <lib>...
@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
         \\package vt
         \\
         \\// libStamp is the hash of the libghostty-vt builds in lib/. It
-        \\// changes when they do, so this package recompiles and slime
+        \\// changes when they do, so this package recompiles and squish
         \\// relinks: cgo doesn't track a static library's contents.
         \\const libStamp = "{x}"
         \\

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // checkFloatsLocked checks the invariants of floating tabs: each floats

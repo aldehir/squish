@@ -10,12 +10,12 @@ import (
 
 	glua "github.com/yuin/gopher-lua"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
-// The slime table, as Doc says; its shape is Rex's with the nouns
-// renamed. Doc is `slime help lua`, kept here with what it describes.
-const Doc = `Scripts run in the daemon (slime do) with gopher-lua, a Lua 5.1. The
+// The squish table, as Doc says; its shape is Rex's with the nouns
+// renamed. Doc is `squish help lua`, kept here with what it describes.
+const Doc = `Scripts run in the daemon (squish do) with gopher-lua, a Lua 5.1. The
 libraries are base, package, table, string, math, coroutine, debug, and
 os without exit; there is no io, and print goes to the console that ran
 the script. One state per run. The chunk, and each call of a hook,
@@ -23,71 +23,71 @@ timer, or process callback, is a task: one runs Lua at a time, and a
 task that blocks (sleep, wait, exec, a process's wait) lets the others
 run meanwhile, so Lua never runs concurrently with itself. A script
 ends when its chunk has returned and no hook or timer is live, when it
-calls slime.stop, or when it's cancelled (its tasks end at their next
+calls squish.stop, or when it's cancelled (its tasks end at their next
 instruction or blocking call).
 
-THE SLIME TABLE
+THE SQUISH TABLE
 
-  slime.args                 table of the key=value arguments (empty if none)
-  slime.workspace_id         what the script runs for, or nil: a number,
-  slime.tab_id, slime.pane_id    "w.t", and "w.t.p"; read at call time, so a
+  squish.args                table of the key=value arguments (empty if none)
+  squish.workspace_id        what the script runs for, or nil: a number,
+  squish.tab_id, squish.pane_id  "w.t", and "w.t.p"; read at call time, so a
                              script may set them to retarget
-  slime.call(method, params) any method by wire name; params a table or nil
-  slime.workspace.<m>{...}   workspace.<m> with id filled from workspace_id
+  squish.call(method, params) any method by wire name; params a table or nil
+  squish.workspace.<m>{...}  workspace.<m> with id filled from workspace_id
                              (not for list); new gets attach from it instead,
                              so the windows on the script's workspace open the
                              new one (attach = false leaves it detached; another
                              id names another workspace's windows); focus with
                              neither tab nor pane gets pane from pane_id
-  slime.tab.<m>{...}         tab.<m>; tab.new gets workspace, the rest id
+  squish.tab.<m>{...}        tab.<m>; tab.new gets workspace, the rest id
                              from tab_id
-  slime.pane.<m>{...}        pane.<m>; split, move, navigate, and visited get
+  squish.pane.<m>{...}       pane.<m>; split, move, navigate, and visited get
                              pane, the rest id from pane_id: so
-                             slime.pane.navigate{url = "..."} sends this
+                             squish.pane.navigate{url = "..."} sends this
                              script's browser pane there
-  slime.workspace.open{name, attach?, beside?}
+  squish.workspace.open{name, attach?, beside?}
                              the workspace named name, open or made from
-                             init.lua's slime.workspace.define of it (below)
-  slime.workspace.export{id} {lua}: the workspace as a slime.workspace.define
-                             call, for init.lua (slime ws export)
-  slime.id.parse(id)         {workspace, tab, pane} from 1, "1.2", or "1.2.3"
+                             init.lua's squish.workspace.define of it (below)
+  squish.workspace.export{id} {lua}: the workspace as a squish.workspace.define
+                             call, for init.lua (squish ws export)
+  squish.id.parse(id)        {workspace, tab, pane} from 1, "1.2", or "1.2.3"
                              (the parts it has); nil, err for anything else
-  slime.id.tab(w, t)         "w.t" and "w.t.p" from numbers
-  slime.id.pane(w, t, p)
-  slime.layout.pane{command, cwd, env}
+  squish.id.tab(w, t)        "w.t" and "w.t.p" from numbers
+  squish.id.pane(w, t, p)
+  squish.layout.pane{command, cwd, env}
                              a leaf for tabs in workspace.new or layout in tab.new
-  slime.layout.browser{url}  a browser leaf: a pane a window's browser fills,
+  squish.layout.browser{url} a browser leaf: a pane a window's browser fills,
                              showing url (which it needs)
-  slime.layout.horizontal([ratio,] a, b, ...)
+  squish.layout.horizontal([ratio,] a, b, ...)
                              side by side (a row split); ratio is a's share (0 to
                              1), the rest share what's left equally; no ratio
                              divides equally
-  slime.layout.vertical([ratio,] a, b, ...)
+  squish.layout.vertical([ratio,] a, b, ...)
                              stacked (a column split); same rule
-  slime.json.encode(v)       JSON; return nil, err on failure
-  slime.json.decode(s)
-  slime.log(...)             a line to the daemon's log and the script's stderr;
+  squish.json.encode(v)      JSON; return nil, err on failure
+  squish.json.decode(s)
+  squish.log(...)            a line to the daemon's log and the script's stderr;
                              arguments joined by tabs like print
-  slime.stop([result])       ends the run successfully, with result as its
+  squish.stop([result])      ends the run successfully, with result as its
                              return value
-  slime.invoke(name, args)   runs an action init.lua defined (below), for this
+  squish.invoke(name, args)  runs an action init.lua defined (below), for this
                              script's pane, and returns what it returned, or
                              nil, message, code; its output is the script's
 
-Calls return the result table, or nil, message, code (see slime help
+Calls return the result table, or nil, message, code (see squish help
 methods for the codes). Wrap in assert(...) when failure should end the
 script. The namespaces are metatables: any method the daemon has works,
 including ones added later, without a Lua-side list.
 
 EVENTS, WAITING, TIMERS, PROCESSES
 
-  slime.on(event, fn)        fn(ctx, ev) runs for each event (a name from slime
+  squish.on(event, fn)       fn(ctx, ev) runs for each event (a name from squish
                              help events, "pane.*" for a group, or "*"), in a
                              task of its own; ev is the event's params. Returns
                              a handle: h:cancel() ends it, h:active() says. A
                              live hook keeps a script running after its chunk
-                             returns; cancel it or call slime.stop to end.
-  slime.wait(event, filter, timeout)
+                             returns; cancel it or call squish.stop to end.
+  squish.wait(event, filter, timeout)
                              blocks until the next such event whose fields
                              equal filter's (a table, or nil for any): a key
                              names a field of ev, except workspace_id, tab_id,
@@ -95,16 +95,16 @@ EVENTS, WAITING, TIMERS, PROCESSES
                              (a pane's names its tab and workspace too).
                              Returns ev, or nil, "timeout" after timeout
                              seconds (none waits as long as the run lasts).
-  slime.sleep(seconds)       blocks for that long
-  slime.after(seconds, fn)   fn(ctx) runs once after the delay; a handle as on
-  slime.every(seconds, fn)   and again after each delay until cancelled
-  slime.exec(argv, opts)     runs a program on the daemon's host to its end:
+  squish.sleep(seconds)      blocks for that long
+  squish.after(seconds, fn)  fn(ctx) runs once after the delay; a handle as on
+  squish.every(seconds, fn)  and again after each delay until cancelled
+  squish.exec(argv, opts)    runs a program on the daemon's host to its end:
                              argv a list of strings (the program first), opts
                              {cwd, env = {VAR = "value"}, stdin = "text",
                              timeout = seconds}. Returns {status, ok, stdout,
                              stderr}, or nil, err if it couldn't start or timed
                              out (it's killed then).
-  slime.exec.start(argv, opts)
+  squish.exec.start(argv, opts)
                              starts one and returns a handle: p.pid, p:running(),
                              p:wait([timeout]) (the result above, or nil,
                              "timeout"), p:kill(), and with opts.stdin = true,
@@ -112,7 +112,7 @@ EVENTS, WAITING, TIMERS, PROCESSES
                              opts.stderr may be functions that get each piece of
                              output as it comes (then wait's are empty). A run
                              ending kills the processes it started.
-  slime.client.queue(name, args)
+  squish.client.queue(name, args)
                              asks the windows on this script's workspace to
                              perform a window action with args, as if its key
                              were pressed there: copy_to_clipboard,
@@ -123,7 +123,7 @@ EVENTS, WAITING, TIMERS, PROCESSES
                              reset_pane_font_size (each window's own pane).
                              Every window showing the workspace does, so one
                              that changes the workspace (new_split, new_tab,
-                             toggle_split_zoom, ...) is refused: slime.pane.split
+                             toggle_split_zoom, ...) is refused: squish.pane.split
                              and the rest do that once, for the pane named
 
 ctx for a hook is {workspace_id, tab_id, pane_id, origin = "event", event}:
@@ -136,14 +136,14 @@ it matters.
 
 INIT.LUA
 
-The daemon evaluates init.lua (slime config path; SLIME_CONFIG overrides)
-when it starts and on slime config reload, in a state of its own that
+The daemon evaluates init.lua (squish config path; SQUISH_CONFIG overrides)
+when it starts and on squish config reload, in a state of its own that
 lives as long as the config: the functions the file hands to bind and
-action are called again from it for every key press and slime do. It
-has the slime table above (ids are nil at the top level) and these,
+action are called again from it for every key press and squish do. It
+has the squish table above (ids are nil at the top level) and these,
 which are for the top level only:
 
-  slime.config{...}          the settings, one table, merged over earlier
+  squish.config{...}         the settings, one table, merged over earlier
                              calls key by key (lists replace). The daemon takes
                              shell.command (what a pane runs when nothing says)
                              and host.proxy (false: no SOCKS proxy over a host's
@@ -152,16 +152,16 @@ which are for the top level only:
                              read when a host connects, so a reload changes
                              only the hosts that connect after it);
                              each window takes what it understands and ignores
-                             the rest (slime-gui: font, theme, colors, window,
+                             the rest (squish-gui: font, theme, colors, window,
                              chrome, pane, selection, clipboard, ssh,
                              browser). daemon = {upgrade = "ask"|"never"}
                              says whether a window offers to replace this
                              daemon when it runs an older build than the
                              window's (an icon by the host; the layout comes
-                             back, the programs end); slime upgrade always
+                             back, the programs end); squish upgrade always
                              can.
                              Values must be JSON: no functions.
-  slime.bind(key, action[, args])
+  squish.bind(key, action[, args])
                              key (a chord: "ctrl+shift+d"; modifiers ctrl,
                              shift, alt, super/win, then a key name, or a
                              notch of the wheel: wheel_up, wheel_down,
@@ -169,7 +169,7 @@ which are for the top level only:
                              in a sequence; or keys pressed one after
                              another, joined by >: "ctrl+b>c") runs a window
                              action by name with
-                             args (slime-gui's: new_tab, new_split {direction},
+                             args (squish-gui's: new_tab, new_split {direction},
                              close_surface, next_tab, previous_tab, goto_split
                              {direction}, resize_split {direction, amount},
                              equalize_splits, toggle_split_zoom, the floating
@@ -206,9 +206,9 @@ which are for the top level only:
                              bind -r: resizing a pane by holding ctrl+b>shift+h
                              then tapping shift+h); a key that's no repeat ends
                              that and does what it does alone.
-  slime.bind(key, fn)        key runs fn(ctx, args) in the daemon; a function
+  squish.bind(key, fn)       key runs fn(ctx, args) in the daemon; a function
                              binding always consumes its key
-  slime.unbind(key)          key does nothing, even if the window binds it;
+  squish.unbind(key)         key does nothing, even if the window binds it;
                              exactly that key: unbinding "ctrl+b" leaves
                              "ctrl+b>c" bound
   Search                     ctrl+shift+f (start_search) opens a card at the
@@ -218,7 +218,7 @@ which are for the top level only:
                              by default), and makes the current one the
                              selection; Enter and shift+Enter step, Escape
                              closes.
-  slime.bind("copy-mode:" .. key, action)
+  squish.bind("copy-mode:" .. key, action)
                              a key of copy mode (the copy_mode action,
                              ctrl+shift+m: tmux's copy mode with its vi keys,
                              in the daemon). It shows a snapshot of the pane
@@ -257,37 +257,37 @@ which are for the top level only:
                              jump_to_backward, jump_again, jump_reverse,
                              search_forward, search_backward, search_again,
                              search_reverse, search_word_forward,
-                             search_word_backward. slime.unbind("copy-mode:"
+                             search_word_backward. squish.unbind("copy-mode:"
                              .. key) drops a default. The usual tmux.conf
-                             setup is slime.bind("copy-mode:v",
-                             "begin-selection") and slime.bind("copy-mode:y",
+                             setup is squish.bind("copy-mode:v",
+                             "begin-selection") and squish.bind("copy-mode:y",
                              "copy-selection-and-cancel").
-  slime.action{name, title, args, run}
-                             an action: slime do <name> key=value..., a bound
-                             key, and slime.invoke run run(ctx, args), and print
+  squish.action{name, title, args, run}
+                             an action: squish do <name> key=value..., a bound
+                             key, and squish.invoke run run(ctx, args), and print
                              what it returns. args is a spec for listing and
                              for converting the CLI's strings: {n = "number",
                              on = "boolean", file = "string"}.
-  slime.workspace.define{name, tabs, autostart}
+  squish.workspace.define{name, tabs, autostart}
                              a workspace by name: tabs is a list of layouts as
-                             workspace.new takes them (slime.layout.pane and
-                             the rest), which workspace.open{name = ...} (slime
+                             workspace.new takes them (squish.layout.pane and
+                             the rest), which workspace.open{name = ...} (squish
                              ws open, the palette's "Open workspace") makes
                              when none of that name is open; with autostart
                              = true it opens when the daemon starts with
                              nothing to restore. A later define of the name
-                             replaces the earlier. slime ws export writes an
+                             replaces the earlier. squish ws export writes an
                              open workspace back as one.
 
 ctx is {workspace_id, tab_id, pane_id, origin}: the pane the action runs
-for (a window's focused pane, slime do's SLIME_PANE, a script's own),
-also filled into slime.pane_id and the rest while it runs; origin is key,
+for (a window's focused pane, squish do's SQUISH_PANE, a script's own),
+also filled into squish.pane_id and the rest while it runs; origin is key,
 cli, script, or api. require, dofile, and loadfile find files beside
 init.lua. A file that fails leaves the last good config in place (the
-daemon's log and slime config show say why); slime config check tries
+daemon's log and squish config show say why); squish config check tries
 one without applying it.
 
-  slime.config{
+  squish.config{
     font = { family = { "Cascadia Code", "Consolas" }, size = 12, antialias = "grayscale" },
     theme = "Catppuccin Mocha",      -- a bundled Ghostty theme, or a file under themes/ beside init.lua
     colors = { background = "#282c34", cursor = "#ffcc00" },
@@ -296,24 +296,24 @@ one without applying it.
     pane = { gap = 10, radius = 10 }, -- DIPs between panes and of their corners; 0 tiles them square
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     shell = { command = "pwsh -NoLogo" },
-    host = { proxy = true },         -- a SOCKS proxy per connected host (slime host ls)
+    host = { proxy = true },         -- a SOCKS proxy per connected host (squish host ls)
     daemon = { upgrade = "ask" },    -- "never": windows don't offer to replace an older daemon
   }
 
-  slime.workspace.define{
+  squish.workspace.define{
     name = "dev",
     autostart = true,
     tabs = {
-      slime.layout.horizontal(0.7,
-        slime.layout.pane{ command = "nvim", cwd = "~/src/app" },
-        slime.layout.pane{ cwd = "~/src/app" }),
-      slime.layout.pane{ command = "tail -f /var/log/app.log" },
+      squish.layout.horizontal(0.7,
+        squish.layout.pane{ command = "nvim", cwd = "~/src/app" },
+        squish.layout.pane{ cwd = "~/src/app" }),
+      squish.layout.pane{ command = "tail -f /var/log/app.log" },
     },
   }
-  slime.bind("ctrl+shift+d", "new_split", { direction = "right" })
-  slime.bind("ctrl+shift+t", "new_tab")
-  slime.bind("ctrl+alt+l", function(ctx, args) slime.invoke("dev", { file = "app.log" }) end)
-  slime.action{ name = "dev", title = "Dev layout", args = { file = "string" },
+  squish.bind("ctrl+shift+d", "new_split", { direction = "right" })
+  squish.bind("ctrl+shift+t", "new_tab")
+  squish.bind("ctrl+alt+l", function(ctx, args) squish.invoke("dev", { file = "app.log" }) end)
+  squish.action{ name = "dev", title = "Dev layout", args = { file = "string" },
     run = function(ctx, args) return dofile("dev.lua") end }
 
 Values cross as JSON. Numbers are doubles; workspace ids are numbers,
@@ -323,12 +323,12 @@ an object. So a method that takes a list can't be given an empty table,
 and nil in a table means the key is absent. Functions and cycles can't
 be encoded.
 
-Caveats: pcall catches slime.stop (it is an error under the hood). A
-script is never a viewer: slime.workspace.new needs tabs; run from a
+Caveats: pcall catches squish.stop (it is an error under the hood). A
+script is never a viewer: squish.workspace.new needs tabs; run from a
 pane, the windows on that pane's workspace open the new one, otherwise
 it starts detached. A script's split, tab.new, and move don't take the
-focus (a window's own do). subscribe is the wire's; slime.on is a
-script's. slime.config, bind, unbind, and action are init.lua's. In
+focus (a window's own do). subscribe is the wire's; squish.on is a
+script's. squish.config, bind, unbind, and action are init.lua's. In
 init.lua, hooks and timers set at the top level live as long as that
 config does (a reload ends them, and what the old config was running),
 and an action may sleep, wait, and exec: another key's action runs
@@ -336,25 +336,25 @@ meanwhile.
 
 EXAMPLES
 
-Inspect (slime do -e '...'):
+Inspect (squish do -e '...'):
 
-  local l = assert(slime.workspace.list{})
+  local l = assert(squish.workspace.list{})
   for _, ws in ipairs(l.workspaces) do
     print(ws.id, ws.name, ws.attached and "attached" or "detached", #ws.tabs .. " tabs")
   end
   for _, p in ipairs(l.panes) do print("pane", p.id, p.command, p.title) end
 
-Build a workspace from a layout (slime do dev.lua file=app.log):
+Build a workspace from a layout (squish do dev.lua file=app.log):
 
-  local ws = assert(slime.workspace.new{
+  local ws = assert(squish.workspace.new{
     name = "dev",
     tabs = {
-      slime.layout.horizontal(0.7,
-        slime.layout.pane{ command = "nvim" },
-        slime.layout.vertical(0.5,
-          slime.layout.pane{ command = "tail -f " .. slime.args.file },
-          slime.layout.pane{})),
-      slime.layout.pane{ command = "bash", cwd = "/src", env = { EDITOR = "nvim" } },
+      squish.layout.horizontal(0.7,
+        squish.layout.pane{ command = "nvim" },
+        squish.layout.vertical(0.5,
+          squish.layout.pane{ command = "tail -f " .. squish.args.file },
+          squish.layout.pane{})),
+      squish.layout.pane{ command = "bash", cwd = "/src", env = { EDITOR = "nvim" } },
     },
   })
   print("workspace", ws.id, "opens on tab", ws.active_tab)
@@ -362,11 +362,11 @@ Build a workspace from a layout (slime do dev.lua file=app.log):
 
 From inside a pane (ids default to this pane):
 
-  local me = assert(slime.pane.info{})
-  slime.log("splitting", me.id, "in", me.pwd)          -- the shell's directory, if it reports it
-  local below = assert(slime.pane.split{ direction = "down", share = 3000 })  -- starts there too
-  assert(slime.pane.write{ id = below.pane, text = "git status\r" })
-  assert(slime.workspace.focus{ pane = below.pane })   -- its tab comes with it
+  local me = assert(squish.pane.info{})
+  squish.log("splitting", me.id, "in", me.pwd)          -- the shell's directory, if it reports it
+  local below = assert(squish.pane.split{ direction = "down", share = 3000 })  -- starts there too
+  assert(squish.pane.write{ id = below.pane, text = "git status\r" })
+  assert(squish.workspace.focus{ pane = below.pane })   -- its tab comes with it
 
 Walk a tab's tree:
 
@@ -375,74 +375,74 @@ Walk a tab's tree:
     else for _, c in ipairs(node.split.children) do leaves(c.node, out) end end
     return out
   end
-  local t = assert(slime.tab.info{ id = slime.tab_id })
+  local t = assert(squish.tab.info{ id = squish.tab_id })
   for _, id in ipairs(leaves(t.tree, {})) do
-    print(id, assert(slime.pane.text{ id = id }).text:match("[^\n]*$"))  -- last line of each
+    print(id, assert(squish.pane.text{ id = id }).text:match("[^\n]*$"))  -- last line of each
   end
 
 Errors and stopping early:
 
-  local p, err, code = slime.pane.info{ id = "1.1.999" }
-  if not p then slime.log("no pane:", err, code) end          -- 1000 is not found
-  if #assert(slime.workspace.list{}).workspaces > 0 then slime.stop("already set up") end
+  local p, err, code = squish.pane.info{ id = "1.1.999" }
+  if not p then squish.log("no pane:", err, code) end          -- 1000 is not found
+  if #assert(squish.workspace.list{}).workspaces > 0 then squish.stop("already set up") end
 
-Run a command below and wait for it (slime do build.lua):
+Run a command below and wait for it (squish do build.lua):
 
-  local p = assert(slime.pane.split{ direction = "down", share = 3000, command = "go build ./..." })
-  local ev = slime.wait("pane.exited", { pane_id = p.pane }, 600)
-  if not ev then slime.stop("still building") end
+  local p = assert(squish.pane.split{ direction = "down", share = 3000, command = "go build ./..." })
+  local ev = squish.wait("pane.exited", { pane_id = p.pane }, 600)
+  if not ev then squish.stop("still building") end
   return "exit " .. ev.status
 
-Watch for bells until stopped (slime do --detach watch.lua; slime scripts kill <id>):
+Watch for bells until stopped (squish do --detach watch.lua; squish scripts kill <id>):
 
-  slime.on("pane.bell", function(ctx, ev)
-    local info = assert(slime.pane.info{ id = ev.id })
-    slime.log("bell in", ev.id, info.title or "")
+  squish.on("pane.bell", function(ctx, ev)
+    local info = assert(squish.pane.info{ id = ev.id })
+    squish.log("bell in", ev.id, info.title or "")
   end)
-  slime.every(60, function() slime.log("still watching") end)
+  squish.every(60, function() squish.log("still watching") end)
 
 A browser beside this pane, following where its windows go (pane.url):
 
-  local b = assert(slime.pane.split{ direction = "right", kind = "browser", url = "http://localhost:8080" })
-  slime.on("pane.url", function(ctx, ev)
-    if ev.id == b.pane then slime.log("browser at", ev.url) end
+  local b = assert(squish.pane.split{ direction = "right", kind = "browser", url = "http://localhost:8080" })
+  squish.on("pane.url", function(ctx, ev)
+    if ev.id == b.pane then squish.log("browser at", ev.url) end
   end)
-  slime.pane.navigate{ pane = b.pane, url = "http://localhost:8080/docs" }
+  squish.pane.navigate{ pane = b.pane, url = "http://localhost:8080/docs" }
 
 Float this pane over its tab, as a window inside it, then minimize it
-(slime.tab.dock{id = ...} makes it an ordinary tab again):
+(squish.tab.dock{id = ...} makes it an ordinary tab again):
 
-  local f = assert(slime.pane.move{ float = true })  -- or float = { over = "1.2", rect = { x = 0, y = 0, w = 5000, h = 10000 } }
-  local id = slime.id.parse(f.pane)
-  slime.tab.float{ id = slime.id.tab(id.workspace, id.tab), minimized = true }
-  slime.on("tab.docked", function(ctx, ev) slime.log(ev.id, "docked") end)
+  local f = assert(squish.pane.move{ float = true })  -- or float = { over = "1.2", rect = { x = 0, y = 0, w = 5000, h = 10000 } }
+  local id = squish.id.parse(f.pane)
+  squish.tab.float{ id = squish.id.tab(id.workspace, id.tab), minimized = true }
+  squish.on("tab.docked", function(ctx, ev) squish.log(ev.id, "docked") end)
 
 Shell out (on the daemon's host):
 
-  local r = assert(slime.exec({ "git", "status", "--short" }, { cwd = slime.args.dir }))
+  local r = assert(squish.exec({ "git", "status", "--short" }, { cwd = squish.args.dir }))
   for line in r.stdout:gmatch("[^\n]+") do print(line) end`
 
-// install sets the script's globals: the slime table, and print.
+// install sets the script's globals: the squish table, and print.
 func (r *Runner) install(ctx Context) {
 	L := r.L
-	slime := L.NewTable()
-	r.slime = slime
+	squish := L.NewTable()
+	r.squish = squish
 	args := glua.LValue(L.NewTable())
 	if len(ctx.Args) > 0 {
 		if v, err := fromJSON(L, ctx.Args); err == nil && v != glua.LNil {
 			args = v
 		}
 	}
-	slime.RawSetString("args", args)
+	squish.RawSetString("args", args)
 	r.setIDs(idsOf(ctx.Pane))
-	slime.RawSetString("call", L.NewFunction(r.luaCall))
-	slime.RawSetString("invoke", L.NewFunction(r.luaInvoke))
+	squish.RawSetString("call", L.NewFunction(r.luaCall))
+	squish.RawSetString("invoke", L.NewFunction(r.luaInvoke))
 	for _, group := range []string{"workspace", "tab", "pane"} {
-		slime.RawSetString(group, r.namespace(group))
+		squish.RawSetString(group, r.namespace(group))
 	}
 	ids := L.NewTable()
 	L.SetFuncs(ids, map[string]glua.LGFunction{"parse": idParse, "tab": idTab, "pane": idPane})
-	slime.RawSetString("id", ids)
+	squish.RawSetString("id", ids)
 	layout := L.NewTable()
 	L.SetFuncs(layout, map[string]glua.LGFunction{
 		"pane":       layoutPane,
@@ -450,27 +450,27 @@ func (r *Runner) install(ctx Context) {
 		"horizontal": func(L *glua.LState) int { return layoutSplit(L, rpc.Row) },
 		"vertical":   func(L *glua.LState) int { return layoutSplit(L, rpc.Column) },
 	})
-	slime.RawSetString("layout", layout)
+	squish.RawSetString("layout", layout)
 	jsonT := L.NewTable()
 	L.SetFuncs(jsonT, map[string]glua.LGFunction{"encode": jsonEncode, "decode": jsonDecode})
-	slime.RawSetString("json", jsonT)
-	slime.RawSetString("log", L.NewFunction(r.luaLog))
-	slime.RawSetString("stop", L.NewFunction(r.luaStop))
-	slime.RawSetString("on", L.NewFunction(r.luaOn))
-	slime.RawSetString("wait", L.NewFunction(r.luaWait))
-	slime.RawSetString("sleep", L.NewFunction(r.luaSleep))
-	slime.RawSetString("after", L.NewFunction(r.luaAfter))
-	slime.RawSetString("every", L.NewFunction(r.luaEvery))
+	squish.RawSetString("json", jsonT)
+	squish.RawSetString("log", L.NewFunction(r.luaLog))
+	squish.RawSetString("stop", L.NewFunction(r.luaStop))
+	squish.RawSetString("on", L.NewFunction(r.luaOn))
+	squish.RawSetString("wait", L.NewFunction(r.luaWait))
+	squish.RawSetString("sleep", L.NewFunction(r.luaSleep))
+	squish.RawSetString("after", L.NewFunction(r.luaAfter))
+	squish.RawSetString("every", L.NewFunction(r.luaEvery))
 	r.installHandles()
 	r.installExec()
 	client := L.NewTable()
 	client.RawSetString("queue", L.NewFunction(r.luaClientQueue))
-	slime.RawSetString("client", client)
-	L.SetGlobal("slime", slime)
+	squish.RawSetString("client", client)
+	L.SetGlobal("squish", squish)
 	L.SetGlobal("print", L.NewFunction(r.luaPrint))
 }
 
-// luaClientQueue is slime.client.queue(name, args): the windows on the
+// luaClientQueue is squish.client.queue(name, args): the windows on the
 // script's workspace perform window action name with args
 // (client.queue, which sends them client.action).
 func (r *Runner) luaClientQueue(L *glua.LState) int {
@@ -480,7 +480,7 @@ func (r *Runner) luaClientQueue(L *glua.LState) int {
 	if args := L.OptTable(2, nil); args != nil {
 		params.RawSetString("args", args)
 	}
-	ws := r.slime.RawGetString("workspace_id")
+	ws := r.squish.RawGetString("workspace_id")
 	if ws == glua.LNil {
 		return pushError(L, "client.queue: no workspace: the script runs for no pane", 0)
 	}
@@ -488,7 +488,7 @@ func (r *Runner) luaClientQueue(L *glua.LState) int {
 	return r.call(L, rpc.ClientQueue, params)
 }
 
-// namespace is slime.<group>: a table whose missing keys become the
+// namespace is squish.<group>: a table whose missing keys become the
 // methods "<group>.<key>", made on first use.
 func (r *Runner) namespace(group string) *glua.LTable {
 	L := r.L
@@ -539,7 +539,7 @@ func (r *Runner) fillContext(method string, params *glua.LTable) {
 				return
 			}
 			field, from = "pane", "pane_id"
-			if r.slime.RawGetString(from) == glua.LNil {
+			if r.squish.RawGetString(from) == glua.LNil {
 				field, from = "tab", "tab_id"
 			}
 		default:
@@ -563,12 +563,12 @@ func (r *Runner) fillContext(method string, params *glua.LTable) {
 	if params.RawGetString(field) != glua.LNil {
 		return
 	}
-	if id := r.slime.RawGetString(from); id != glua.LNil {
+	if id := r.squish.RawGetString(from); id != glua.LNil {
 		params.RawSetString(field, id)
 	}
 }
 
-// luaCall is slime.call(method, params).
+// luaCall is squish.call(method, params).
 func (r *Runner) luaCall(L *glua.LState) int {
 	method := L.CheckString(1)
 	return r.call(L, method, L.OptTable(2, nil))
@@ -589,7 +589,7 @@ func (r *Runner) call(L *glua.LState, method string, params *glua.LTable) int {
 	return pushResult(L, method, result, err)
 }
 
-// luaInvoke is slime.invoke(name, args): an action of the config file,
+// luaInvoke is squish.invoke(name, args): an action of the config file,
 // run by the daemon, with what it returned.
 func (r *Runner) luaInvoke(L *glua.LState) int {
 	name := L.CheckString(1)
@@ -649,7 +649,7 @@ func (r *Runner) luaPrint(L *glua.LState) int {
 	return 0
 }
 
-// luaLog is slime.log(...): a line for the daemon's log, and on the
+// luaLog is squish.log(...): a line for the daemon's log, and on the
 // task's own stderr if it has one.
 func (r *Runner) luaLog(L *glua.LState) int {
 	text := line(L)
@@ -672,7 +672,7 @@ func line(L *glua.LState) string {
 	return b.String()
 }
 
-// luaStop is slime.stop([result]): the run ends, successfully, with
+// luaStop is squish.stop([result]): the run ends, successfully, with
 // result as what it returned.
 func (r *Runner) luaStop(L *glua.LState) int {
 	if L.GetTop() > 0 {
@@ -682,7 +682,7 @@ func (r *Runner) luaStop(L *glua.LState) int {
 	return 0
 }
 
-// idParse is slime.id.parse(id): the parts of a workspace, tab, or
+// idParse is squish.id.parse(id): the parts of a workspace, tab, or
 // pane id as {workspace, tab, pane}, the ones it has; or nil and why
 // not.
 func idParse(L *glua.LState) int {
@@ -714,14 +714,14 @@ func idParse(L *glua.LState) int {
 	return 1
 }
 
-// idTab is slime.id.tab(workspace, tab): "w.t".
+// idTab is squish.id.tab(workspace, tab): "w.t".
 func idTab(L *glua.LState) int {
 	id := rpc.TabID{WS: idPart(L, 1), N: idPart(L, 2)}
 	L.Push(glua.LString(id.String()))
 	return 1
 }
 
-// idPane is slime.id.pane(workspace, tab, pane): "w.t.p".
+// idPane is squish.id.pane(workspace, tab, pane): "w.t.p".
 func idPane(L *glua.LState) int {
 	id := rpc.PaneID{WS: idPart(L, 1), Tab: idPart(L, 2), N: idPart(L, 3)}
 	L.Push(glua.LString(id.String()))
@@ -737,7 +737,7 @@ func idPart(L *glua.LState, i int) uint32 {
 	return uint32(n)
 }
 
-// layoutPane is slime.layout.pane{command, cwd, env}: a leaf of a
+// layoutPane is squish.layout.pane{command, cwd, env}: a leaf of a
 // layout tree, in the form tab.new and workspace.new take.
 func layoutPane(L *glua.LState) int {
 	spec := L.OptTable(1, L.NewTable())
@@ -747,8 +747,8 @@ func layoutPane(L *glua.LState) int {
 	return 1
 }
 
-// layoutBrowser is slime.layout.browser{url}: a leaf whose pane is a
-// browser. It copies the table, so one reused for slime.layout.pane
+// layoutBrowser is squish.layout.browser{url}: a leaf whose pane is a
+// browser. It copies the table, so one reused for squish.layout.pane
 // stays a terminal's.
 func layoutBrowser(L *glua.LState) int {
 	spec := L.NewTable()
@@ -760,7 +760,7 @@ func layoutBrowser(L *glua.LState) int {
 	return 1
 }
 
-// layoutSplit is slime.layout.horizontal(ratio, a, b, ...) or vertical:
+// layoutSplit is squish.layout.horizontal(ratio, a, b, ...) or vertical:
 // a split along axis whose first child takes ratio of it and the rest
 // share what's left equally; with no ratio, all share equally.
 // horizontal lays its children side by side (a row), vertical stacks
@@ -808,7 +808,7 @@ func layoutSplit(L *glua.LState, axis rpc.Axis) int {
 	return 1
 }
 
-// jsonEncode is slime.json.encode(v): v as JSON, or nil and why not.
+// jsonEncode is squish.json.encode(v): v as JSON, or nil and why not.
 func jsonEncode(L *glua.LState) int {
 	b, err := toJSON(L.Get(1))
 	if err != nil {
@@ -818,7 +818,7 @@ func jsonEncode(L *glua.LState) int {
 	return 1
 }
 
-// jsonDecode is slime.json.decode(s): the value s holds, or nil and
+// jsonDecode is squish.json.decode(s): the value s holds, or nil and
 // why not.
 func jsonDecode(L *glua.LState) int {
 	v, err := fromJSON(L, []byte(L.CheckString(1)))

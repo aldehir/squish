@@ -780,7 +780,7 @@ type PaneSplitParams struct {
 // whole Side (right if zero), taking half of it; with no Tab, into a
 // new tab after its own. A tab left empty closes. The pane takes its
 // new tab's next number: Created names it, and the old id forwards to
-// it for as long as the pane lives, so a shell's SLIME_PANE still
+// it for as long as the pane lives, so a shell's SQUISH_PANE still
 // finds it. The viewers see the old id detach and the new attach
 // (pane.attached with moved_from); a viewer's own call focuses the
 // pane.
@@ -853,14 +853,14 @@ type PaneFindParams struct {
 }
 
 // PaneFindResult is the directory searched, as the host spells it
-// (C:\Users\..., /home/...) and home-relative (~/dev/slime), and the
+// (C:\Users\..., /home/...) and home-relative (~/dev/squish), and the
 // items that match. An empty Root with Reason set is a pane with
 // nothing to search: no-pwd (its shell reported no directory),
 // other-host (it reported another host's), or gone (the directory, or
 // the shell, is). Total is how many entries the scan has found so far,
 // Matched how many the query matches, Scanning whether the scan is
 // still running (ask again for more), Truncated whether it stopped at
-// its budget, and Tool which scanner ran: fd, or slime's own walk.
+// its budget, and Tool which scanner ran: fd, or squish's own walk.
 type PaneFindResult struct {
 	Root      string     `json:"root"`
 	Pretty    string     `json:"pretty"`
@@ -1045,7 +1045,7 @@ type PaneStatusParams struct {
 // client.action, and every window showing the workspace performs it.
 // So an action that changes the workspace is refused: it has a method
 // that does it once, for the pane named (DaemonActions). Lua's
-// slime.client.queue fills Workspace from what the script runs for.
+// squish.client.queue fills Workspace from what the script runs for.
 type ClientQueueParams struct {
 	Workspace uint32          `json:"workspace"`
 	Name      string          `json:"name"`
@@ -1103,7 +1103,7 @@ type ClientActionParams struct {
 type HostState string
 
 const (
-	// HostConnecting: logging in or installing slime.
+	// HostConnecting: logging in or installing squish.
 	HostConnecting HostState = "connecting"
 	HostConnected  HostState = "connected"
 	// HostFailed: logging in or installing didn't work.
@@ -1116,7 +1116,7 @@ const (
 
 // Host describes a host: host.connect's result, host.list's items, and
 // host.changed. Text is a status line while connecting (the server's,
-// or ours: "installing slime"), or why it failed, was lost, or went.
+// or ours: "installing squish"), or why it failed, was lost, or went.
 // Proxy is the SOCKS5 proxy into the host's network while it's
 // connected ("socks5://127.0.0.1:<port>"; names resolve on the host),
 // unless the config's host.proxy is false.
@@ -1126,14 +1126,14 @@ type Host struct {
 	State HostState `json:"state"`
 	Text  string    `json:"text,omitempty"`
 	Proxy string    `json:"proxy,omitempty"`
-	// Build is the id of the build of slime this daemon installed on
+	// Build is the id of the build of squish this daemon installed on
 	// the host, while connected: a window compares it with the host
 	// daemon's own to offer an upgrade (host.upgrade).
 	Build string `json:"build,omitempty"`
 }
 
 // HostConnectParams logs in to Dest (ssh://[user@]host[:port],
-// [user@]host, or a Host alias), puts slime there, and answers with the
+// [user@]host, or a Host alias), puts squish there, and answers with the
 // host as it is then; host.changed follows as it goes. A host already
 // connected or connecting answers at once with its state. Prompts while
 // logging in go to the caller only, as host.prompt; if it hangs up,
@@ -1221,8 +1221,8 @@ type Question struct {
 // own, against its own method table in process.
 
 // ScriptRunParams starts a script: Source, compiled as chunk Name (a
-// file name, for error messages), with Args as slime.args (a JSON
-// object). Pane is the pane it runs for, filled into slime.pane_id and,
+// file name, for error messages), with Args as squish.args (a JSON
+// object). Pane is the pane it runs for, filled into squish.pane_id and,
 // through it, tab_id and workspace_id; none for none. The caller gets
 // script.output and script.done for it without subscribing, and a
 // caller that hangs up before it's done cancels it unless Detach is set.
@@ -1262,7 +1262,7 @@ type ScriptDesc struct {
 }
 
 // ScriptOutputParams: script.output, what a script printed. Stream is
-// "stdout" (print) or "stderr" (slime.log).
+// "stdout" (print) or "stderr" (squish.log).
 type ScriptOutputParams struct {
 	ID     uint32 `json:"id"`
 	Stream string `json:"stream"`
@@ -1271,7 +1271,7 @@ type ScriptOutputParams struct {
 
 // ScriptDoneParams: script.done. OK with Result (what the chunk
 // returned, as JSON; null for nothing) when it ran to the end or called
-// slime.stop; otherwise Error says what went wrong, with the Lua stack
+// squish.stop; otherwise Error says what went wrong, with the Lua stack
 // trace, or that it was cancelled.
 type ScriptDoneParams struct {
 	ID     uint32          `json:"id"`
@@ -1287,7 +1287,7 @@ type ScriptDoneParams struct {
 
 // ConfigDesc answers config.get and config.check, and config.changed
 // carries it after a reload. Path is the file (evaluated or not).
-// Settings is the one table slime.config was given, merged, as JSON:
+// Settings is the one table squish.config was given, merged, as JSON:
 // the daemon takes shell.command, a window the rest. Keymap lists the
 // bindings in the order made; Actions the actions. Errors is why the
 // last evaluation failed, if it did (what's described is then the last
@@ -1304,12 +1304,12 @@ type ConfigDesc struct {
 	// for a client to hand another daemon with client.copy_keys.
 	CopyKeys string       `json:"copy_keys,omitempty"`
 	Actions  []ActionDesc `json:"actions"`
-	// Workspaces is what slime.workspace.define set, in order.
+	// Workspaces is what squish.workspace.define set, in order.
 	Workspaces []WorkspaceDef `json:"workspaces,omitempty"`
 	Errors     []string       `json:"errors,omitempty"`
 }
 
-// Binding is one slime.bind: Key as it was written (a chord such as
+// Binding is one squish.bind: Key as it was written (a chord such as
 // "ctrl+shift+d", or a sequence of them joined by ">", which the window
 // parses), and what it runs: Action
 // with Args, a window action by name (new_split, copy_to_clipboard,
@@ -1326,7 +1326,7 @@ type Binding struct {
 	Repeat bool            `json:"repeat,omitempty"`
 }
 
-// ActionDesc is one slime.action: Args is its argument spec as given
+// ActionDesc is one squish.action: Args is its argument spec as given
 // ({file = "string"}), for listing.
 type ActionDesc struct {
 	Name  string          `json:"name"`
@@ -1342,8 +1342,8 @@ type ConfigCheckParams struct {
 
 // ActionInvokeParams runs a config action, Name with Args, or the
 // function binding Lua, for Pane (none if zero): the ids its calls fill
-// in, and its ctx. Origin says who asked: key (a window), cli (slime
-// do), script (slime.invoke), or api. Like script.run, it answers at
+// in, and its ctx. Origin says who asked: key (a window), cli (squish
+// do), script (squish.invoke), or api. Like script.run, it answers at
 // once with a script id, and the run's output and end come as
 // script.output and script.done.
 type ActionInvokeParams struct {
@@ -1355,8 +1355,8 @@ type ActionInvokeParams struct {
 }
 
 // Build identifies the executable a daemon runs: ID is its build
-// directory's name when it sits in one (bin/<id>/slime, as slime-gui
-// copies it and hosts install it), else "<size>-<mtime>" as slime-gui
+// directory's name when it sits in one (bin/<id>/squish, as squish-gui
+// copies it and hosts install it), else "<size>-<mtime>" as squish-gui
 // names its copies; Time is the executable's mtime in unix seconds,
 // which orders takeovers: later is newer.
 type Build struct {
@@ -1380,7 +1380,7 @@ type DaemonInfoResult struct {
 // are and keeps it, so the daemon that starts next restores the
 // workspaces (each pane relaunched: the programs end), and tells every
 // client daemon.restarting (with Build, the one replacing it) before
-// hanging up, so they reconnect. slime upgrade stops a daemon so.
+// hanging up, so they reconnect. squish upgrade stops a daemon so.
 type DaemonStopParams struct {
 	Save  bool  `json:"save,omitempty"`
 	Build Build `json:"build,omitzero"`
@@ -1396,7 +1396,7 @@ type DaemonRestartingParams struct {
 
 // WorkspaceOpenNamedParams is the workspace.open method: the workspace
 // named Name if one exists, else one made from the config's definition
-// of that name (slime.workspace.define). With Attach, a connection
+// of that name (squish.workspace.define). With Attach, a connection
 // calling it becomes a viewer. (WorkspaceOpenParams is the event's.)
 type WorkspaceOpenNamedParams struct {
 	Name   string `json:"name"`
@@ -1407,12 +1407,12 @@ type WorkspaceOpenNamedParams struct {
 }
 
 // WorkspaceExportResult is workspace.export's: the workspace as a
-// slime.workspace.define call for init.lua.
+// squish.workspace.define call for init.lua.
 type WorkspaceExportResult struct {
 	Lua string `json:"lua"`
 }
 
-// WorkspaceDef is one slime.workspace.define: a workspace by name and
+// WorkspaceDef is one squish.workspace.define: a workspace by name and
 // the tabs to make it with, opened by workspace.open, or at a daemon
 // start with nothing to restore when Autostart.
 type WorkspaceDef struct {

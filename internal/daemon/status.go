@@ -3,7 +3,7 @@ package daemon
 import (
 	"strings"
 
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // maxStatusRecords is the Program Status Protocol's minimum. When it's

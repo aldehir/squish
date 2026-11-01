@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 func TestProgramStatus(t *testing.T) {

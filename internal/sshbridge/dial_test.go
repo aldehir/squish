@@ -16,8 +16,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 
-	"github.com/aldehir/slime/internal/prompt"
-	"github.com/aldehir/slime/internal/sshtest"
+	"github.com/aldehir/squish/internal/prompt"
+	"github.com/aldehir/squish/internal/sshtest"
 )
 
 // dialer runs Dial with a scripted Asker: each prompt lands in prompts

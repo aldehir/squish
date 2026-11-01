@@ -1,7 +1,7 @@
 package rpc
 
 // The control plane documents itself here, beside its definition, for
-// `slime help methods` and `slime help events`: one entry per method,
+// `squish help methods` and `squish help events`: one entry per method,
 // event, and error code, and the shapes they share. A method added to
 // the table gets its line here.
 
@@ -38,7 +38,7 @@ var MethodDocs = []MethodDoc{
 		"floats tab id over tab over (an ordinary tab without over: over the active tab, or what that one floats over), or changes its float: rect in basis points of the host's area (w and h at least 1500, x+w and y+h at most 10000; centered 60% x 60% by default), minimized takes it off the screen (the window lists it), raise puts it on top. Floats are one level deep: over must be ordinary, and id's own floats move onto it"},
 	{TabDock, "{id}", "{}", "a floating tab becomes ordinary again, right after the tab it floated over; a no-op on an ordinary tab"},
 	{PaneSplit, "{pane, direction: right|down|left|up, share?: 1..9999, kind?, url?, command?, cwd?, env?}", "Created",
-		"share is the new pane's, in basis points (5000 default); the rest is the new pane's PaneSpec. A terminal without a cwd starts in pane's shell's directory, the last it reported (OSC 7 or 9;9; slime shell-integration), if that shell is on this host"},
+		"share is the new pane's, in basis points (5000 default); the rest is the new pane's PaneSpec. A terminal without a cwd starts in pane's shell's directory, the last it reported (OSC 7 or 9;9; squish shell-integration), if that shell is on this host"},
 	{PaneMove, "{pane, tab?, at?, side?: right|down|left|up, float?: {over?, rect?}}", "Created",
 		"into tab along side, or a new tab of its own without tab; with at, beside pane at on side of it, taking half its space, in at's tab (its own, too). The result is the pane's new id, and its old ids keep finding it. With float (true or a table), the new tab floats as tab.float says: over the pane's tab (or what that one floats over) unless over names another"},
 	{PaneKill, "{id}", "{}", ""},
@@ -60,25 +60,25 @@ var MethodDocs = []MethodDoc{
 	{ConfigReload, "none", "Config",
 		"evaluates init.lua again, as a change to it or a .lua beside it does by itself: on success it replaces the settings, keymap, and actions and config.changed goes out; on failure the last good ones stay and errors says why (to config.changed too)"},
 	{ConfigCheck, "{path?}", "Config", "evaluates init.lua (or path) without applying it"},
-	{Subscribe, "{events: [\"pane.exited\", \"host.*\", \"*\"]}", "{}", "needs a connection (not from Lua, which has slime.on)"},
+	{Subscribe, "{events: [\"pane.exited\", \"host.*\", \"*\"]}", "{}", "needs a connection (not from Lua, which has squish.on)"},
 	{ClientQueue, "{workspace, name, args?: object}", "{}",
 		"sends client.action to the workspace's viewers: each window performs its action name with args (copy_to_clipboard, paste_from_clipboard, increase_font_size {amount}, decrease_font_size, reset_font_size, and for its focused pane increase_pane_font_size {amount}, decrease_pane_font_size, reset_pane_font_size); one that changes the workspace (new_split, new_tab, close_surface, next_tab, goto_split, toggle_split_zoom, resize_split, ...) is refused, as it would run once per window: its method does it once"},
 	{ClientCopyKeys, "{keys: string|null}", "{skipped: [string]}",
 		"the connection's views of every pane, now and later, look copy mode's keys up in keys (Config's copy_keys: \"key\\taction\" lines over the defaults) rather than this daemon's init.lua; null drops them. A window sends its daemon's to a host's"},
 	{DaemonStop, "{save?, build?: Build}", "{}",
-		"ends the daemon: the caller gets its reply, then every pane's program is killed and the process exits; windows see it hang up. With save, model.json is written first and kept, so the next daemon of the instance restores the workspaces under the same ids with each pane relaunched (its command, in the directory its shell last reported), and every client is told daemon.restarting (with build, the one replacing it) so it reconnects: what slime upgrade does"},
+		"ends the daemon: the caller gets its reply, then every pane's program is killed and the process exits; windows see it hang up. With save, model.json is written first and kept, so the next daemon of the instance restores the workspaces under the same ids with each pane relaunched (its command, in the directory its shell last reported), and every client is told daemon.restarting (with build, the one replacing it) so it reconnects: what squish upgrade does"},
 	{HostConnect, "{dest}", "Host", "prompts arrive as host.prompt, answered with host.answer"},
 	{HostAnswer, "{host, choice: accept|cancel|skip, answers?}", "{}", ""},
 	{HostDisconnect, "{host}", "{}", ""},
 	{HostList, "none", "{hosts: [Host]}", ""},
 	{WorkspaceOpen, "{name, attach?, beside?}", "Workspace",
-		"the workspace named name if one is open (the lowest id), else one made from init.lua's slime.workspace.define of it (CodeNotFound with neither); attach makes a connection calling it a viewer, beside names a workspace whose viewers open it (as workspace.new's attach)"},
+		"the workspace named name if one is open (the lowest id), else one made from init.lua's squish.workspace.define of it (CodeNotFound with neither); attach makes a connection calling it a viewer, beside names a workspace whose viewers open it (as workspace.new's attach)"},
 	{WorkspaceExport, "{id}", "{lua}",
-		"the workspace as a slime.workspace.define{...} call: its tabs' trees with their shares, each terminal pane's command (none for the shell) and the directory its shell last reported as cwd, browsers as urls; a running program isn't captured, so a shell comes back as a shell"},
+		"the workspace as a squish.workspace.define{...} call: its tabs' trees with their shares, each terminal pane's command (none for the shell) and the directory its shell last reported as cwd, browsers as urls; a running program isn't captured, so a shell comes back as a shell"},
 	{DaemonInfo, "none", "{pid, build: Build, started, state_dir, args?}",
 		"the daemon's process, build, state directory (model.json), and the arguments it serves with"},
 	{HostUpgrade, "{host}", "{}",
-		"runs slime upgrade on a connected host: its daemon, if of an older build than the one installed there, stops keeping its layout (daemon.stop with save) and the installed build starts and restores it, each pane relaunched; the bridges to it end and windows reconnect"},
+		"runs squish upgrade on a connected host: its daemon, if of an older build than the one installed there, stops keeping its layout (daemon.stop with save) and the installed build starts and restores it, each pane relaunched; the bridges to it end and windows reconnect"},
 }
 
 // ShapesDoc names the objects the methods and events pass.
@@ -112,11 +112,11 @@ const ShapesDoc = `A workspace id is an integer; a tab id is the string "w.t" an
                  was false when the host connected
   Config         {path, settings: object, keymap: [Binding], actions: [{name, title?, args?}],
                   workspaces?: [{name, tabs: [Layout], autostart?}], errors?: [string]}
-                 settings is slime.config's table (see slime help lua); workspaces is
-                 what slime.workspace.define set; errors is why the last evaluation
+                 settings is squish.config's table (see squish help lua); workspaces is
+                 what squish.workspace.define set; errors is why the last evaluation
                  failed, the rest then being the last good config
   Build          {id, time}: a daemon's executable: the name of the build directory it
-                 runs from (bin/<id>/slime, as slime-gui copies it and hosts install
+                 runs from (bin/<id>/squish, as squish-gui copies it and hosts install
                  it) and its mtime in unix seconds, which says which is newer
 
   Binding        {key, action?, args?, lua?, repeat?}: a chord ("ctrl+shift+d") or a

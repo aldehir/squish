@@ -94,7 +94,7 @@ type pending struct {
 	hasClipboard bool
 }
 
-// Primary and secondary device attributes, as slime answers them:
+// Primary and secondary device attributes, as squish answers them:
 // libghostty-vt's defaults (VT220, ANSI color).
 const (
 	daConformance = 62

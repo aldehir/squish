@@ -1,4 +1,4 @@
-// Package sshbridge logs in to SSH hosts for slime (Dial) and runs slime
+// Package sshbridge logs in to SSH hosts for squish (Dial) and runs squish
 // on them (Conn.StartDaemon), asking the user what logging in needs
 // through an Asker.
 package sshbridge
@@ -16,9 +16,9 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/aldehir/slime/internal/prompt"
-	"github.com/aldehir/slime/internal/remote"
-	"github.com/aldehir/slime/internal/terminfo"
+	"github.com/aldehir/squish/internal/prompt"
+	"github.com/aldehir/squish/internal/remote"
+	"github.com/aldehir/squish/internal/terminfo"
 )
 
 const defaultTerm = terminfo.Fallback
@@ -58,7 +58,7 @@ type Options struct {
 
 	// DialAgent connects to an SSH agent. Nil means no agent.
 	DialAgent func() (io.ReadWriteCloser, error)
-	// Remote holds the builds of slime to install on hosts. Nil means
+	// Remote holds the builds of squish to install on hosts. Nil means
 	// the ones beside the executable (remote.Beside).
 	Remote *remote.Manifest
 }
@@ -85,7 +85,7 @@ type Conn struct {
 	// ghosttyTerm.
 	terminfo    bool
 	ghosttyTerm bool
-	// daemonExe is where slime is on the host, once it's been found or
+	// daemonExe is where squish is on the host, once it's been found or
 	// installed there.
 	daemonExe string
 

@@ -1,4 +1,4 @@
-module github.com/aldehir/slime
+module github.com/aldehir/squish
 
 go 1.27.0
 

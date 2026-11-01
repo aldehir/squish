@@ -1,7 +1,7 @@
 # Lucide icons
 
 SVGs from [Lucide](https://lucide.dev), drawn in the chrome through
-Direct2D's SVG renderer (`Painter.Icon`). Only the icons slime uses live
+Direct2D's SVG renderer (`Painter.Icon`). Only the icons squish uses live
 here; browse the full set at https://lucide.dev/icons.
 
 Current version: **1.58.0**. Keep every icon at the same release.

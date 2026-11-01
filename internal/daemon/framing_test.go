@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // drawer is a client with one pane, reading its frames one at a time.

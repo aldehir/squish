@@ -140,7 +140,7 @@ pub const Canvas = struct {
         const region_width = sfc_width -| self.clip_left -| self.clip_right;
         const region_height = sfc_height -| self.clip_top -| self.clip_bottom;
 
-        // slime: our atlas takes tightly packed rows, so copy the trimmed
+        // squish: our atlas takes tightly packed rows, so copy the trimmed
         // region out of the surface.
         const buffer: []const u8 = @ptrCast(self.sfc.image_surface_alpha8.buf);
         const pixels = try alloc.alloc(u8, @as(usize, region_width) * region_height);

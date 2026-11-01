@@ -15,8 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aldehir/slime/internal/daemon"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/daemon"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // errScriptFailed is a script that ended with an error, already
@@ -24,7 +24,7 @@ import (
 var errScriptFailed = errors.New("script failed")
 
 // doCommand runs Lua in the daemon: a file, -e code, or stdin, with
-// key=value arguments as slime.args. The script's output comes back
+// key=value arguments as squish.args. The script's output comes back
 // here as it prints, and its return value prints at the end.
 func doCommand() *cobra.Command {
 	var (
@@ -35,11 +35,11 @@ func doCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "do <file.lua | - | action> [key=value...]",
 		Short: "Run a Lua script, or an action init.lua defined, in the daemon",
-		Long: "Runs Lua in the daemon, against its workspaces (slime help lua has the slime\n" +
+		Long: "Runs Lua in the daemon, against its workspaces (squish help lua has the squish\n" +
 			"table): a file, code given with -e, stdin as -, or an action init.lua defined\n" +
-			"(slime actions lists them), named by a bare word that isn't a file. Arguments\n" +
-			"are key=value pairs, strings in slime.args (an action's args, converted as its\n" +
-			"spec says). Inside a pane, the script runs for that pane (SLIME_PANE), so calls\n" +
+			"(squish actions lists them), named by a bare word that isn't a file. Arguments\n" +
+			"are key=value pairs, strings in squish.args (an action's args, converted as its\n" +
+			"spec says). Inside a pane, the script runs for that pane (SQUISH_PANE), so calls\n" +
 			"that take a pane, tab, or workspace id default to it. What the script prints\n" +
 			"comes here; its return value prints at the end; an error exits 1. Ctrl+C\n" +
 			"cancels it, unless it was started with --detach.",
@@ -88,17 +88,17 @@ func doCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&code, "eval", "e", "", "run this code instead of a file")
-	cmd.Flags().StringVarP(&pane, "pane", "p", "", "the pane the script runs for (default $SLIME_PANE)")
+	cmd.Flags().StringVarP(&pane, "pane", "p", "", "the pane the script runs for (default $SQUISH_PANE)")
 	cmd.Flags().BoolVar(&detach, "detach", false, "leave the script running in the daemon and print its id")
 	return cmd
 }
 
-// envPane is the pane this console runs in, if it's one of slime's, and
+// envPane is the pane this console runs in, if it's one of squish's, and
 // envWorkspace the workspace that pane is in: every pane's shell has
-// SLIME_PANE and SLIME_WORKSPACE. One that doesn't parse (a shell from
-// an older slime) counts as none.
+// SQUISH_PANE and SQUISH_WORKSPACE. One that doesn't parse (a shell from
+// an older squish) counts as none.
 func envPane() rpc.PaneID {
-	id, err := rpc.ParsePaneID(os.Getenv("SLIME_PANE"))
+	id, err := rpc.ParsePaneID(os.Getenv("SQUISH_PANE"))
 	if err != nil {
 		return rpc.PaneID{}
 	}
@@ -106,7 +106,7 @@ func envPane() rpc.PaneID {
 }
 
 func envWorkspace() uint32 {
-	id, err := strconv.ParseUint(os.Getenv("SLIME_WORKSPACE"), 10, 32)
+	id, err := strconv.ParseUint(os.Getenv("SQUISH_WORKSPACE"), 10, 32)
 	if err != nil {
 		return 0
 	}
@@ -142,7 +142,7 @@ func scriptSource(code string, args []string) (name, source string, rest []strin
 	return filepath.Base(path), string(b), rest, nil
 }
 
-// scriptArgs turns key=value arguments into the JSON object slime.args
+// scriptArgs turns key=value arguments into the JSON object squish.args
 // is made from.
 func scriptArgs(args []string) (json.RawMessage, error) {
 	if len(args) == 0 {

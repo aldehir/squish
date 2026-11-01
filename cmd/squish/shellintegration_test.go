@@ -14,8 +14,8 @@ func TestShellIntegration(t *testing.T) {
 		shell string
 		want  []string
 	}{
-		{"bash", []string{"complete -o default -F __start_slime slime", "__slime_report_pwd", `\033]7;kitty-shell-cwd://`, "PROMPT_COMMAND+=(__slime_report_pwd)"}},
-		{"zsh", []string{"#compdef slime\n(( $+functions[compdef] )) && compdef _slime slime\n", "add-zsh-hook chpwd __slime_report_pwd", `$'\e]7;kitty-shell-cwd://'`}},
+		{"bash", []string{"complete -o default -F __start_squish squish", "__squish_report_pwd", `\033]7;kitty-shell-cwd://`, "PROMPT_COMMAND+=(__squish_report_pwd)"}},
+		{"zsh", []string{"#compdef squish\n(( $+functions[compdef] )) && compdef _squish squish\n", "add-zsh-hook chpwd __squish_report_pwd", `$'\e]7;kitty-shell-cwd://'`}},
 		{"powershell", []string{"Register-ArgumentCompleter", "function global:prompt", "]9;9;"}},
 	}
 	for _, tc := range tests {

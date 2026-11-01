@@ -1,7 +1,7 @@
 package daemon
 
 import (
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // A floating tab is an ordinary tab shown over another (its host)

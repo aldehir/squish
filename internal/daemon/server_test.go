@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 var (
@@ -1030,26 +1030,26 @@ func TestPaneMove(t *testing.T) {
 // TestPaneEnv: a pane's environment names it, and carries what the
 // caller asked for.
 func TestPaneEnv(t *testing.T) {
-	t.Setenv("SLIME_INSTANCE", "envtest")
+	t.Setenv("SQUISH_INSTANCE", "envtest")
 	h := newHarness(t)
 	w := h.window()
 	first := w.newWorkspace()
 	_, created := w.split(first, Right, 5000, "")
 	env := h.spawned(1).Env
-	if env["SLIME_PANE"] != fmt.Sprint(created.Pane) || env["SLIME_WORKSPACE"] != fmt.Sprint(w.ws.ID) || env["SLIME_INSTANCE"] != "envtest" {
+	if env["SQUISH_PANE"] != fmt.Sprint(created.Pane) || env["SQUISH_WORKSPACE"] != fmt.Sprint(w.ws.ID) || env["SQUISH_INSTANCE"] != "envtest" {
 		t.Errorf("env %v", env)
 	}
 	// The daemon's own executable, and its directory first on PATH.
 	exe, _ := os.Executable()
-	if env["SLIME_EXE"] != exe || !strings.HasPrefix(env["PATH"], filepath.Dir(exe)+string(filepath.ListSeparator)) {
-		t.Errorf("SLIME_EXE %q PATH %q, want %q first", env["SLIME_EXE"], env["PATH"], exe)
+	if env["SQUISH_EXE"] != exe || !strings.HasPrefix(env["PATH"], filepath.Dir(exe)+string(filepath.ListSeparator)) {
+		t.Errorf("SQUISH_EXE %q PATH %q, want %q first", env["SQUISH_EXE"], env["PATH"], exe)
 	}
 	var made rpc.Created
 	if err := w.c.Call(rpc.TabNew, rpc.TabNewParams{Workspace: w.ws.ID, Env: map[string]string{"FOO": "bar"}}, &made); err != nil {
 		t.Fatal(err)
 	}
 	env = h.spawned(2).Env
-	if env["FOO"] != "bar" || env["SLIME_PANE"] != fmt.Sprint(made.Pane) || env["SLIME_WORKSPACE"] != fmt.Sprint(w.ws.ID) {
+	if env["FOO"] != "bar" || env["SQUISH_PANE"] != fmt.Sprint(made.Pane) || env["SQUISH_WORKSPACE"] != fmt.Sprint(w.ws.ID) {
 		t.Errorf("env %v", env)
 	}
 	// A PATH of the caller's own is kept, led by the daemon's directory.

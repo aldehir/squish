@@ -39,9 +39,9 @@ const PaneStrip = @import("ui/widgets/PaneStrip.zig");
 
 const log = std.log.scoped(.window);
 
-const class_name = std.unicode.utf8ToUtf16LeStringLiteral("slime");
+const class_name = std.unicode.utf8ToUtf16LeStringLiteral("squish");
 
-/// The icon resource in src/slime.rc.
+/// The icon resource in src/squish.rc.
 const icon_id = 1;
 
 const WM_APP_CHILD_EXITED = messages.WM_APP_CHILD_EXITED;
@@ -126,7 +126,7 @@ blank: struct {
     textures: Renderer.ImageTextures = .{},
 } = .{},
 
-/// Auto-reset event slime's readers set after handing a session a
+/// Auto-reset event squish's readers set after handing a session a
 /// frame (or program status). The message loop waits on it alongside
 /// messages and calls `outputArrived`. Not a posted message: those are
 /// retrieved before input and timers, so a steady stream of them starves
@@ -146,13 +146,13 @@ stats: Stats = .{},
 stats_shown: bool = build_options.stats,
 
 /// Create the window, showing the workspaces the last window did (or
-/// what slime has, or a new one running `command_line`, CreateProcessW
-/// syntax; empty for slime's shell). An `ssh://` URL opens that host
+/// what squish has, or a new one running `command_line`, CreateProcessW
+/// syntax; empty for squish's shell). An `ssh://` URL opens that host
 /// too, and is remembered in `hosts`. Local sessions opened later run
 /// `local_command`. `daemon` is the connection `config` and `keymap`
 /// came from, if one was made; the window owns it from here and goes
 /// on with it. `actions` are init.lua's, for the command palette, and
-/// `copy_keys` its copy mode keys, for the hosts' slimes.
+/// `copy_keys` its copy mode keys, for the hosts' squishes.
 pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Source, keymap: []const binding.Entry, actions: []const Daemon.ConfigAction, workspace_defs: []const []const u16, copy_keys: []const u8, hosts: *Hosts, shown: *Shown, command_line: []const u16, local_command: []const u16, daemon: ?*Daemon) !*Window {
     // Ours until the app has it.
     var pending = daemon;
@@ -1005,7 +1005,7 @@ fn shellClipboardSet(ctx: *anyopaque, text: []const u8) anyerror!void {
     return clipboard.set(fromCtx(ctx).hwnd.?, text);
 }
 
-/// The least time between a pane's frames to ask slime for, in
+/// The least time between a pane's frames to ask squish for, in
 /// microseconds: the display's refresh period.
 fn shellFrameInterval(ctx: *anyopaque) u32 {
     const r = &(fromCtx(ctx).renderer orelse return 0);

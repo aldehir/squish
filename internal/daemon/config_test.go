@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // newConfigHarness is newHarness with init.lua holding source.
@@ -48,13 +48,13 @@ func configGet(t *testing.T, c *Client) rpc.ConfigDesc {
 
 func TestConfigLoadsAtStart(t *testing.T) {
 	h, path := newConfigHarness(t, `
-		slime.config{ shell = { command = "pwsh -NoLogo" }, font = { size = 13 } }
-		slime.bind("ctrl+shift+d", "new_split", { direction = "right" })
-		slime.action{ name = "hello", title = "Say hello", args = { who = "string" },
+		squish.config{ shell = { command = "pwsh -NoLogo" }, font = { size = 13 } }
+		squish.bind("ctrl+shift+d", "new_split", { direction = "right" })
+		squish.action{ name = "hello", title = "Say hello", args = { who = "string" },
 			run = function(ctx, args)
 				print("hello " .. (args.who or "nobody") .. " from " .. ctx.origin)
-				local t = assert(slime.tab.new{ workspace = slime.workspace_id or 1 })
-				return { pane = t.pane, ws = slime.workspace_id }
+				local t = assert(squish.tab.new{ workspace = squish.workspace_id or 1 })
+				return { pane = t.pane, ws = squish.workspace_id }
 			end }
 	`)
 	c := h.connect()
@@ -118,8 +118,8 @@ func mustJSON(v any) string {
 
 func TestConfigReloadAndCheck(t *testing.T) {
 	h, path := newConfigHarness(t, `
-		slime.config{ shell = { command = "one" } }
-		slime.action{ name = "which", run = function() return "one" end }
+		squish.config{ shell = { command = "one" } }
+		squish.action{ name = "which", run = function() return "one" end }
 	`)
 	c := h.connect()
 	sub := h.connect()
@@ -129,7 +129,7 @@ func TestConfigReloadAndCheck(t *testing.T) {
 
 	// A broken file: the reply and config.changed carry the error, and
 	// the old config stays.
-	if err := os.WriteFile(path, []byte("slime.config{ shell = { command = \"two\" } }\nerror(\"nope\")"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("squish.config{ shell = { command = \"two\" } }\nerror(\"nope\")"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var d rpc.ConfigDesc
@@ -153,9 +153,9 @@ func TestConfigReloadAndCheck(t *testing.T) {
 	}
 
 	// A good file replaces it, and the errors clear.
-	good := `slime.config{ shell = { command = "two" } }
-		slime.action{ name = "which", run = function() return "two" end }
-		slime.bind("ctrl+a", function() end)`
+	good := `squish.config{ shell = { command = "two" } }
+		squish.action{ name = "which", run = function() return "two" end }
+		squish.bind("ctrl+a", function() end)`
 	if err := os.WriteFile(path, []byte(good), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestConfigReloadAndCheck(t *testing.T) {
 
 	// check evaluates another file without keeping it.
 	other := filepath.Join(filepath.Dir(path), "other.lua")
-	os.WriteFile(other, []byte(`slime.config{ shell = { command = "three" } } slime.action{ name = "x", run = print }`), 0o600)
+	os.WriteFile(other, []byte(`squish.config{ shell = { command = "three" } } squish.action{ name = "x", run = print }`), 0o600)
 	d = rpc.ConfigDesc{}
 	if err := c.Call(rpc.ConfigCheck, rpc.ConfigCheckParams{Path: other}, &d); err != nil {
 		t.Fatal(err)
@@ -212,17 +212,17 @@ func invoke(t *testing.T, c *Client, p rpc.ActionInvokeParams) ([]rpc.ScriptOutp
 
 func TestScriptInvokesAction(t *testing.T) {
 	h, _ := newConfigHarness(t, `
-		slime.action{ name = "where", args = { n = "number" }, run = function(ctx, args)
+		squish.action{ name = "where", args = { n = "number" }, run = function(ctx, args)
 			print("in action", ctx.origin, ctx.pane_id)
-			return { pane = slime.pane_id, n = args.n * 2 }
+			return { pane = squish.pane_id, n = args.n * 2 }
 		end }
 	`)
 	w := h.window()
 	pane := w.newWorkspace()
 	c := h.connect()
 	out, done := runScript(t, c, rpc.ScriptRunParams{Pane: pane, Source: `
-		local r = assert(slime.invoke("where", { n = "21" }))
-		local _, err, code = slime.invoke("nope")
+		local r = assert(squish.invoke("where", { n = "21" }))
+		local _, err, code = squish.invoke("nope")
 		return { r = r, code = code, err = err }
 	`})
 	if !done.OK {
@@ -252,7 +252,7 @@ func TestScriptInvokesAction(t *testing.T) {
 }
 
 func TestConfigCancelOnHangup(t *testing.T) {
-	h, _ := newConfigHarness(t, `slime.action{ name = "loop", run = function() while true do end end }`)
+	h, _ := newConfigHarness(t, `squish.action{ name = "loop", run = function() while true do end end }`)
 	other := h.connect()
 	c := h.connect()
 	var started rpc.ScriptRunResult
@@ -281,7 +281,7 @@ func TestConfigCancelOnHangup(t *testing.T) {
 // reloaded by itself once the files hold still, config.changed and all;
 // a broken file reports its errors and keeps the config.
 func TestConfigWatch(t *testing.T) {
-	h, path := newConfigHarness(t, `slime.config{ shell = { command = "one" } }`)
+	h, path := newConfigHarness(t, `squish.config{ shell = { command = "one" } }`)
 	stop := make(chan struct{})
 	t.Cleanup(func() { close(stop) })
 	h.srv.watchConfig(10*time.Millisecond, stop)
@@ -294,7 +294,7 @@ func TestConfigWatch(t *testing.T) {
 	if err := os.WriteFile(mod, []byte(`return "two"`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`slime.config{ shell = { command = require("mod") } }`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`squish.config{ shell = { command = require("mod") } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var changed rpc.ConfigDesc

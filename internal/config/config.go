@@ -1,7 +1,7 @@
 // Package config evaluates init.lua, the daemon's configuration: one
 // Lua state (internal/lua) that lives as long as the Config does, in
-// which slime.config sets the settings clients read, slime.bind the key
-// bindings, and slime.action the actions, each a function the file
+// which squish.config sets the settings clients read, squish.bind the key
+// bindings, and squish.action the actions, each a function the file
 // leaves in the state for the daemon to call again (Run) whenever a
 // window, the CLI, or a script invokes it.
 //
@@ -26,15 +26,15 @@ import (
 
 	glua "github.com/yuin/gopher-lua"
 
-	"github.com/aldehir/slime/internal/lua"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/lua"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
-// Path is the config file: SLIME_CONFIG, else init.lua in %APPDATA%\slime
-// on Windows and in $XDG_CONFIG_HOME/slime (~/.config/slime) elsewhere.
+// Path is the config file: SQUISH_CONFIG, else init.lua in %APPDATA%\squish
+// on Windows and in $XDG_CONFIG_HOME/squish (~/.config/squish) elsewhere.
 // Empty if none of those is set.
 func Path() string {
-	if p := os.Getenv("SLIME_CONFIG"); p != "" {
+	if p := os.Getenv("SQUISH_CONFIG"); p != "" {
 		return p
 	}
 	var base string
@@ -48,7 +48,7 @@ func Path() string {
 	if base == "" {
 		return ""
 	}
-	return filepath.Join(base, "slime", "init.lua")
+	return filepath.Join(base, "squish", "init.lua")
 }
 
 // Host is the daemon a config runs in: the control plane and the log.
@@ -58,7 +58,7 @@ type Host interface {
 }
 
 // Output takes what an evaluation or an invocation prints: print to
-// stdout, slime.log to stderr.
+// stdout, squish.log to stderr.
 type Output = lua.Output
 
 // Timeout bounds an evaluation: a file that never returns fails.
@@ -91,12 +91,12 @@ type Config struct {
 	// known by on the wire) and actions run (by name) alive.
 	funcs    *glua.LTable
 	nextFunc uint32
-	// workspaces is what slime.workspace.define set, in order.
+	// workspaces is what squish.workspace.define set, in order.
 	workspaces []rpc.WorkspaceDef
 	desc       rpc.ConfigDesc
 }
 
-// action is one slime.action: its spec as given, and run.
+// action is one squish.action: its spec as given, and run.
 type action struct {
 	desc rpc.ActionDesc
 	spec *glua.LTable
@@ -143,7 +143,7 @@ func Load(host Host, path string, out Output) (*Config, []string) {
 // freed.
 func (c *Config) Close() { c.r.Close() }
 
-// Deliver gives the config's hooks an event (slime.on). It never
+// Deliver gives the config's hooks an event (squish.on). It never
 // blocks: the daemon calls it under its lock.
 func (c *Config) Deliver(name string, params json.RawMessage) { c.r.Deliver(name, params) }
 
@@ -175,11 +175,11 @@ func (c *Config) describe() {
 	c.desc = d
 }
 
-// Workspaces is what slime.workspace.define set, in order: the
+// Workspaces is what squish.workspace.define set, in order: the
 // workspaces workspace.open makes by name, and autostart opens.
 func (c *Config) Workspaces() []rpc.WorkspaceDef { return c.workspaces }
 
-// CopyModePrefix marks a binding as copy mode's: slime.bind("copy-mode:v",
+// CopyModePrefix marks a binding as copy mode's: squish.bind("copy-mode:v",
 // "begin_selection"). The key after it is the character the key types,
 // a name (escape, enter, up, pageup, ...), or "ctrl+" with one; the
 // action is one of copy mode's (internal/vt/copymode.zig), or a
@@ -212,7 +212,7 @@ func (c *Config) Shell() string {
 
 // Upgrade is settings.daemon.upgrade: "ask" (the default), a window
 // shows that a newer build can replace this daemon and asks before it
-// does; "never", it doesn't offer (slime upgrade still can).
+// does; "never", it doesn't offer (squish upgrade still can).
 func (c *Config) Upgrade() string {
 	if d, ok := c.settings.RawGetString("daemon").(*glua.LTable); ok {
 		if s, ok := d.RawGetString("upgrade").(glua.LString); ok && s != "" {
@@ -245,7 +245,7 @@ type Invocation struct {
 // Run invokes an action or a bound function and returns what it
 // returned, with its output going to out. Invocations are tasks of
 // the config's run: one runs Lua at a time, and one that blocks
-// (slime.sleep, wait, exec) lets the others run meanwhile. The error
+// (squish.sleep, wait, exec) lets the others run meanwhile. The error
 // is an *rpc.Error for an invocation that can't start, or the Lua
 // error that ended it, or lua.ErrCancelled.
 func (c *Config) Run(ctx context.Context, inv Invocation, out Output) (json.RawMessage, error) {
@@ -379,7 +379,7 @@ func (c *Config) Output(stream lua.Stream, text string) {
 
 func (c *Config) Log(text string) { c.host.Log(text) }
 
-// Invoke is slime.invoke from the file's own functions: the action runs
+// Invoke is squish.invoke from the file's own functions: the action runs
 // here and now, nested in the one running, for the same pane.
 func (c *Config) Invoke(name string, args json.RawMessage) (json.RawMessage, error) {
 	inv := Invocation{Name: name, Args: args, Origin: OriginScript}
@@ -390,7 +390,7 @@ func (c *Config) Invoke(name string, args json.RawMessage) (json.RawMessage, err
 	return c.r.CallNested(fn, c.ctxTable(c.r.IDs(), inv.Origin), argsT)
 }
 
-// install adds the file's functions to the slime table, and makes
+// install adds the file's functions to the squish table, and makes
 // require, dofile, and loadfile find files beside it.
 func (c *Config) install() {
 	L := c.r.L
@@ -425,7 +425,7 @@ func (c *Config) install() {
 	c.r.DefineIn("workspace", "define", c.luaWorkspaceDefine)
 }
 
-// luaWorkspaceDefine is slime.workspace.define{name, tabs, autostart}:
+// luaWorkspaceDefine is squish.workspace.define{name, tabs, autostart}:
 // a workspace by name, for workspace.open and autostart, replacing one
 // of the same name. tabs are layouts as workspace.new takes them.
 func (c *Config) luaWorkspaceDefine(L *glua.LState) int {
@@ -475,11 +475,11 @@ func (c *Config) resolve(name string) string {
 // functions that shape the config are for then.
 func (c *Config) topLevel(L *glua.LState, what string) {
 	if !c.loading {
-		L.RaiseError("slime.%s is for init.lua's top level, not an action", what)
+		L.RaiseError("squish.%s is for init.lua's top level, not an action", what)
 	}
 }
 
-// luaConfig is slime.config{...}: the settings, merged over what's
+// luaConfig is squish.config{...}: the settings, merged over what's
 // been set (a table merges into a table it replaces, key by key; a
 // list replaces).
 func (c *Config) luaConfig(L *glua.LState) int {
@@ -505,7 +505,7 @@ func merge(dst, src *glua.LTable) {
 	})
 }
 
-// luaBind is slime.bind(key, action[, args]) or slime.bind(key, fn): a
+// luaBind is squish.bind(key, action[, args]) or squish.bind(key, fn): a
 // later bind of the same key replaces the earlier. A "repeat:" prefix
 // on the key makes the binding repeatable.
 func (c *Config) luaBind(L *glua.LState) int {
@@ -536,7 +536,7 @@ func (c *Config) luaBind(L *glua.LState) int {
 	return 0
 }
 
-// luaUnbind is slime.unbind(key): the key does nothing, even if the
+// luaUnbind is squish.unbind(key): the key does nothing, even if the
 // window binds it by default.
 func (c *Config) luaUnbind(L *glua.LState) int {
 	c.topLevel(L, "unbind")
@@ -596,7 +596,7 @@ func lowerUnlessChar(s string) string {
 	return strings.ToLower(s)
 }
 
-// luaAction is slime.action{name, title, args, run}: an action by
+// luaAction is squish.action{name, title, args, run}: an action by
 // name, replacing one of the same name.
 func (c *Config) luaAction(L *glua.LState) int {
 	c.topLevel(L, "action")

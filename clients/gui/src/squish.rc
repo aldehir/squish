@@ -1,5 +1,5 @@
-// Resources linked into slime-gui.exe. build.zig renders slime.ico from
+// Resources linked into squish-gui.exe. build.zig renders squish.ico from
 // assets/icon and passes its directory as an include path.
 
 // Explorer shows the first icon group; Window.zig loads it by this ID.
-1 ICON "slime.ico"
+1 ICON "squish.ico"

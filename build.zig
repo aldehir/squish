@@ -15,8 +15,8 @@ const webview2_version = "1.0.4258.31";
 const webview2_sha256 = "56f7f4b8bf9aee4b8efefbbdd4f67d5f74ebd1b100ed0806da71bf76af481aa9";
 const webview2_dir = "tools/webview2-" ++ webview2_version;
 
-/// Everything beside the exe: the daemon (slime.exe) with its ConPTY and
-/// its Linux builds for SSH hosts, and the window (slime-gui.exe), built
+/// Everything beside the exe: the daemon (squish.exe) with its ConPTY and
+/// its Linux builds for SSH hosts, and the window (squish-gui.exe), built
 /// as a path dependency (clients/gui) and installed beside it.
 pub fn build(b: *std.Build) void {
     // Building libghostty-vt's C++ dependencies against MSVC needs the
@@ -49,13 +49,13 @@ pub fn build(b: *std.Build) void {
     });
     // A dependency installs into a prefix of its own under .zig-cache, so
     // the window is installed here, into ours.
-    const gui_exe = gui.artifact("slime-gui");
+    const gui_exe = gui.artifact("squish-gui");
     b.installArtifact(gui_exe);
     b.step("icons", "Render the app icon PNGs into zig-out/icons").dependOn(&gui.builder.top_level_steps.get("icons").?.step);
 
     installConpty(b);
     installWebView2(b);
-    const remote = b.option(bool, "remote", "Build slime and its builds for SSH hosts (need Go; default: if Go is found)");
+    const remote = b.option(bool, "remote", "Build squish and its builds for SSH hosts (need Go; default: if Go is found)");
     if (remote orelse true) installGoHelpers(b, remote != null);
 
     const run_cmd = b.addRunArtifact(gui_exe);
@@ -68,8 +68,8 @@ pub fn build(b: *std.Build) void {
     terminfoSteps(b, test_step);
 }
 
-/// The xterm-ghostty terminfo source slime embeds, generated from
-/// ghostty's own definition. It's checked in so slime builds with Go
+/// The xterm-ghostty terminfo source squish embeds, generated from
+/// ghostty's own definition. It's checked in so squish builds with Go
 /// alone; `zig build terminfo` regenerates it, and the tests fail when it
 /// no longer matches the submodule.
 fn terminfoSteps(b: *std.Build, test_step: *std.Build.Step) void {
@@ -101,28 +101,28 @@ fn terminfoSteps(b: *std.Build, test_step: *std.Build.Step) void {
     test_step.dependOn(&check.step);
 }
 
-/// The daemon, next to the exe: slime.exe, which runs every session
-/// and connects to SSH hosts, with slime for Linux in `remote/` for it
+/// The daemon, next to the exe: squish.exe, which runs every session
+/// and connects to SSH hosts, with squish for Linux in `remote/` for it
 /// to install on them. Go caches its own builds, so this runs `go build`
 /// every time rather than tracking the sources. Without Go it warns and
 /// leaves them out, unless `-Dremote=true` asked for them.
 fn installGoHelpers(b: *std.Build, required: bool) void {
     const go = b.findProgram(.{ .names = &.{"go"} }) orelse {
         if (required) {
-            b.getInstallStep().dependOn(&b.addFail("go not found; -Dremote=true needs it to build slime").step);
+            b.getInstallStep().dependOn(&b.addFail("go not found; -Dremote=true needs it to build squish").step);
             return;
         }
-        std.log.warn("go not found; building without slime (slime-gui will have nothing to run sessions in)", .{});
+        std.log.warn("go not found; building without squish (squish-gui will have nothing to run sessions in)", .{});
         return;
     };
-    // slime links libghostty-vt with cgo (internal/vt), as a static
+    // squish links libghostty-vt with cgo (internal/vt), as a static
     // library for each target from a nested build of the submodule, which
-    // tracks its own sources. internal/vt/slime.zig is compiled in for
-    // slime's own exports. scripts/build-vt-lib.ps1 does the same.
+    // tracks its own sources. internal/vt/squish.zig is compiled in for
+    // squish's own exports. scripts/build-vt-lib.ps1 does the same.
     const copy = b.addUpdateSourceFiles();
     // go build hashes cgo's flags, not the library's bytes: a Go file
     // with the libraries' hash goes beside them (build/libstamp.zig),
-    // so a change to slime.zig alone still relinks slime.
+    // so a change to squish.zig alone still relinks squish.
     const stamp_tool = b.addExecutable(.{
         .name = "libstamp",
         .root_module = b.createModule(.{
@@ -139,7 +139,7 @@ fn installGoHelpers(b: *std.Build, required: bool) void {
     }) |t| {
         const lib = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "-Demit-lib-vt", b.fmt("-Dtarget={s}", .{t.zig}), "-Doptimize=ReleaseFast" });
         // The nested build runs in ghostty/, so the path must be absolute.
-        lib.addFileArg2(b.path("internal/vt/slime.zig"), .{ .prefix = "-Dvt-extra=", .make_absolute = true });
+        lib.addFileArg2(b.path("internal/vt/squish.zig"), .{ .prefix = "-Dvt-extra=", .make_absolute = true });
         lib.addArg("--prefix");
         const prefix = lib.addOutputDirectoryArg(b.fmt("vt-{s}", .{t.zig}));
         lib.setCwd(b.path("ghostty"));
@@ -151,17 +151,17 @@ fn installGoHelpers(b: *std.Build, required: bool) void {
         stamp.addFileArg(built);
     }
     copy.addCopyFileToSource(stamp_out, "internal/vt/zz_libstamp.go");
-    goBuild(b, go, "slime").step.dependOn(&copy.step);
+    goBuild(b, go, "squish").step.dependOn(&copy.step);
     installRemote(b, go, &copy.step);
 }
 
-/// The systems slime is built for to install on SSH hosts, with the
+/// The systems squish is built for to install on SSH hosts, with the
 /// `zig cc` target cgo compiles for each.
 const remote_targets = [_]struct { os: []const u8, arch: []const u8, zig: []const u8 }{
     .{ .os = "linux", .arch = "amd64", .zig = "x86_64-linux-musl" },
 };
 
-/// slime for each of `remote_targets`, as files in `remote/` next to the
+/// squish for each of `remote_targets`, as files in `remote/` next to the
 /// exe (internal/remote): `go build` for the target, then build/pack.zig
 /// gzips them and writes the manifest. Linked fully static against musl,
 /// so it runs whatever the host's libc, and stripped by the C linker
@@ -179,8 +179,8 @@ fn installRemote(b: *std.Build, go: []const u8, libs: *std.Build.Step) void {
     const dir = pack.addOutputDirectoryArg("remote");
     for (remote_targets) |t| {
         const run = b.addSystemCommand(&.{ go, "build", "-trimpath", "-ldflags=-s -w -linkmode external -extldflags '-static -s'", "-o" });
-        const exe = run.addOutputFileArg(b.fmt("slime-{s}-{s}", .{ t.os, t.arch }));
-        run.addArg("./cmd/slime");
+        const exe = run.addOutputFileArg(b.fmt("squish-{s}-{s}", .{ t.os, t.arch }));
+        run.addArg("./cmd/squish");
         run.setCwd(b.path("."));
         run.setEnvironmentVariable("GOOS", t.os);
         run.setEnvironmentVariable("GOARCH", t.arch);
@@ -206,7 +206,7 @@ fn goBuild(b: *std.Build, go: []const u8, comptime name: []const u8) *std.Build.
     run.setCwd(b.path("."));
     run.setEnvironmentVariable("GOOS", "windows");
     run.setEnvironmentVariable("GOARCH", "amd64");
-    // slime needs cgo for libghostty-vt, compiled by our Zig rather than
+    // squish needs cgo for libghostty-vt, compiled by our Zig rather than
     // whatever C compiler is on PATH.
     run.setEnvironmentVariable("CGO_ENABLED", "1");
     run.setEnvironmentVariable("CC", b.fmt("\"{s}\" cc -target x86_64-windows-gnu", .{b.graph.zig_exe}));
@@ -215,7 +215,7 @@ fn goBuild(b: *std.Build, go: []const u8, comptime name: []const u8) *std.Build.
     return run;
 }
 
-/// slime's ConPTY, next to it.
+/// squish's ConPTY, next to it.
 fn installConpty(b: *std.Build) void {
     const dll = b.addInstallBinFile(b.path(conpty_dir ++ "/conpty.dll"), "conpty.dll");
     const host = b.addInstallBinFile(b.path(conpty_dir ++ "/OpenConsole.exe"), "x64/OpenConsole.exe");

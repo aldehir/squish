@@ -5,7 +5,7 @@ package daemon
 import (
 	"io"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // Hosts are connected from Windows only: the daemon here is the one on
@@ -26,7 +26,7 @@ func (s *Server) restoreHostsLocked([]ModelHost) {}
 
 func (s *Server) hostClientGoneLocked(*conn) {}
 
-const noHosts = "this slime connects to no hosts (not Windows)"
+const noHosts = "this squish connects to no hosts (not Windows)"
 
 func noHostsError() error { return rpc.Errorf(rpc.CodeUnsupported, "%s", noHosts) }
 

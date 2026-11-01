@@ -1,6 +1,6 @@
-# Build libghostty-vt as static libraries for slime, which links them
+# Build libghostty-vt as static libraries for squish, which links them
 # with cgo (internal/vt), one per target, into internal\vt\lib.
-# internal\vt\slime.zig is compiled in for slime's own exports.
+# internal\vt\squish.zig is compiled in for squish's own exports.
 # Dot-source setup-msvc.ps1 first so the project Zig is on PATH.
 #
 #   .\scripts\build-vt-lib.ps1 [-Optimize ReleaseFast|ReleaseSmall]
@@ -15,8 +15,8 @@ $targets = @(
     @{ Zig = 'x86_64-windows-gnu'; Go = 'windows_amd64'; Lib = 'ghostty-vt-static.lib' }
     @{ Zig = 'x86_64-linux-musl'; Go = 'linux_amd64'; Lib = 'libghostty-vt.a' }
 )
-# slime's own exports, compiled in next to the C API.
-$extra = Join-Path $root 'internal\vt\slime.zig'
+# squish's own exports, compiled in next to the C API.
+$extra = Join-Path $root 'internal\vt\squish.zig'
 $libs = @()
 Push-Location (Join-Path $root 'ghostty')
 try {

@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // workspace is a named, ordered set of tabs, shown by any number of
@@ -728,50 +728,50 @@ func (s *Server) addPaneLocked(t *tab, st *started) pane {
 	return p
 }
 
-// EnvDoc is `slime help env`: the variables every pane's environment
+// EnvDoc is `squish help env`: the variables every pane's environment
 // carries, which paneEnv sets.
-const EnvDoc = `Every pane slime starts has these in its environment, so the CLI and
+const EnvDoc = `Every pane squish starts has these in its environment, so the CLI and
 scripts run in it act on it by default:
 
-  SLIME_PANE       the pane's id (w.t.p), which names its tab and workspace
-                   too. Pane commands without a pane act on it; slime do
-                   runs for it. It keeps finding the pane after a move.
-  SLIME_WORKSPACE  the pane's workspace (w): slime tab new adds to it,
-                   slime ws new opens the new workspace in its windows, and
-                   a slime-gui started from the pane shows it alone.
-  SLIME_EXE        the daemon's own executable, and its directory leads
-                   PATH, so "slime" is the build the daemon runs. Use it
-                   rather than another slime on the machine: the two
-                   speak the same protocol. A shell without it isn't in a
-                   slime pane.
-  SLIME_INSTANCE   set only under a daemon of its own (one started with it
-                   set), so that the CLI reaches that daemon and not the
-                   user's. A slime-gui started with it logs to
-                   %LOCALAPPDATA%\slime\slime-gui-<instance>.log, not
-                   slime-gui.log, as the daemon it starts logs to
-                   slime-<instance>.log.
+  SQUISH_PANE       the pane's id (w.t.p), which names its tab and workspace
+                    too. Pane commands without a pane act on it; squish do
+                    runs for it. It keeps finding the pane after a move.
+  SQUISH_WORKSPACE  the pane's workspace (w): squish tab new adds to it,
+                    squish ws new opens the new workspace in its windows, and
+                    a squish-gui started from the pane shows it alone.
+  SQUISH_EXE        the daemon's own executable, and its directory leads
+                    PATH, so "squish" is the build the daemon runs. Use it
+                    rather than another squish on the machine: the two
+                    speak the same protocol. A shell without it isn't in a
+                    squish pane.
+  SQUISH_INSTANCE   set only under a daemon of its own (one started with it
+                    set), so that the CLI reaches that daemon and not the
+                    user's. A squish-gui started with it logs to
+                    %LOCALAPPDATA%\squish\squish-gui-<instance>.log, not
+                    squish-gui.log, as the daemon it starts logs to
+                    squish-<instance>.log.
 
 The variables are set when the pane starts; a shell keeps them if the
 pane moves, and the ids stay valid.`
 
 // paneEnv is what every pane's environment says about itself: the pane
 // it is (which names its tab and workspace), the workspace again for
-// a window started from it, and the daemon it belongs to: SLIME_INSTANCE
-// when the daemon is one, and SLIME_EXE, whose directory leads PATH so
-// that `slime` in the pane is the daemon's own build. The CLI and scripts
+// a window started from it, and the daemon it belongs to: SQUISH_INSTANCE
+// when the daemon is one, and SQUISH_EXE, whose directory leads PATH so
+// that `squish` in the pane is the daemon's own build. The CLI and scripts
 // run in it act on them by default.
 func paneEnv(id PaneID, spec *rpc.PaneSpec) map[string]string {
 	env := make(map[string]string, len(spec.Env)+5)
 	for k, v := range spec.Env {
 		env[k] = v
 	}
-	env["SLIME_PANE"] = id.String()
-	env["SLIME_WORKSPACE"] = strconv.FormatUint(uint64(id.WS), 10)
-	if inst := os.Getenv("SLIME_INSTANCE"); inst != "" {
-		env["SLIME_INSTANCE"] = inst
+	env["SQUISH_PANE"] = id.String()
+	env["SQUISH_WORKSPACE"] = strconv.FormatUint(uint64(id.WS), 10)
+	if inst := os.Getenv("SQUISH_INSTANCE"); inst != "" {
+		env["SQUISH_INSTANCE"] = inst
 	}
 	if exe := exePath(); exe != "" {
-		env["SLIME_EXE"] = exe
+		env["SQUISH_EXE"] = exe
 		key, base := pathVar(spec.Env)
 		env[key] = leadPath(filepath.Dir(exe), base)
 	}

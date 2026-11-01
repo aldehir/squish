@@ -16,7 +16,7 @@ pub const none: Id = .{ .target = .none };
 
 /// The model object a widget is about. Workspaces, tabs, and panes are
 /// keyed by numbers the window hands out, not the daemon's ids: each
-/// slime (the local one, and each host's) numbers its own, so those
+/// squish (the local one, and each host's) numbers its own, so those
 /// repeat across connections in one window.
 pub const Target = union(enum) {
     none,

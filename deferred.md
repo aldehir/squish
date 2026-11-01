@@ -11,7 +11,7 @@ the terminal, from a tree of widgets (`clients/gui/src/ui/`) that
 list has two layouts behind the title bar's toggle: a sidebar, which is
 done, and tabs, which isn't. The sidebar is a tree: each tab's row folds
 open to a row per pane, with what its programs report doing (OSC 7501,
-`clients/gui/src/ProgramStatus.zig`), which slime keeps while no window
+`clients/gui/src/ProgramStatus.zig`), which squish keeps while no window
 is attached.
 
 - **Tabs in the title bar.** The toggle only hides the sidebar; the
@@ -65,7 +65,7 @@ is attached.
   switching between a light/dark theme pair waits on following the
   system's mode live (see Configuration).
 - **Remembering the layout** (sidebar or tabs) and the sidebar width.
-  Folding a tab's panes isn't remembered either, nor kept by slime.
+  Folding a tab's panes isn't remembered either, nor kept by squish.
 - **Pane rows have no close button**; a pane closes from its terminal.
 - **Program status shows only its state.** A report's message, title,
   progress, and kind (what a blocked program needs) aren't shown, say in
@@ -78,7 +78,7 @@ is attached.
   (a float, or the tab under one) goes along its edge or beside a pane,
   never in a pane's place: a swap across tabs would move two panes.
   Floats don't float over floats (floating a host moves its floats onto the
-  new one), a tab of a session not run in slime can't float (no daemon
+  new one), a tab of a session not run in squish can't float (no daemon
   tab to keep it), and a float stays in its workspace. The shown tab's
   browser pages stay live under floats (the renderer draws floats into
   a chain over them), but a float's page under another float is hidden
@@ -100,7 +100,7 @@ than being piecemealed with MessageBox and the like.
   commands: unbracketed text with a newline, or any paste containing the
   bracketed-paste terminator `ESC [201~`. We paste without asking. The
   control-byte stripping in `encodePaste` still applies.
-- **Select all** in a pane's context menu: slime has no event for it.
+- **Select all** in a pane's context menu: squish has no event for it.
 - **A field's context menu** (cut, copy, paste) on the host field and a
   workspace's name being edited; a right click there does nothing.
 - **Scrollbar.**
@@ -118,14 +118,14 @@ than being piecemealed with MessageBox and the like.
   general (OSC 8 hyperlinks, regex links, ctrl+click to open).
 - **Ctrl+triple-click selects a command's output.** Needs shell
   integration (OSC 133).
-- **Kitty paste events** (mode 5522). slime encodes pastes itself
+- **Kitty paste events** (mode 5522). squish encodes pastes itself
   rather than going through libghostty-vt's `handler.paste`, so programs
   that ask for paste events get plain pastes.
-- **Large pastes** go to slime as one event, so one over 8 MiB (the
-  protocol's largest message) is dropped. slime writes them to the pty
+- **Large pastes** go to squish as one event, so one over 8 MiB (the
+  protocol's largest message) is dropped. squish writes them to the pty
   outside the pane's lock, but its connection reader waits until the
   child reads them.
-- **OSC 52 reads** aren't answered. The terminal is in slime, which
+- **OSC 52 reads** aren't answered. The terminal is in squish, which
   would have to ask the window for the clipboard and wait for it inside
   the program's write.
 
@@ -159,7 +159,7 @@ than being piecemealed with MessageBox and the like.
 
 ## Kitty graphics
 
-slime's terminals keep the images (PNGs decoded by Go's `image/png`,
+squish's terminals keep the images (PNGs decoded by Go's `image/png`,
 Ghostty's default storage limit of 320 MB a screen). Each image a frame
 places goes to the window once, deflated, in pieces (wire.go's `Image`),
 and every frame carries the placements in the viewport (`frame.zig`'s
@@ -169,15 +169,15 @@ cell and Unicode placeholders (`U=1`, `U+10EEEE` cells) are drawn.
 
 - **Relative placements** (`P=`/`Q=`). Ghostty's `renderer/image.zig`
   has the placement walk to port; `ImageSender.gather` skips them.
-- **Animation.** Nothing calls `ImageStorage.animationTick` in slime,
+- **Animation.** Nothing calls `ImageStorage.animationTick` in squish,
   so animated images stay on one frame. Advancing one changes the
   image's generation, which resends it whole.
 - **File and temp-file media.** `image_limits` is left at `.direct`.
   Shared memory is POSIX `shm_open`; Windows would need its own scheme.
-- **`image-storage-limit`** config; slime's is fixed.
+- **`image-storage-limit`** config; squish's is fixed.
 - **Device loss.** Image pixels are freed after upload, so recreating
-  textures would need slime to send them again, which nothing asks.
-- **A placement's pixel size comes from slime**, from the cell size
+  textures would need squish to send them again, which nothing asks.
+- **A placement's pixel size comes from squish**, from the cell size
   the window last sent, so a font size change draws images at the old
   size until the resize comes back.
 - **Images inflate on the connection's reader thread**, which holds
@@ -204,7 +204,7 @@ cell and Unicode placeholders (`U=1`, `U+10EEEE` cells) are drawn.
   Latin-1 letters, kitty gets the uppercase code. Unchecked: only the US
   layout was installed.
 - **Event meaning across versions.** A host's daemon encodes the keys
-  for its panes, and a newer `slime connect` attaches to an older daemon
+  for its panes, and a newer `squish connect` attaches to an older daemon
   still running there (one socket per user). The wire `Version` only
   guards the layout, so a change to what an event's fields mean needs a
   bump too: the GUI sending ctrl keys' plain character (0.3.7) gives
@@ -212,18 +212,18 @@ cell and Unicode placeholders (`U=1`, `U+10EEEE` cells) are drawn.
 
 ## SSH
 
-`command = ssh://[user@]host[:port]` (or `slime-gui ssh://...`) opens a
-host: the local slime logs in (internal/sshbridge), puts its Linux
-build of slime there from `remote/` beside the exe, and bridges the
+`command = ssh://[user@]host[:port]` (or `squish-gui ssh://...`) opens a
+host: the local squish logs in (internal/sshbridge), puts its Linux
+build of squish there from `remote/` beside the exe, and bridges the
 window to it. The connection is the daemon's: every window shares it,
 and it stays when the last window closes, so the next one finds the
-host connected without logging in. `slime host connect|ls|disconnect`
+host connected without logging in. `squish host connect|ls|disconnect`
 drive it from a console.
 
 The sidebar lists every host connected to before (`hosts` in the config
 directory), and any the daemon is connecting (from a console, or another
 window), each a section like Local: once the daemon has the host
-connected, every window bridges to the host's slime to list its
+connected, every window bridges to the host's squish to list its
 workspaces, each a row that shows, hides, renames, and kills as a local
 one does, with the ones the last window showed there attached
 (`workspaces` keeps a list per host). A host's header button connects
@@ -269,7 +269,7 @@ one.
   (`CertificateFile`) and `HostKeyAlias` are ignored.
 - **Agent forwarding, port forwarding, SFTP.** Only the `ssh -D`
   piece exists: while a host is connected the daemon runs a SOCKS5
-  proxy over its connection, on loopback with no auth (`slime host ls`
+  proxy over its connection, on loopback with no auth (`squish host ls`
   shows it; `curl --proxy socks5h://127.0.0.1:<port> http://intranet/`
   reaches what the host reaches, names resolved there; `host.proxy =
   false` turns it off). A reconnect asks for the same port, remembered
@@ -282,7 +282,7 @@ one.
 
 ## Persistent workspaces
 
-Every session runs in slime (cmd/slime), a daemon that holds each
+Every session runs in squish (cmd/squish), a daemon that holds each
 pane's ConPTY and terminal, arranged in tabs (each a layout tree) and
 workspaces. The window draws what it sends: frames of each pane's screen
 (internal/vt/frame.zig), with scrollback, selection, and copying
@@ -297,22 +297,22 @@ each under a title strip whose buttons split it or zoom it. Dragging the
 gap between panes resizes them, and dragging a corner where gaps meet
 resizes both ways; dragging a pane by its strip moves it beside another,
 along a side of the tab, or into another's place.
-`slime tab new`, `split`, and the rest change a workspace from scripts,
-attached or not. If slime can't be started, a tab says why.
+`squish tab new`, `split`, and the rest change a workspace from scripts,
+attached or not. If squish can't be started, a tab says why.
 
 On SSH hosts it's the same daemon, built for Linux on x86-64 and
-carried in `remote/` beside the exe. The local slime installs it as
-`~/.cache/slime/bin/<build>/slime` and splices a second connection from
-each window to `slime connect` there (its socket is
-`/tmp/slime-<uid>/sock`), which lists the host's workspaces as the
+carried in `remote/` beside the exe. The local squish installs it as
+`~/.cache/squish/bin/<build>/squish` and splices a second connection from
+each window to `squish connect` there (its socket is
+`/tmp/squish-<uid>/sock`), which lists the host's workspaces as the
 first lists the local ones. While a user waits for a pane there, a
 session stands in for the host's panes, where logging in asks what it
-needs. Where slime can't run (another OS, no gzip, a full disk),
+needs. Where squish can't run (another OS, no gzip, a full disk),
 connecting fails and the stand-in says why; ssh.exe in a local tab
 still reaches the host. A dropped connection leaves its panes saying
 so; the host's button reconnects, reattaches, and replaces them.
 
-- **A daemon that goes** (a crash, or `slime upgrade` replacing it)
+- **A daemon that goes** (a crash, or `squish upgrade` replacing it)
   comes back from `model.json`: the same workspaces, tabs, and ids,
   each pane relaunched with its command in the directory its shell
   last reported. The programs that ran in them are gone; the pane's
@@ -324,26 +324,26 @@ so; the host's button reconnects, reattaches, and replaces them.
   built and parked on branch `pane-holders` as not worth its cost.
 - **Frames pace to the display the window started on**, when built with
   `-Dmax-fps=0` (the default caps at 300 fps regardless of display). The
-  refresh period goes to slime when connecting, not when the window moves
+  refresh period goes to squish when connecting, not when the window moves
   to another display.
 - **A frame that fails to apply** (out of memory, or a bad one) leaves
   the pane wrong until the next full frame, which nothing asks for.
 - **A new tab doesn't start in the focused pane's directory**; a split
   does (`pane.split` reads the pane's reported pwd), but `tab.new` names
   no pane to take it from, and the window doesn't pass one. **The bell**
-  comes from slime but does nothing.
-- **The pwd hook is manual** (`slime shell-integration`, one line in
-  the rc file); slime doesn't inject it as Ghostty does with `ENV` and
+  comes from squish but does nothing.
+- **The pwd hook is manual** (`squish shell-integration`, one line in
+  the rc file); squish doesn't inject it as Ghostty does with `ENV` and
   `ZDOTDIR`. Bash reports only at the prompt, so a `cd` in a script that
   doesn't return to one goes unseen; PowerShell's hook wraps `prompt`, so
   a profile that redefines it afterwards (oh-my-posh, starship) drops it
-  unless the slime line comes last.
+  unless the squish line comes last.
 - **Link detection** (OSC 8 hyperlinks, regex links, ctrl+click) would
-  run in slime over the terminal it holds, marked in frames as search's
+  run in squish over the terminal it holds, marked in frames as search's
   matches are (`internal/vt/search.zig`, frame row highlights).
 
 - **A pane can't be dragged to another tab**, or out into a tab of its
-  own, in the window: `pane.move` (`slime pane move`) does it in slime,
+  own, in the window: `pane.move` (`squish pane move`) does it in squish,
   but the drag has no drop target for it.
 - **Pane keys unzoom.** Moving focus or resizing from the keyboard while
   a pane is zoomed shows every pane again; there's no Ghostty
@@ -355,23 +355,23 @@ so; the host's button reconnects, reattaches, and replaces them.
 - **A pane's font size lives in the window** (`Session.font_delta`,
   points on the window's): another window on the workspace draws the
   pane at its own size, and reattaching forgets it. Keeping it in
-  slime would need a pane property and its RPC, and viewers at
+  squish would need a pane property and its RPC, and viewers at
   different DPIs may want different points anyway.
 - **Splits don't inherit a pane's font size.** A new pane starts at the
   window's: `split` arrives later through `workspace.changed`, and
   nothing ties the new pane to the one split.
 - **No keyboard default for a pane's font size**: ctrl+alt+plus/minus
   is AltGr+plus/minus on many layouts, which types. ctrl+shift+wheel,
-  the palette, and `slime.bind` reach it.
+  the palette, and `squish.bind` reach it.
 - **Wheel bindings take whole chords from programs**: with the defaults,
   ctrl+wheel and ctrl+shift+wheel never reach the program under the
   pointer (a TUI that zooms on them) until init.lua unbinds them. A
   wheel can't be part of a key sequence.
 - **A zoomed pane's pty takes the whole tab's size** while it's zoomed,
   so the others reflow when it's unzoomed.
-- **`SLIME_WORKSPACE` names a local workspace only.** On a host the
+- **`SQUISH_WORKSPACE` names a local workspace only.** On a host the
   window lists what the last one showed there, or everything.
-- **`SLIME_WORKSPACE` is in every pane's shell**, so a `slime-gui`
+- **`SQUISH_WORKSPACE` is in every pane's shell**, so a `squish-gui`
   started from a pane shows that pane's workspace alone, as the
   variable has always meant, rather than what the last window showed.
 - **A new workspace is named `default`**, as the daemon names one made
@@ -389,21 +389,21 @@ so; the host's button reconnects, reattaches, and replaces them.
   the daemon drops a workspace with no tabs once no window views it, so
   one emptied by closing its tabs lives only while shown.
 
-- **New panes take slime's environment**, from whichever slime-gui started
-  it, not the window's (`SLIME_PANE`, `SLIME_WORKSPACE`, `SLIME_EXE`,
-  `SLIME_INSTANCE`, and the daemon's directory leading `PATH` added, and
+- **New panes take squish's environment**, from whichever squish-gui started
+  it, not the window's (`SQUISH_PANE`, `SQUISH_WORKSPACE`, `SQUISH_EXE`,
+  `SQUISH_INSTANCE`, and the daemon's directory leading `PATH` added, and
   whatever `env` a `tab.new` or `pane.split` carries; the window sends
-  none). A shell profile that resets `PATH` loses `slime`; `SLIME_EXE`
+  none). A shell profile that resets `PATH` loses `squish`; `SQUISH_EXE`
   still names it.
-- **Only Linux hosts on x86-64.** Others get a tab saying slime can't
-  run there: slime would need libghostty-vt built for them with Zig,
+- **Only Linux hosts on x86-64.** Others get a tab saying squish can't
+  run there: squish would need libghostty-vt built for them with Zig,
   and `remote/` carries none.
-- **Nothing shows while a host's slime starts.** The stand-in is blank
+- **Nothing shows while a host's squish starts.** The stand-in is blank
   between logging in and the panes coming, which on a first install
   includes sending about 3 MiB.
 - **Old builds go at the next daemon start**, locally
-  (`%LOCALAPPDATA%\slime\bin\<build>\`) and on hosts
-  (`~/.cache/slime/bin/<build>/`), all but the daemon's own; one a
+  (`%LOCALAPPDATA%\squish\bin\<build>\`) and on hosts
+  (`~/.cache/squish/bin/<build>/`), all but the daemon's own; one a
   daemon of another instance still runs from survives on Windows (in
   use) and is removed under it on Unix, where that's harmless.
 
@@ -413,7 +413,7 @@ so; the host's button reconnects, reattaches, and replaces them.
 - **A host's panes take the environment of the SSH session that started
   its daemon**, so `SSH_CONNECTION` and the like go stale once that
   connection's gone.
-- **Login notices** (banners, "Permanently added") go to slime's log,
+- **Login notices** (banners, "Permanently added") go to squish's log,
   there being no terminal yet to print them in.
 - **Nothing reconnects by itself** when a host's connection drops. The
   daemon has the destination and could retry and reopen the bridges.
@@ -452,7 +452,7 @@ matches and a pill with the count.
 
 ## Copy mode
 
-tmux's copy mode with its vi keys runs in slime
+tmux's copy mode with its vi keys runs in squish
 (`internal/vt/copymode.zig`): ctrl+shift+m (the `copy_mode` action)
 puts the focused pane in it. As tmux's, it shows a snapshot: a terminal
 of its own with a clone of the screen and its scrollback, which frames
@@ -463,9 +463,9 @@ prompt that searches once on Enter, from the cursor, with tmux's smart
 case and wrapping, and `n N * #` go on. The frame carries copy mode's
 cursor and a flag the strip shows as a `COPY` tag, and its matches as
 the search's. init.lua rebinds its keys with
-`slime.bind("copy-mode:v", "begin-selection")`, tmux's names working.
+`squish.bind("copy-mode:v", "begin-selection")`, tmux's names working.
 A host's panes take the window's keys: the window sends its daemon's
-table to each host's slime (`client.copy_keys`, again on every reload),
+table to each host's squish (`client.copy_keys`, again on every reload),
 which looks that connection's keys up in it over the host's init.lua.
 
 - **Regex search.** tmux treats a needle with `^$*+()?[].\` as a POSIX
@@ -489,12 +489,12 @@ which looks that connection's keys up in it over the host's init.lua.
   and the mouse still uses `selection-word-chars`.
 - **A drag's end copies and leaves** in tmux (`MouseDragEnd1Pane`); here
   it leaves the selection for the keys to go on with.
-- **Function bindings** (`slime.bind("copy-mode:x", fn)`) aren't taken:
+- **Function bindings** (`squish.bind("copy-mode:x", fn)`) aren't taken:
   the table is the daemon's terminal code, not the config's state.
 
 ## Browser panes
 
-A pane is a terminal or a browser (`slime pane split --browser <url>`, or
+A pane is a terminal or a browser (`squish pane split --browser <url>`, or
 Open browser in a pane's context menu: a blank one split off its right,
 its URL bar ready to type in).
 The daemon keeps a browser's url and title; the window fills the pane
@@ -506,10 +506,10 @@ selects it all, and a click in it then places the caret; Enter sends
 the strip drags the pane. A pane keeps its page zoom (Ctrl+wheel,
 Ctrl+plus and minus) across reloads, navigations, and its browser closed
 while hidden, for every site it goes to, not per site as browsers keep
-it; Ctrl+0 in the page puts it back to 100% (not slime's font reset),
+it; Ctrl+0 in the page puts it back to 100% (not squish's font reset),
 and the window going loses it. The mouse is forwarded to the page (a right
-click opens the page's own menu, not slime's; the strip and row open
-slime's), its keys go to it but for the app's bindings,
+click opens the page's own menu, not squish's; the strip and row open
+squish's), its keys go to it but for the app's bindings,
 and a pane without a browser (no runtime, or one that failed) shows its
 title and url and why (`.plans/browser-pane-plan.md`). The URL bar shows
 the site's favicon (a globe without one), a dragged pane's picture has
@@ -517,7 +517,7 @@ the page in it (`CapturePreview` at drag start), and a page opening a
 window on a click (`target=_blank`, `window.open`) splits its pane with
 a browser pane to the right, or navigates in place where the pane can't
 be split; one its script opens by itself (a timer, on load) opens
-nothing. A window that follows a url slime sent shows where the page
+nothing. A window that follows a url squish sent shows where the page
 lands but reports only the title, so two windows on a site that bounces
 to a fresh url each load don't send each other round.
 A browser hidden (tab switched away, another pane zoomed) longer than
@@ -533,7 +533,7 @@ other way (replaced, its pane gone), denies that request alone
 
 A browser pane in a host's workspace browses the host's network: its
 WebView2 environment is the host's
-(`%LOCALAPPDATA%\slime\webview\host-<hash of dest>`, cookies apart from
+(`%LOCALAPPDATA%\squish\webview\host-<hash of dest>`, cookies apart from
 local's and kept per destination), started with `--proxy-server=` the daemon's SOCKS proxy
 plus `--host-resolver-rules="MAP * ~NOTFOUND , EXCLUDE 127.0.0.1"`,
 `--proxy-bypass-list="<-loopback>"`, and
@@ -604,29 +604,29 @@ browser…" until the next one starts by itself.
 
 ## Scripting
 
-`slime do` runs Lua in the daemon (internal/lua, gopher-lua): the
-`slime` table calls any method of the control plane in process, with
+`squish do` runs Lua in the daemon (internal/lua, gopher-lua): the
+`squish` table calls any method of the control plane in process, with
 the pane, tab, and workspace the script runs for filled into the ids
 it leaves out. `init.lua` (internal/config) is a state of its own that
-lives as long as the daemon: `slime.config` sets the settings, `slime.bind`
-the keys, and `slime.action` the actions that `slime do <name>`, bound
-keys, and `slime.invoke` run (`action.invoke`, which runs as a script).
-Scripts and `init.lua` see the daemon's events (`slime.on`, `slime.wait`),
-sleep and set timers, run programs (`slime.exec`), and ask the windows on
-their workspace to act (`slime.client.queue`): each hook or timer call is
+lives as long as the daemon: `squish.config` sets the settings, `squish.bind`
+the keys, and `squish.action` the actions that `squish do <name>`, bound
+keys, and `squish.invoke` run (`action.invoke`, which runs as a script).
+Scripts and `init.lua` see the daemon's events (`squish.on`, `squish.wait`),
+sleep and set timers, run programs (`squish.exec`), and ask the windows on
+their workspace to act (`squish.client.queue`): each hook or timer call is
 a task on a goroutine with a thread of the state, and a baton lets one
 run Lua at a time, so a blocking call lets the others run.
 
 - **An event nobody waits for yet is dropped**: a script that causes an
-  event and then calls `slime.wait` could miss one that came in between,
+  event and then calls `squish.wait` could miss one that came in between,
   if the cause were as quick as a few Lua instructions. Keeping recent
   events for a late `wait` would need a rule for how recent.
-- **`slime.wait` filters are tables of equal fields** only; a function
+- **`squish.wait` filters are tables of equal fields** only; a function
   filter would need to run under the baton in the dispatcher.
 - **A run ending kills the processes it started**, and a running process
-  doesn't keep a run alive: `slime.exec.start` then returning kills it.
+  doesn't keep a run alive: `squish.exec.start` then returning kills it.
   A `detach` option could leave it running.
-- **`slime.exec` kills the process alone**, not what it started (a
+- **`squish.exec` kills the process alone**, not what it started (a
   killed `cmd.exe`'s `ping` runs on, holding the pipes for up to a
   second).
 - **`pane.clipboard`** (OSC 52 writes) isn't an event; viewers get the
@@ -637,7 +637,7 @@ run Lua at a time, so a blocking call lets the others run.
   for the pane named) and takes the window-local ones: clipboard and
   font size, the window's and its focused pane's. Sending one to a single viewer (the one that last sent
   input, say) would need the daemon to track that.
-- **Hooks in `init.lua` can't fall back to a window**: `slime.on` runs
+- **Hooks in `init.lua` can't fall back to a window**: `squish.on` runs
   in the daemon; there's no `client.on`.
 
 - **`ctx.client_id`** isn't filled in: connections have no ids, so an
@@ -649,37 +649,37 @@ run Lua at a time, so a blocking call lets the others run.
 - **Bound keys can't fall through** to the program: a function binding
   or an action binding always consumes its key, since the key has left
   the window by the time Lua runs.
-- **A failed `init.lua` is reported in the log and by `slime config
+- **A failed `init.lua` is reported in the log and by `squish config
   show`** only; a window started under one shows the defaults with no
   banner (see Needs app chrome).
 - **Lists come back as objects when empty**: an action returning
-  `slime.workspace.list{}.workspaces` with no workspaces prints `{}`.
+  `squish.workspace.list{}.workspaces` with no workspaces prints `{}`.
 
-- **No `io` library.** `print` is a script's stdout and `slime.log` its
+- **No `io` library.** `print` is a script's stdout and `squish.log` its
   stderr, one `script.output` each; there's no `io.write`, `io.read`,
   or file access beyond `dofile` and `require`.
-- **`pcall` catches `slime.stop`**, which ends a run by raising a
+- **`pcall` catches `squish.stop`**, which ends a run by raising a
   sentinel error, so a script that wraps it in `pcall` runs on.
 - **Empty Lua tables are JSON objects**, so a method that takes a list
   can't be given an empty one; `tabs = {}` fails where no tabs would.
-- **`slime.layout.pane{name}`** is passed through and ignored: panes
+- **`squish.layout.pane{name}`** is passed through and ignored: panes
   have no name.
 - **A script's `workspace.new` needs tabs.** With none, the workspace
-  would have no viewer to keep it; `slime.tab.new` can't add to it
+  would have no viewer to keep it; `squish.tab.new` can't add to it
   first.
 
 ## Configuration
 
-The daemon's `init.lua` (`slime config path`) is the configuration:
-`slime.config{...}` is one table the daemon hands every window
+The daemon's `init.lua` (`squish config path`) is the configuration:
+`squish.config{...}` is one table the daemon hands every window
 (`config.get`), which `Config.zig` maps onto its fields (fonts, colors,
 themes, padding, word characters, clipboard, ssh); the daemon keeps
 `shell.command`. Themes stay Ghostty theme files, looked up beside
-`init.lua`, then among the bundled ones (embedded in slime-gui.exe,
-`embedThemes` in its build.zig). `slime.bind` lays bindings over
+`init.lua`, then among the bundled ones (embedded in squish-gui.exe,
+`embedThemes` in its build.zig). `squish.bind` lays bindings over
 `binding.zig`'s defaults. The daemon evaluates the file again when it
 or a `.lua` beside it changes (`internal/daemon/watch.go` polls once a
-second) and on `slime config reload`; `config.changed` carries the
+second) and on `squish config reload`; `config.changed` carries the
 result to every window, which takes up the keys and builds its config
 again (`Window.applyConfig`: theme, chrome scale, a new `Grid` when the
 font changed, every session's colors), and shows what's wrong with it
@@ -687,12 +687,12 @@ in a strip under the title bar (`App.setNotice`): a file that failed to
 load, with the last good config kept, or settings it couldn't take.
 
 - **The notice shows first lines only**, four at most, and nothing of a
-  Lua error's trace; `slime config show` has the daemon's in full. It's
+  Lua error's trace; `squish config show` has the daemon's in full. It's
   dismissed by its button alone (no key), and isn't an element of the
   keyboard's.
 - **The window's own warnings** (unknown keys, bad values) go only to
   the notice and the window's stderr: the daemon doesn't know the
-  settings' schema, so `slime config show` and `check` can't list them.
+  settings' schema, so `squish config show` and `check` can't list them.
 - **Settings sessions read at their start** don't change for the ones
   running: `ssh.terminfo` (the TERM a host was logged in to with), and
   a pane's `browser.idle` timer already armed.
@@ -716,7 +716,7 @@ load, with the last good config kept, or settings it couldn't take.
   binding's prefix is kept, such a key does go on, as tmux's does).
 - **Repeat time** is 500 ms (`App.repeat_ms`), tmux's default, with no
   setting for it.
-- **Unbinding by prefix** (`slime.unbind("ctrl+b>*")`), and `ctx` for a
+- **Unbinding by prefix** (`squish.unbind("ctrl+b>*")`), and `ctx` for a
   function bound to a sequence doesn't say which keys ran it (Rex's
   `ev.prefix`): one function per sequence for now.
 - **`chrome.layout`** (sidebar or tabs) waits on the tabs layout.

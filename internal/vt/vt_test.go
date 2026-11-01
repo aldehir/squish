@@ -139,7 +139,7 @@ func TestReplies(t *testing.T) {
 		{"size in cells", "\x1b[18t", "\x1b[8;24;80t"},
 		{"size in pixels", "\x1b[14t", "\x1b[4;480;800t"},
 		{"DECRQM", "\x1b[?25$p", "\x1b[?25;1$y"},
-		// slime's defaults (slime_vt_terminal_defaults), which a full
+		// squish's defaults (squish_vt_terminal_defaults), which a full
 		// reset keeps.
 		{"grapheme clustering", "\x1b[?2027$p", "\x1b[?2027;1$y"},
 		{"grapheme clustering after RIS", "\x1bc\x1b[?2027$p", "\x1b[?2027;1$y"},

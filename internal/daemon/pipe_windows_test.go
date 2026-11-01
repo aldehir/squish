@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // TestHelperShell is the child for TestConPTY: a shell that echoes lines.
 func TestHelperShell(t *testing.T) {
-	if os.Getenv("SLIME_HELPER_SHELL") == "" {
+	if os.Getenv("SQUISH_HELPER_SHELL") == "" {
 		t.Skip("only run as TestConPTY's child")
 	}
 	fmt.Print("ready>")
@@ -33,7 +33,7 @@ func TestHelperShell(t *testing.T) {
 }
 
 func TestConPTY(t *testing.T) {
-	name := fmt.Sprintf(`\\.\pipe\slime-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
+	name := fmt.Sprintf(`\\.\pipe\squish-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
 	l, err := Listen(name)
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +66,8 @@ func TestConPTY(t *testing.T) {
 		return &window{t: t, h: h, c: c, screens: map[PaneID]*vt.Screen{}}
 	}
 
-	os.Setenv("SLIME_HELPER_SHELL", "1")
-	defer os.Unsetenv("SLIME_HELPER_SHELL")
+	os.Setenv("SQUISH_HELPER_SHELL", "1")
+	defer os.Unsetenv("SQUISH_HELPER_SHELL")
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

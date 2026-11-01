@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/aldehir/slime/internal/prompt"
+	"github.com/aldehir/squish/internal/prompt"
 )
 
 // errSkipKey is a passphrase prompt left empty: skip the key, as ssh

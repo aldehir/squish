@@ -4,7 +4,7 @@
 
 const win32 = @import("win32/win32.zig");
 
-/// Posted from slime's reader when a session's pane ends: its child
+/// Posted from squish's reader when a session's pane ends: its child
 /// exited, or the pane was lost to us. WPARAM is the session's ID, as for
 /// the messages below.
 pub const WM_APP_CHILD_EXITED = win32.WM_APP + 0;

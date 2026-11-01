@@ -1,4 +1,4 @@
-//! A window's connection to slime (cmd/slime), the daemon that
+//! A window's connection to squish (cmd/squish), the daemon that
 //! owns local ptys so they outlive the window. The daemon keeps panes in
 //! tabs and tabs in workspaces; a window lists every workspace
 //! (`WorkspaceEvent`) and attaches the ones it shows, beside any other
@@ -8,9 +8,9 @@
 //! (internal/rpc) in Call, Reply, and Notify envelopes, which `std.json`
 //! reads and writes here.
 //!
-//! slime runs each pane's terminal; we draw what it sends: frames of
+//! squish runs each pane's terminal; we draw what it sends: frames of
 //! the pane's screen, and notices of what else it did (a new title, a
-//! clipboard write). Input goes back as events, which slime handles
+//! clipboard write). Input goes back as events, which squish handles
 //! against the terminal. One reader thread reads the connection and
 //! hands each pane's messages to its session through a `Sink`.
 //!
@@ -24,7 +24,7 @@
 //! also holds the SSH connections to hosts: the host methods on the same
 //! connection log in to one (`hostConnect`, with its prompts coming back
 //! as `HostEvent`s for the window to take) and, subscribed to, report
-//! every host's state. A host's own slime is reached through a second
+//! every host's state. A host's own squish is reached through a second
 //! connection to the local pipe that the daemon splices to it
 //! (`connectRemote`), whose reader attaches before it routes frames.
 const Daemon = @This();
@@ -46,7 +46,7 @@ const protocol_version = 1;
 const max_frame = 8 << 20;
 /// Long enough for long-path-aware installs.
 const max_path = 32 * 1024;
-const daemon_name = L("slime.exe");
+const daemon_name = L("squish.exe");
 
 /// wire.go's envelope types.
 const MsgType = enum(u8) {
@@ -84,7 +84,7 @@ write_lock: win32.SRWLOCK = .{},
 pid: u32 = 0,
 /// The daemon's build, from its hello (rpc.Build): its id (owned), and
 /// its executable's mtime in unix seconds, 0 from a daemon too old to
-/// say. A local daemon older than the slime.exe beside us can be
+/// say. A local daemon older than the squish.exe beside us can be
 /// replaced (`olderBuild`, `relaunch`).
 build_id: []const u8 = &.{},
 build_time: i64 = 0,
@@ -147,7 +147,7 @@ attached: std.AutoHashMapUnmanaged(u32, void) = .empty,
 /// `takeOpens`.
 opens: std.ArrayList(u32) = .empty,
 /// Window actions a script asked for (`client.action`, from Lua's
-/// slime.client.queue), in order. Taken by `takeClientActions`.
+/// squish.client.queue), in order. Taken by `takeClientActions`.
 client_actions: std.ArrayList(ClientAction) = .empty,
 /// Ids of our `focus` calls not yet replied to. A structure that comes
 /// meanwhile may predate them, so its focus isn't taken.
@@ -196,7 +196,7 @@ pub const FindReply = struct {
 };
 
 /// A window message posted from the reader thread when panes arrive, and
-/// when a host's slime has attached or failed to.
+/// when a host's squish has attached or failed to.
 pub const Notify = struct {
     hwnd: win32.HWND,
     msg: u32,
@@ -255,9 +255,9 @@ pub const ConfigUpdate = struct {
     /// init.lua's actions, for the command palette.
     actions: []ConfigAction,
     /// The names of init.lua's workspace definitions
-    /// (slime.workspace.define), for the palette to open.
+    /// (squish.workspace.define), for the palette to open.
     workspaces: []const []const u16,
-    /// slime.config's table, as JSON, for `Config.loadFrom`.
+    /// squish.config's table, as JSON, for `Config.loadFrom`.
     settings: []const u8,
     /// init.lua's copy mode bindings as client.copy_keys takes them,
     /// for the hosts' daemons.
@@ -277,7 +277,7 @@ pub const ConfigUpdate = struct {
     }
 };
 
-/// An action init.lua defined (slime.action), as the command palette
+/// An action init.lua defined (squish.action), as the command palette
 /// lists it: its name, for `action.invoke`, and its title, or its name
 /// where it has none. Both owned.
 pub const ConfigAction = struct {
@@ -325,7 +325,7 @@ pub const WorkspaceEvent = union(enum) {
     }
 };
 
-/// A host's slime, reached through the local daemon.
+/// A host's squish, reached through the local daemon.
 const Remote = struct {
     /// The daemon's id for the host.
     host: u32,
@@ -336,7 +336,7 @@ const Remote = struct {
     /// What the reader attaches. Its ids are owned.
     want: Wanted,
     /// The window's copy mode keys (`ConfigUpdate.copy_keys`), which
-    /// the host's slime takes for this connection's panes over its own
+    /// the host's squish takes for this connection's panes over its own
     /// init.lua's. Owned. Guarded by `write_lock`, under which they're
     /// sent, so a change can't pass the first send.
     copy_keys: []const u8,
@@ -483,7 +483,7 @@ pub const Prompt = struct {
 /// The button a prompt was answered with (rpc.Choice).
 pub const Choice = enum { cancel, accept, skip };
 
-/// Why attaching to a host's slime failed, for the window to show.
+/// Why attaching to a host's squish failed, for the window to show.
 pub const Failure = struct {
     buf: [256]u8 = undefined,
     len: usize = 0,
@@ -598,7 +598,7 @@ pub const Arrival = struct {
     /// What its programs report doing (OSC 7501), oldest update first.
     /// Owned.
     status: []StatusRecord,
-    /// A browser's page and its title, as slime last heard. Owned.
+    /// A browser's page and its title, as squish last heard. Owned.
     url: []const u16 = &.{},
     title: []const u16 = &.{},
 
@@ -610,8 +610,8 @@ pub const Arrival = struct {
     }
 };
 
-/// What fills a pane (rpc.PaneKind): a terminal slime runs, or a browser
-/// the window runs, of which slime keeps the url and title.
+/// What fills a pane (rpc.PaneKind): a terminal squish runs, or a browser
+/// the window runs, of which squish keeps the url and title.
 pub const PaneKind = enum {
     terminal,
     browser,
@@ -656,7 +656,7 @@ pub const Node = union(enum) {
     pane: PaneRef,
     split: struct { axis: Axis, children: []Child },
 
-    /// Written with each split's shares scaled to sum to the whole slime
+    /// Written with each split's shares scaled to sum to the whole squish
     /// wants: the window's trees carry pixels.
     pub fn jsonStringify(self: Node, jw: anytype) !void {
         try jw.beginObject();
@@ -962,9 +962,9 @@ pub const Json = struct {
     };
     pub const FindItem = struct { path: []const u8 = "", dir: bool = false, pos: ?[]const u32 = null, insert: []const u8 = "" };
     const WorkspaceList = struct { workspaces: []const WorkspaceDesc = &.{} };
-    /// rpc.ConfigDesc: `settings` is slime.config's table.
+    /// rpc.ConfigDesc: `settings` is squish.config's table.
     pub const Config = struct { path: []const u8 = "", settings: std.json.Value = .null, keymap: []const Binding = &.{}, actions: []const ActionDesc = &.{}, workspaces: []const WorkspaceDef = &.{}, copy_keys: []const u8 = "", errors: []const []const u8 = &.{} };
-    /// A slime.workspace.define, as config.get lists it (rpc.WorkspaceDef).
+    /// A squish.workspace.define, as config.get lists it (rpc.WorkspaceDef).
     pub const WorkspaceDef = struct { name: []const u8 = "", autostart: bool = false };
     const Binding = struct { key: []const u8, action: []const u8 = "", args: std.json.Value = .null, lua: u32 = 0, repeat: bool = false };
     /// rpc.ActionDesc, but for its args, which the palette passes none of.
@@ -1031,7 +1031,7 @@ const Pending = struct {
         while (rest.len >= 5) {
             const len = std.mem.readInt(u32, rest[1..5], .little);
             const f: Frame = .{ .type = @fromBackingInt(@intCast(rest[0])), .id = .none, .payload = rest[5..][0..len] };
-            deliver(sink, f) catch |err| log.warn("bad message {d} from slime: {}", .{ rest[0], err });
+            deliver(sink, f) catch |err| log.warn("bad message {d} from squish: {}", .{ rest[0], err });
             rest = rest[5 + len ..];
         }
         if (self.next_url) |u| sink.url(sink.ctx, u);
@@ -1155,7 +1155,7 @@ pub fn connect(alloc: Allocator, notify: Notify, frame_interval: u32, area: Area
 }
 
 /// List the daemon's workspaces (a `WorkspaceEvent.list`) and attach the
-/// ones to show: the one SLIME_WORKSPACE names, else those `want`
+/// ones to show: the one SQUISH_WORKSPACE names, else those `want`
 /// remembers if this is the daemon it remembers them from, else every
 /// one there is; with none, a new one with a tab running `command`.
 /// Panes' frames come at most every `frame_interval` µs. The panes wait
@@ -1185,7 +1185,7 @@ fn readUpgradePolicy(self: *Daemon, buf: []u8) void {
     self.upgrade_never = upgradeNever(cfg.value.settings);
 }
 
-/// Whether the local daemon runs an older build than the slime.exe
+/// Whether the local daemon runs an older build than the squish.exe
 /// beside us, and its config doesn't say never: the window then offers
 /// to replace it.
 pub fn olderBuild(self: *const Daemon) bool {
@@ -1199,7 +1199,7 @@ pub fn buildId(self: *const Daemon) []const u8 {
     return self.build_id;
 }
 
-/// Replace the local daemon with the slime.exe beside us, keeping its
+/// Replace the local daemon with the squish.exe beside us, keeping its
 /// layout: it stops with its model saved (daemon.stop with save), the
 /// reader sees it go and starts the new build as it reconnects, and
 /// that one restores the workspaces under the same ids, each pane
@@ -1208,7 +1208,7 @@ pub fn relaunch(self: *Daemon) !void {
     _ = try self.call("daemon.stop", .{ .save = true, .build = .{ .id = "", .time = ourBuildTime() catch 0 } });
 }
 
-/// Have the local daemon run slime upgrade on host `host_id`
+/// Have the local daemon run squish upgrade on host `host_id`
 /// (host.upgrade): the host's daemon stops keeping its layout and the
 /// build installed there starts in its place; the bridge to it ends
 /// and reconnects. UI thread.
@@ -1232,7 +1232,7 @@ fn upgradeNever(settings: std.json.Value) bool {
     };
 }
 
-/// The mtime of the slime.exe beside us, in unix seconds: what the
+/// The mtime of the squish.exe beside us, in unix seconds: what the
 /// daemon reports as its build time when it runs a copy of it
 /// (CopyFileW keeps the time).
 fn ourBuildTime() !i64 {
@@ -1243,13 +1243,13 @@ fn ourBuildTime() !i64 {
     try src.put(L("\\"));
     try src.put(daemon_name);
     var attrs: win32.WIN32_FILE_ATTRIBUTE_DATA = undefined;
-    if (win32.GetFileAttributesExW(try src.z(), win32.GetFileExInfoStandard, &attrs) == 0) return win32.lastError("GetFileAttributesExW(slime.exe)");
+    if (win32.GetFileAttributesExW(try src.z(), win32.GetFileExInfoStandard, &attrs) == 0) return win32.lastError("GetFileAttributesExW(squish.exe)");
     // FILETIME counts 100 ns since 1601.
     const ft: i64 = @bitCast(@as(u64, attrs.ftLastWriteTime));
     return @divFloor(ft - 116444736000000000, 10_000_000);
 }
 
-/// Connect to the slime on host `host` (the daemon's id for it, which it
+/// Connect to the squish on host `host` (the daemon's id for it, which it
 /// has `connected`), through a second connection to the local daemon's
 /// pipe that it splices to the host's. The reader does the rest: it
 /// lists and attaches as `connect` does (`want` says what, any new
@@ -1286,7 +1286,7 @@ pub fn connectRemote(alloc: Allocator, notify: Notify, frame_interval: u32, host
 /// Say hello, subscribe to the workspaces' changes (and the hosts', on
 /// the local daemon), list the workspaces, and attach the ones to show,
 /// reading the replies in line, before the reader routes frames: the one
-/// SLIME_WORKSPACE names (local only), else those `want` remembers if
+/// SQUISH_WORKSPACE names (local only), else those `want` remembers if
 /// this is the daemon it remembers them from (none, if it remembers
 /// none and only lists), else all of them. If `want` says someone waits
 /// for a pane: with none left, a new workspace, and a tab running
@@ -1447,7 +1447,7 @@ fn remoteLoop(self: *Daemon) void {
     putU32(self.alloc, &p, r.host) catch return self.fail(error.OutOfMemory);
     putStr(self.alloc, &p, r.term) catch return self.fail(error.OutOfMemory);
     self.send(.bridge, .none, p.items) catch |err| return self.fail(err);
-    // The host's own shell: the command is for its slime to run.
+    // The host's own shell: the command is for its squish to run.
     self.attachFirst(buf, self.area, self.size, &.{}, r.want) catch |err| return self.fail(err);
     log.info("attached {d} workspace(s) on {f}", .{ self.attached.count(), std.unicode.fmtUtf16Le(self.hostLabel()) });
     self.state.store(.attached, .release);
@@ -1456,19 +1456,19 @@ fn remoteLoop(self: *Daemon) void {
     self.route(buf);
 }
 
-/// A host's slime couldn't attach: say why, which for a bridge the
+/// A host's squish couldn't attach: say why, which for a bridge the
 /// daemon refused or ended is what it said. Nobody's told if `deinit`
 /// is hanging up.
 fn fail(self: *Daemon, err: anyerror) void {
     if (self.closing.load(.acquire)) return;
     const text = switch (err) {
-        error.Refused => if (self.failure.len > 0) self.failure.text() else "slime refused to attach",
-        error.EndOfStream => if (self.lost_reason.len > 0) self.lost_reason.text() else "slime hung up",
-        error.VersionMismatch => "its slime doesn't match this slime-gui",
+        error.Refused => if (self.failure.len > 0) self.failure.text() else "squish refused to attach",
+        error.EndOfStream => if (self.lost_reason.len > 0) self.lost_reason.text() else "squish hung up",
+        error.VersionMismatch => "its squish doesn't match this squish-gui",
         error.OutOfMemory => "out of memory",
         else => @errorName(err),
     };
-    log.info("no slime on {f}: {s}", .{ std.unicode.fmtUtf16Le(self.hostLabel()), text });
+    log.info("no squish on {f}: {s}", .{ std.unicode.fmtUtf16Le(self.hostLabel()), text });
     self.failure.set(text);
     self.state.store(.failed, .release);
     _ = win32.PostMessageW(self.notify.hwnd, self.notify.msg, 0, 0);
@@ -1529,7 +1529,7 @@ pub fn takeHosts(self: *Daemon) []HostEvent {
 }
 
 /// Ask the daemon to log in to `dest` (`ssh://[user@]host[:port]`, or
-/// whatever its ssh config knows) and put slime there. Its prompts and
+/// whatever its ssh config knows) and put squish there. Its prompts and
 /// states come as `HostEvent`s; the reply, and a host already
 /// connected's state, come as a `state` event too. Returns the call's
 /// id. UI thread.
@@ -1647,7 +1647,7 @@ pub fn invokeAction(self: *Daemon, name: []const u8, args: []const u8, pane: Pan
     _ = try self.call("action.invoke", .{ .name = name, .args = RawJson{ .text = args }, .pane = pane, .origin = "key" });
 }
 
-/// Give a host's slime the window's copy mode keys again: init.lua
+/// Give a host's squish the window's copy mode keys again: init.lua
 /// changed. UI thread.
 pub fn setCopyKeys(self: *Daemon, keys: []const u8) !void {
     const owned = try self.alloc.dupe(u8, keys);
@@ -1663,7 +1663,7 @@ pub fn setCopyKeys(self: *Daemon, keys: []const u8) !void {
 }
 
 /// Send client.copy_keys with the remote's keys, under `write_lock`.
-/// The reply is dropped: an older host's slime has no such method, and
+/// The reply is dropped: an older host's squish has no such method, and
 /// keeps its own keys.
 fn sendCopyKeysLocked(self: *Daemon) !void {
     const id = self.nextId();
@@ -1794,7 +1794,7 @@ pub fn adopt(self: *Daemon, pane: PaneRef, sink: Sink) void {
         .live => {},
     }
     slot.state = .{ .live = sink };
-    if (self.lost) sink.ended(sink.ctx, "lost slime");
+    if (self.lost) sink.ended(sink.ctx, "lost squish");
 }
 
 /// Forget a pane: its session is going. Doesn't end it. UI thread.
@@ -1891,7 +1891,7 @@ pub fn paneNavigate(self: *Daemon, pane: PaneRef, url: []const u16) !void {
     _ = try self.call("pane.navigate", .{ .pane = pane, .url = text });
 }
 
-/// Tell slime where this window's browser for `pane` went, and what the
+/// Tell squish where this window's browser for `pane` went, and what the
 /// page is titled: the other windows showing it follow. UI thread.
 pub fn paneVisited(self: *Daemon, pane: PaneRef, url: []const u16, title: []const u16) !void {
     const url8 = try commandUtf8(self.alloc, url);
@@ -1903,7 +1903,7 @@ pub fn paneVisited(self: *Daemon, pane: PaneRef, url: []const u16, title: []cons
 
 /// Replace tab `tab`'s tree with `root`, which must hold the same panes:
 /// a divider was dragged. Each split's shares are scaled to sum to the
-/// whole slime wants. The tree comes back as workspace.changed. UI
+/// whole squish wants. The tree comes back as workspace.changed. UI
 /// thread.
 pub fn layout(self: *Daemon, tab: TabRef, root: Node) !void {
     _ = try self.call("tab.layout", .{ .id = tab, .tree = root });
@@ -2040,7 +2040,7 @@ fn awaitReply(self: *Daemon, buf: []u8, id: u32, comptime R: type) !Result(R) {
             continue;
         }
         if (env.@"error") |e| {
-            log.err("slime: {s} (code {d})", .{ e.message, e.code });
+            log.err("squish: {s} (code {d})", .{ e.message, e.code });
             self.failure.set(e.message);
             return error.Refused;
         }
@@ -2070,11 +2070,11 @@ fn route(self: *Daemon, buf: []u8) void {
             break;
         };
         self.handle(f) catch |err| {
-            log.warn("bad message {d} from slime: {}", .{ @backingInt(f.type), err });
+            log.warn("bad message {d} from squish: {}", .{ @backingInt(f.type), err });
         };
     }
     if (self.closing.load(.acquire)) return;
-    self.loseAll(if (self.lost_reason.len > 0) self.lost_reason.text() else "lost slime");
+    self.loseAll(if (self.lost_reason.len > 0) self.lost_reason.text() else "lost squish");
 }
 
 /// The connection ended: for a while, try to open one to the daemon in
@@ -2086,13 +2086,13 @@ fn route(self: *Daemon, buf: []u8) void {
 /// the panes are then lost as before.
 fn reconnect(self: *Daemon, buf: []u8) bool {
     const announced = self.restarting.swap(false, .acq_rel);
-    log.info("connection to slime on {f} ended{s}; reconnecting", .{ std.unicode.fmtUtf16Le(self.hostLabel()), if (announced) " for a restart" else "" });
+    log.info("connection to squish on {f} ended{s}; reconnecting", .{ std.unicode.fmtUtf16Le(self.hostLabel()), if (announced) " for a restart" else "" });
     self.tellLinks(true);
     defer self.tellLinks(false);
     // A restart announced: wait for the old daemon's pipe to go, so what
     // we open is the new one's. A local daemon is started if none comes
     // (a crash, or a restart nobody else starts the new build for),
-    // from the slime.exe beside us, and restores; a window of an older
+    // from the squish.exe beside us, and restores; a window of an older
     // build than the one announced gives that one a moment first.
     if (announced) self.waitGone();
     const ours = ourBuildTime() catch 0;
@@ -2106,7 +2106,7 @@ fn reconnect(self: *Daemon, buf: []u8) bool {
             return ok;
         } else |err| {
             if (win32.GetTickCount64() > deadline) {
-                log.info("giving up on slime: {}", .{err});
+                log.info("giving up on squish: {}", .{err});
                 return false;
             }
             win32.Sleep(200);
@@ -2180,7 +2180,7 @@ fn tryReconnect(self: *Daemon, buf: []u8, may_start: bool) !bool {
                 win32.AcquireSRWLockExclusive(&self.lock);
                 defer win32.ReleaseSRWLockExclusive(&self.lock);
                 _ = self.attached.remove(ws);
-                self.dropWorkspaceLocked(ws, "gone with slime's restart");
+                self.dropWorkspaceLocked(ws, "gone with squish's restart");
                 continue;
             },
             else => return err,
@@ -2189,7 +2189,7 @@ fn tryReconnect(self: *Daemon, buf: []u8, may_start: bool) !bool {
         _ = try self.applyWorkspace(reply.value);
         kept += 1;
     }
-    log.info("reconnected to slime (pid {d}) on {f}: {d} of {d} workspace(s) attached", .{ self.pid, std.unicode.fmtUtf16Le(self.hostLabel()), kept, ids.items.len });
+    log.info("reconnected to squish (pid {d}) on {f}: {d} of {d} workspace(s) attached", .{ self.pid, std.unicode.fmtUtf16Le(self.hostLabel()), kept, ids.items.len });
     if (self.posting.load(.acquire)) _ = win32.PostMessageW(self.notify.hwnd, self.notify.msg, 0, 0);
     return true;
 }
@@ -2214,7 +2214,7 @@ fn handle(self: *Daemon, f: Frame) !void {
             const a = arena.allocator();
             const env = try std.json.parseFromSliceLeaky(Json.Envelope, a, f.payload, json_opts);
             if (f.type == .reply) {
-                if (env.@"error") |e| log.warn("slime: {s} (code {d})", .{ e.message, e.code });
+                if (env.@"error") |e| log.warn("squish: {s} (code {d})", .{ e.message, e.code });
                 self.replied(env);
                 return;
             }
@@ -2232,7 +2232,7 @@ fn handle(self: *Daemon, f: Frame) !void {
         .@"error" => {
             var r: Reader = .{ .buf = f.payload };
             const msg = try r.readStr();
-            log.warn("slime: {s}", .{msg});
+            log.warn("squish: {s}", .{msg});
             self.lost_reason.set(msg);
         },
         else => {},
@@ -2263,7 +2263,7 @@ fn notified(self: *Daemon, a: Allocator, method: []const u8, params: std.json.Va
     switch (ev) {
         .@"daemon.restarting" => {
             const p = std.json.parseFromValueLeaky(Json.Restarting, a, params, json_opts) catch Json.Restarting{};
-            log.info("slime is stopping to be replaced by build {s}", .{p.build.id});
+            log.info("squish is stopping to be replaced by build {s}", .{p.build.id});
             self.restart_to = p.build.time;
             self.restarting.store(true, .release);
         },
@@ -2470,7 +2470,7 @@ fn replied(self: *Daemon, env: Json.Envelope) void {
     };
     if (attaching) |at| {
         if (env.@"error" == null) {
-            if (self.applyWorkspace(env.result)) |_| return else |err| log.warn("bad workspace from slime: {}", .{err});
+            if (self.applyWorkspace(env.result)) |_| return else |err| log.warn("bad workspace from squish: {}", .{err});
         }
         win32.AcquireSRWLockExclusive(&self.lock);
         defer win32.ReleaseSRWLockExclusive(&self.lock);
@@ -2493,7 +2493,7 @@ fn replied(self: *Daemon, env: Json.Envelope) void {
         } else {
             // Copied out of the envelope's arena, which goes with the frame.
             reply.value = std.json.parseFromValueLeaky(Json.FindResult, reply.arena.allocator(), env.result, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| value: {
-                log.warn("bad pane.find reply from slime: {}", .{err});
+                log.warn("bad pane.find reply from squish: {}", .{err});
                 reply.failed = true;
                 break :value .{};
             };
@@ -2731,11 +2731,11 @@ fn handshake(self: *Daemon, buf: []u8) !void {
     self.alloc.free(self.build_id);
     self.build_id = owned;
     if (version != protocol_version) {
-        log.err("slime speaks protocol {d}, we speak {d}", .{ version, protocol_version });
+        log.err("squish speaks protocol {d}, we speak {d}", .{ version, protocol_version });
         return error.VersionMismatch;
     }
     if (frame_layout != Screen.Codec.layout_id) {
-        log.err("slime's frames are laid out as {x}, ours as {x}", .{ frame_layout, Screen.Codec.layout_id });
+        log.err("squish's frames are laid out as {x}, ours as {x}", .{ frame_layout, Screen.Codec.layout_id });
         return error.VersionMismatch;
     }
 }
@@ -2781,8 +2781,8 @@ fn openPipe(start_daemon: bool) !win32.HANDLE {
     }
 }
 
-/// `\\.\pipe\slime-<user SID>`, NUL-terminated: one daemon per user.
-/// With SLIME_INSTANCE set, `-<instance>` follows, as the daemon names
+/// `\\.\pipe\squish-<user SID>`, NUL-terminated: one daemon per user.
+/// With SQUISH_INSTANCE set, `-<instance>` follows, as the daemon names
 /// it (daemon.Address).
 fn pipeName(buf: *WideBuf) ![:0]const u16 {
     var token_buf: [256]u8 align(@alignOf(win32.TOKEN_USER)) = undefined;
@@ -2790,7 +2790,7 @@ fn pipeName(buf: *WideBuf) ![:0]const u16 {
     var str: ?win32.LPWSTR = null;
     if (win32.ConvertSidToStringSidW(sid, &str) == 0) return win32.lastError("ConvertSidToStringSidW");
     defer _ = win32.LocalFree(str);
-    try buf.put(L("\\\\.\\pipe\\slime-"));
+    try buf.put(L("\\\\.\\pipe\\squish-"));
     try buf.put(std.mem.span(str.?));
     var inst: [64]u16 = undefined;
     if (instance(&inst)) |name| {
@@ -2800,18 +2800,18 @@ fn pipeName(buf: *WideBuf) ![:0]const u16 {
     return buf.z();
 }
 
-/// SLIME_INSTANCE, if it's set: a daemon of its own, for tests.
+/// SQUISH_INSTANCE, if it's set: a daemon of its own, for tests.
 pub fn instance(buf: *[64]u16) ?[]const u16 {
-    const len = win32.GetEnvironmentVariableW(L("SLIME_INSTANCE"), buf, buf.len);
+    const len = win32.GetEnvironmentVariableW(L("SQUISH_INSTANCE"), buf, buf.len);
     if (len == 0 or len >= buf.len) return null;
     return buf[0..len];
 }
 
-/// SLIME_WORKSPACE, if it's set to a workspace id: the one to attach,
+/// SQUISH_WORKSPACE, if it's set to a workspace id: the one to attach,
 /// shown or not, so a second window can join a first's. 0 otherwise.
 fn requestedWorkspace() u32 {
     var buf: [16]u16 = undefined;
-    const len = win32.GetEnvironmentVariableW(L("SLIME_WORKSPACE"), &buf, buf.len);
+    const len = win32.GetEnvironmentVariableW(L("SQUISH_WORKSPACE"), &buf, buf.len);
     if (len == 0 or len >= buf.len) return 0;
     var digits: [16]u8 = undefined;
     for (buf[0..len], digits[0..len]) |u, *d| d.* = if (u < 0x80) @intCast(u) else return 0;
@@ -2844,24 +2844,24 @@ fn checkServer(pipe: win32.HANDLE) !void {
     var theirs_buf: [256]u8 align(@alignOf(win32.TOKEN_USER)) = undefined;
     var ours_buf: [256]u8 align(@alignOf(win32.TOKEN_USER)) = undefined;
     if (win32.EqualSid(try tokenUser(process, &theirs_buf), try currentUser(&ours_buf)) == 0) {
-        log.err("slime's pipe is served by another user's process (pid {d})", .{pid});
+        log.err("squish's pipe is served by another user's process (pid {d})", .{pid});
         return error.ForeignServer;
     }
 }
 
-/// Run slime so it outlives us: detached, and out of any job we're in.
+/// Run squish so it outlives us: detached, and out of any job we're in.
 ///
-/// It runs from a copy in %LOCALAPPDATA%\slime\bin\<build>\slime.exe, the
-/// directory named for the size and time of the slime.exe next to us: a
+/// It runs from a copy in %LOCALAPPDATA%\squish\bin\<build>\squish.exe, the
+/// directory named for the size and time of the squish.exe next to us: a
 /// running exe can't be replaced, and the daemon runs as long as its
 /// sessions, so running ours in place would stop the next build from
 /// installing over it; and the copy keeps its name, so the daemon can
-/// put its directory on its panes' PATH (`slime` there is the daemon's
+/// put its directory on its panes' PATH (`squish` there is the daemon's
 /// own build). It loads
 /// the ConPTY next to us (which doesn't change between builds), and the
-/// builds of slime for hosts from `remote/` next to us. Its log
-/// goes to %LOCALAPPDATA%\slime\slime.log (slime-<instance>.log with
-/// SLIME_INSTANCE).
+/// builds of squish for hosts from `remote/` next to us. Its log
+/// goes to %LOCALAPPDATA%\squish\squish.log (squish-<instance>.log with
+/// SQUISH_INSTANCE).
 fn startDaemon() !void {
     var dir_buf: [max_path]u16 = undefined;
     const dir = try exeDir(&dir_buf);
@@ -2879,15 +2879,15 @@ fn startDaemon() !void {
         var attrs: win32.WIN32_FILE_ATTRIBUTE_DATA = undefined;
         if (win32.GetFileAttributesExW(try src.z(), win32.GetFileExInfoStandard, &attrs) == 0) {
             if (win32.GetLastError() == win32.ERROR_FILE_NOT_FOUND) return error.DaemonNotFound;
-            return win32.lastError("GetFileAttributesExW(slime.exe)");
+            return win32.lastError("GetFileAttributesExW(squish.exe)");
         }
 
         var base: WideBuf = .{};
         try base.put(appdata[0..len]);
-        try base.put(L("\\slime"));
+        try base.put(L("\\squish"));
         try makeDir(&base);
         try log_path.put(base.slice());
-        try log_path.put(L("\\slime"));
+        try log_path.put(L("\\squish"));
         var inst: [64]u16 = undefined;
         if (instance(&inst)) |name| {
             try log_path.put(L("-"));
@@ -2906,7 +2906,7 @@ fn startDaemon() !void {
         try exe.put(L("\\"));
         try exe.put(daemon_name);
         if (win32.CopyFileW(try src.z(), try exe.z(), win32.TRUE) == 0 and win32.GetLastError() != win32.ERROR_FILE_EXISTS)
-            return win32.lastError("CopyFileW(slime.exe)");
+            return win32.lastError("CopyFileW(squish.exe)");
     }
     if (exe.len == 0) try exe.put(src.slice());
 
@@ -2936,11 +2936,11 @@ fn startDaemon() !void {
         if (win32.CreateProcessW(null, @constCast(cmd_z.ptr), null, null, win32.FALSE, flags | extra, null, null, &si, &pi) != 0) {
             _ = win32.CloseHandle(pi.hThread);
             _ = win32.CloseHandle(pi.hProcess);
-            log.info("started slime (pid {d}){s}", .{ pi.dwProcessId, if (extra == 0) " inside our job" else "" });
+            log.info("started squish (pid {d}){s}", .{ pi.dwProcessId, if (extra == 0) " inside our job" else "" });
             return;
         }
     }
-    return win32.lastError("CreateProcessW(slime.exe)");
+    return win32.lastError("CreateProcessW(squish.exe)");
 }
 
 fn makeDir(path: *WideBuf) !void {

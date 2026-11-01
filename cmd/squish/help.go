@@ -9,44 +9,44 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aldehir/slime/internal/daemon"
-	"github.com/aldehir/slime/internal/lua"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/daemon"
+	"github.com/aldehir/squish/internal/lua"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // The CLI is its own manual. Each command documents itself where it's
 // defined; the topics below are written beside what they describe
 // (daemon.EnvDoc with the code that sets a pane's environment,
-// rpc.IDsDoc with the ids, lua.Doc with the slime table, rpc.MethodDocs
-// with the methods) and shown here. `slime help` prints it all in one
-// piece, for a reader or an agent to learn this build from; `slime help
+// rpc.IDsDoc with the ids, lua.Doc with the squish table, rpc.MethodDocs
+// with the methods) and shown here. `squish help` prints it all in one
+// piece, for a reader or an agent to learn this build from; `squish help
 // <command|topic>` one part.
 
-// rootDoc is what `slime` and `slime help` open with.
-const rootDoc = `slime is a daemon that owns terminals: each pane is a program on a pty
+// rootDoc is what `squish` and `squish help` open with.
+const rootDoc = `squish is a daemon that owns terminals: each pane is a program on a pty
 with its terminal state; panes sit in tabs (a layout tree), tabs in
-workspaces, and windows (slime-gui) attach workspaces and draw them, as
+workspaces, and windows (squish-gui) attach workspaces and draw them, as
 many windows on one workspace as you like. Panes outlive their windows.
 On SSH hosts the same daemon runs there, and windows draw its panes too.
 
 This command controls all of it. Everything it does is a method of the
-daemon's control plane (slime call <method> does any raw), and the same
-methods are Lua functions in scripts the daemon runs (slime do).
+daemon's control plane (squish call <method> does any raw), and the same
+methods are Lua functions in scripts the daemon runs (squish do).
 
-Ids are paths: workspace 1, tab 1.2, pane 1.2.3 (slime help ids). A
-shell in a pane has SLIME_PANE and the rest (slime help env), so pane
-commands run there act on that pane unless told another, slime tab new
-adds to its workspace, and slime do runs for it.
+Ids are paths: workspace 1, tab 1.2, pane 1.2.3 (squish help ids). A
+shell in a pane has SQUISH_PANE and the rest (squish help env), so pane
+commands run there act on that pane unless told another, squish tab new
+adds to its workspace, and squish do runs for it.
 
 Commands that make things (do, tab new, ws new, host connect) start the
-daemon if none is running; the others say "slime isn't running".
+daemon if none is running; the others say "squish isn't running".
 --json on any command prints the daemon's reply as it came.
 
-init.lua (slime config path) configures the daemon and its windows in
-Lua: settings, key bindings, and actions, which slime do runs by name
-(slime help lua, slime config).
+init.lua (squish config path) configures the daemon and its windows in
+Lua: settings, key bindings, and actions, which squish do runs by name
+(squish help lua, squish config).
 
-slime help prints the whole manual: every command and the topics env,
+squish help prints the whole manual: every command and the topics env,
 ids, lua, methods, and events.`
 
 // helpCommand replaces cobra's: without arguments it prints the manual,
@@ -72,12 +72,12 @@ func helpCommand(root *cobra.Command) *cobra.Command {
 }
 
 // topicCommands are the help topics: commands with nothing to run, which
-// cobra lists apart and `slime help <topic>` prints.
+// cobra lists apart and `squish help <topic>` prints.
 func topicCommands() []*cobra.Command {
 	return []*cobra.Command{
-		{Use: "env", Short: "The SLIME_* variables in a pane's environment", Long: daemon.EnvDoc},
+		{Use: "env", Short: "The SQUISH_* variables in a pane's environment", Long: daemon.EnvDoc},
 		{Use: "ids", Short: "How workspaces, tabs, and panes are named", Long: rpc.IDsDoc},
-		{Use: "lua", Short: "The slime table scripts get, with examples", Long: lua.Doc},
+		{Use: "lua", Short: "The squish table scripts get, with examples", Long: lua.Doc},
 		{Use: "methods", Short: "Every method of the control plane, its params, result, and error codes", Long: methodsDoc()},
 		{Use: "events", Short: "Every notification the daemon sends", Long: eventsDoc()},
 	}
@@ -86,7 +86,7 @@ func topicCommands() []*cobra.Command {
 // printManual writes the whole manual: the overview, every runnable
 // command depth first with its flags, then the topics.
 func printManual(root *cobra.Command, w io.Writer) error {
-	fmt.Fprintf(w, "SLIME\n\n%s\n\nGlobal flags:\n%s\n", rootDoc, root.PersistentFlags().FlagUsages())
+	fmt.Fprintf(w, "SQUISH\n\n%s\n\nGlobal flags:\n%s\n", rootDoc, root.PersistentFlags().FlagUsages())
 	fmt.Fprintf(w, "COMMANDS\n\n")
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
@@ -146,7 +146,7 @@ func indent(s string) string {
 func methodsDoc() string {
 	var b strings.Builder
 	b.WriteString("Params and results are JSON objects; the Lua tables mirror them field for\n" +
-		"field. ? marks an optional field. slime call <method> '<params>' calls any.\n\n")
+		"field. ? marks an optional field. squish call <method> '<params>' calls any.\n\n")
 	width := 0
 	for _, m := range rpc.MethodDocs {
 		width = max(width, len(m.Name))
@@ -172,8 +172,8 @@ func eventsDoc() string {
 	var b strings.Builder
 	b.WriteString("A window gets its workspaces' events without subscribing; a script's owner\n" +
 		"gets script.* for its scripts; anyone else subscribes (the subscribe method,\n" +
-		"on a connection of its own). Scripts and init.lua hook them with slime.on\n" +
-		"and slime.wait (slime help lua).\n\n")
+		"on a connection of its own). Scripts and init.lua hook them with squish.on\n" +
+		"and squish.wait (squish help lua).\n\n")
 	tw := tabwriter.NewWriter(&b, 0, 4, 2, ' ', 0)
 	for _, e := range rpc.EventDocs {
 		fmt.Fprintf(tw, "  %s\t%s\n", e.Name, e.Params)

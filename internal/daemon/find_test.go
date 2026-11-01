@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // findTree makes the picker's fixture: files and directories, a
@@ -27,7 +27,7 @@ func findTree(t *testing.T) string {
 		"a b/c.txt",
 		".git/HEAD",
 		"node_modules/pkg/index.js",
-		"zig-out/bin/slime.exe",
+		"zig-out/bin/squish.exe",
 	} {
 		p := filepath.Join(dir, filepath.FromSlash(f))
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

@@ -4,9 +4,9 @@ package vt
 #include <stdlib.h>
 #include <ghostty/vt.h>
 
-typedef struct SlimeView SlimeView;
+typedef struct SquishView SquishView;
 
-// slime.zig's Result.
+// squish.zig's Result.
 typedef struct {
 	const uint8_t* pty_ptr;
 	size_t pty_len;
@@ -17,35 +17,35 @@ typedef struct {
 	bool changed;
 	bool autoscroll;
 	uint8_t search_prompt;
-} SlimeResult;
+} SquishResult;
 
-extern uint64_t slime_vt_frame_layout(void);
-extern bool slime_vt_frame_text(const uint8_t* ptr, size_t len, uint8_t** out_ptr, size_t* out_len);
+extern uint64_t squish_vt_frame_layout(void);
+extern bool squish_vt_frame_text(const uint8_t* ptr, size_t len, uint8_t** out_ptr, size_t* out_len);
 
-typedef struct SlimeScreen SlimeScreen;
-extern SlimeScreen* slime_vt_screen_new(void);
-extern void slime_vt_screen_free(SlimeScreen* s);
-extern bool slime_vt_screen_apply(SlimeScreen* s, const uint8_t* ptr, size_t len);
-extern bool slime_vt_screen_text(const SlimeScreen* s, uint8_t** out_ptr, size_t* out_len);
-typedef struct SlimeSource SlimeSource;
-extern SlimeSource* slime_vt_source_new(void);
-extern void slime_vt_source_free(SlimeSource* s, GhosttyTerminal t);
-extern bool slime_vt_source_search_pending(SlimeSource* s);
-extern bool slime_vt_source_copy_keys(SlimeSource* s, const uint8_t* ptr, size_t len,
+typedef struct SquishScreen SquishScreen;
+extern SquishScreen* squish_vt_screen_new(void);
+extern void squish_vt_screen_free(SquishScreen* s);
+extern bool squish_vt_screen_apply(SquishScreen* s, const uint8_t* ptr, size_t len);
+extern bool squish_vt_screen_text(const SquishScreen* s, uint8_t** out_ptr, size_t* out_len);
+typedef struct SquishSource SquishSource;
+extern SquishSource* squish_vt_source_new(void);
+extern void squish_vt_source_free(SquishSource* s, GhosttyTerminal t);
+extern bool squish_vt_source_search_pending(SquishSource* s);
+extern bool squish_vt_source_copy_keys(SquishSource* s, const uint8_t* ptr, size_t len,
 	const uint8_t** bad_ptr, size_t* bad_len);
-extern bool slime_vt_source_copy_mode(SlimeSource* s);
-extern uint16_t slime_vt_key_code(const uint8_t* ptr, size_t len);
-extern SlimeView* slime_vt_view_new(SlimeSource* source);
-extern void slime_vt_view_free(SlimeView* v, GhosttyTerminal t);
-extern void slime_vt_view_reset(SlimeView* v, GhosttyTerminal t);
-extern bool slime_vt_view_copy_keys(SlimeView* v, const uint8_t* ptr, size_t len,
+extern bool squish_vt_source_copy_mode(SquishSource* s);
+extern uint16_t squish_vt_key_code(const uint8_t* ptr, size_t len);
+extern SquishView* squish_vt_view_new(SquishSource* source);
+extern void squish_vt_view_free(SquishView* v, GhosttyTerminal t);
+extern void squish_vt_view_reset(SquishView* v, GhosttyTerminal t);
+extern bool squish_vt_view_copy_keys(SquishView* v, const uint8_t* ptr, size_t len,
 	const uint8_t** bad_ptr, size_t* bad_len);
-extern uint8_t slime_vt_view_hold(SlimeView* v, GhosttyTerminal t);
-extern void slime_vt_end_sync(GhosttyTerminal t);
-extern bool slime_vt_view_frame(SlimeView* v, GhosttyTerminal t, bool full,
+extern uint8_t squish_vt_view_hold(SquishView* v, GhosttyTerminal t);
+extern void squish_vt_end_sync(GhosttyTerminal t);
+extern bool squish_vt_view_frame(SquishView* v, GhosttyTerminal t, bool full,
 	const uint8_t** out_ptr, size_t* out_len);
 
-// slime.zig's Image.
+// squish.zig's Image.
 typedef struct {
 	uint32_t id;
 	uint64_t generation;
@@ -53,12 +53,12 @@ typedef struct {
 	uint32_t height;
 	const uint8_t* ptr;
 	size_t len;
-} SlimeImage;
+} SquishImage;
 
-extern uint8_t slime_vt_view_image(SlimeView* v, GhosttyTerminal t, size_t i, SlimeImage* out);
-extern bool slime_vt_view_event(SlimeView* v, GhosttyTerminal t, bool win32_input,
-	const uint8_t* ptr, size_t len, SlimeResult* result);
-extern bool slime_vt_view_autoscroll(SlimeView* v, GhosttyTerminal t, SlimeResult* result);
+extern uint8_t squish_vt_view_image(SquishView* v, GhosttyTerminal t, size_t i, SquishImage* out);
+extern bool squish_vt_view_event(SquishView* v, GhosttyTerminal t, bool win32_input,
+	const uint8_t* ptr, size_t len, SquishResult* result);
+extern bool squish_vt_view_autoscroll(SquishView* v, GhosttyTerminal t, SquishResult* result);
 */
 import "C"
 
@@ -72,7 +72,7 @@ import (
 // FrameLayout identifies the frame encoding (frame.zig) and the cell
 // and style layouts it copies. A client decodes frames only from a daemon
 // whose FrameLayout matches its own.
-func FrameLayout() uint64 { return uint64(C.slime_vt_frame_layout()) }
+func FrameLayout() uint64 { return uint64(C.squish_vt_frame_layout()) }
 
 // FrameText decodes a frame and returns the text of the rows it carries,
 // a line each, trailing blanks trimmed: for tests and debugging.
@@ -82,13 +82,13 @@ func FrameText(frame []byte) (string, error) {
 	}
 	var ptr *C.uint8_t
 	var n C.size_t
-	if !C.slime_vt_frame_text((*C.uint8_t)(unsafe.Pointer(&frame[0])), C.size_t(len(frame)), &ptr, &n) {
+	if !C.squish_vt_frame_text((*C.uint8_t)(unsafe.Pointer(&frame[0])), C.size_t(len(frame)), &ptr, &n) {
 		return "", errors.New("vt: bad frame")
 	}
 	return takeText(ptr, n), nil
 }
 
-// takeText copies out a text buffer slime.zig allocated with malloc and
+// takeText copies out a text buffer squish.zig allocated with malloc and
 // frees it; nil is empty.
 func takeText(ptr *C.uint8_t, n C.size_t) string {
 	if ptr == nil {
@@ -100,10 +100,10 @@ func takeText(ptr *C.uint8_t, n C.size_t) string {
 
 // Screen is a pane as a client mirrors it from its frames, the viewport
 // only: for tests and debugging. It isn't safe for concurrent use.
-type Screen struct{ s *C.SlimeScreen }
+type Screen struct{ s *C.SquishScreen }
 
 func NewScreen() (*Screen, error) {
-	s := C.slime_vt_screen_new()
+	s := C.squish_vt_screen_new()
 	if s == nil {
 		return nil, errors.New("vt: out of memory")
 	}
@@ -112,7 +112,7 @@ func NewScreen() (*Screen, error) {
 
 func (s *Screen) Close() {
 	if s.s != nil {
-		C.slime_vt_screen_free(s.s)
+		C.squish_vt_screen_free(s.s)
 		s.s = nil
 	}
 }
@@ -123,7 +123,7 @@ func (s *Screen) Apply(frame []byte) error {
 	if len(frame) == 0 {
 		return errors.New("vt: empty frame")
 	}
-	if !C.slime_vt_screen_apply(s.s, (*C.uint8_t)(unsafe.Pointer(&frame[0])), C.size_t(len(frame))) {
+	if !C.squish_vt_screen_apply(s.s, (*C.uint8_t)(unsafe.Pointer(&frame[0])), C.size_t(len(frame))) {
 		return errors.New("vt: bad frame")
 	}
 	return nil
@@ -134,7 +134,7 @@ func (s *Screen) Apply(frame []byte) error {
 func (s *Screen) Text() (string, error) {
 	var ptr *C.uint8_t
 	var n C.size_t
-	if !C.slime_vt_screen_text(s.s, &ptr, &n) {
+	if !C.squish_vt_screen_text(s.s, &ptr, &n) {
 		return "", errors.New("vt: formatting the screen")
 	}
 	return strings.TrimRight(takeText(ptr, n), "\n"), nil
@@ -150,11 +150,11 @@ const AutoscrollInterval = 15 * time.Millisecond
 // the terminal's dirty flags and could serve one View alone). One per
 // terminal; it isn't safe for concurrent use, and outlives its Views.
 type Source struct {
-	s *C.SlimeSource
+	s *C.SquishSource
 }
 
 func NewSource() (*Source, error) {
-	s := C.slime_vt_source_new()
+	s := C.squish_vt_source_new()
 	if s == nil {
 		return nil, errors.New("vt: out of memory")
 	}
@@ -171,7 +171,7 @@ func (s *Source) Close(t *Terminal) {
 		if t != nil {
 			term = t.term
 		}
-		C.slime_vt_source_free(s.s, term)
+		C.squish_vt_source_free(s.s, term)
 		s.s = nil
 	}
 }
@@ -179,7 +179,7 @@ func (s *Source) Close(t *Terminal) {
 // SearchPending reports whether a search is still working through the
 // history: another frame should follow for its count.
 func (s *Source) SearchPending() bool {
-	return bool(C.slime_vt_source_search_pending(s.s))
+	return bool(C.squish_vt_source_search_pending(s.s))
 }
 
 // SetCopyKeys sets copy mode's keys: the defaults with the lines of
@@ -194,7 +194,7 @@ func (s *Source) SetCopyKeys(table string) (bad string, err error) {
 	}
 	var badPtr *C.uint8_t
 	var badLen C.size_t
-	if !C.slime_vt_source_copy_keys(s.s, ptr, C.size_t(len(buf)), &badPtr, &badLen) {
+	if !C.squish_vt_source_copy_keys(s.s, ptr, C.size_t(len(buf)), &badPtr, &badLen) {
 		return "", errors.New("vt: out of memory")
 	}
 	if badLen > 0 {
@@ -216,7 +216,7 @@ func CheckCopyKeys(table string) (bad string, err error) {
 
 // CopyMode reports whether the terminal is in copy mode.
 func (s *Source) CopyMode() bool {
-	return bool(C.slime_vt_source_copy_mode(s.s))
+	return bool(C.squish_vt_source_copy_mode(s.s))
 }
 
 // KeyCode is the number libghostty-vt gives the key called name
@@ -227,7 +227,7 @@ func KeyCode(name string) uint16 {
 	if len(b) == 0 {
 		return 0
 	}
-	return uint16(C.slime_vt_key_code((*C.uint8_t)(unsafe.Pointer(&b[0])), C.size_t(len(b))))
+	return uint16(C.squish_vt_key_code((*C.uint8_t)(unsafe.Pointer(&b[0])), C.size_t(len(b))))
 }
 
 // View is one terminal as a client sees and drives it: frames of it to
@@ -236,12 +236,12 @@ func KeyCode(name string) uint16 {
 // It isn't safe for concurrent use, and its terminal must not be written
 // while a call on it runs.
 type View struct {
-	v *C.SlimeView
+	v *C.SquishView
 }
 
 // NewView returns a View of src's terminal whose first frame is full.
 func NewView(src *Source) (*View, error) {
-	v := C.slime_vt_view_new(src.s)
+	v := C.squish_vt_view_new(src.s)
 	if v == nil {
 		return nil, errors.New("vt: out of memory")
 	}
@@ -252,7 +252,7 @@ func NewView(src *Source) (*View, error) {
 // selection drag holds places in it.
 func (v *View) Close(t *Terminal) {
 	if v.v != nil {
-		C.slime_vt_view_free(v.v, t.term)
+		C.squish_vt_view_free(v.v, t.term)
 		v.v = nil
 	}
 }
@@ -260,7 +260,7 @@ func (v *View) Close(t *Terminal) {
 // Reset forgets the input state the last client left: a selection drag
 // in progress, the wheel's remainder, the cell motion was last reported
 // in. For a new client; the frames' state stays.
-func (v *View) Reset(t *Terminal) { C.slime_vt_view_reset(v.v, t.term) }
+func (v *View) Reset(t *Terminal) { C.squish_vt_view_reset(v.v, t.term) }
 
 // SetCopyKeys gives this view its own copy mode keys, which it takes
 // over its source's, in Source.SetCopyKeys' format and with its result;
@@ -276,7 +276,7 @@ func (v *View) SetCopyKeys(table string, ok bool) (bad string, err error) {
 	}
 	var badPtr *C.uint8_t
 	var badLen C.size_t
-	if !C.slime_vt_view_copy_keys(v.v, ptr, C.size_t(len(table)), &badPtr, &badLen) {
+	if !C.squish_vt_view_copy_keys(v.v, ptr, C.size_t(len(table)), &badPtr, &badLen) {
 		return "", errors.New("vt: out of memory")
 	}
 	if badLen > 0 {
@@ -300,10 +300,10 @@ const (
 )
 
 // Hold says whether t's next frame should wait, and why.
-func (v *View) Hold(t *Terminal) Hold { return Hold(C.slime_vt_view_hold(v.v, t.term)) }
+func (v *View) Hold(t *Terminal) Hold { return Hold(C.squish_vt_view_hold(v.v, t.term)) }
 
 // EndSync turns off synchronized output that held frames too long.
-func (t *Terminal) EndSync() { C.slime_vt_end_sync(t.term) }
+func (t *Terminal) EndSync() { C.squish_vt_end_sync(t.term) }
 
 // Frame returns a frame of what changed in t since the last frame, or
 // of everything if full: after a new attach, which also means the
@@ -312,7 +312,7 @@ func (t *Terminal) EndSync() { C.slime_vt_end_sync(t.term) }
 func (v *View) Frame(t *Terminal, full bool) ([]byte, error) {
 	var ptr *C.uint8_t
 	var n C.size_t
-	if !C.slime_vt_view_frame(v.v, t.term, C.bool(full), &ptr, &n) {
+	if !C.squish_vt_view_frame(v.v, t.term, C.bool(full), &ptr, &n) {
 		return nil, errors.New("vt: encoding a frame failed")
 	}
 	return unsafe.Slice((*byte)(unsafe.Pointer(ptr)), int(n)), nil
@@ -334,8 +334,8 @@ type Image struct {
 // more is false past the last; a nil image with more set is one the
 // terminal lost meanwhile, to skip.
 func (v *View) Image(t *Terminal, i int) (img *Image, more bool) {
-	var out C.SlimeImage
-	switch C.slime_vt_view_image(v.v, t.term, C.size_t(i), &out) {
+	var out C.SquishImage
+	switch C.squish_vt_view_image(v.v, t.term, C.size_t(i), &out) {
 	case 1:
 		return &Image{
 			ID:         uint32(out.id),
@@ -389,8 +389,8 @@ func (v *View) Event(t *Terminal, win32Input bool, ev []byte) (Result, error) {
 	if len(ev) == 0 {
 		return Result{}, errors.New("vt: empty event")
 	}
-	var r C.SlimeResult
-	if !C.slime_vt_view_event(v.v, t.term, C.bool(win32Input), (*C.uint8_t)(unsafe.Pointer(&ev[0])), C.size_t(len(ev)), &r) {
+	var r C.SquishResult
+	if !C.squish_vt_view_event(v.v, t.term, C.bool(win32Input), (*C.uint8_t)(unsafe.Pointer(&ev[0])), C.size_t(len(ev)), &r) {
 		return Result{}, errors.New("vt: bad event")
 	}
 	return result(&r), nil
@@ -399,14 +399,14 @@ func (v *View) Event(t *Terminal, win32Input bool, ev []byte) (Result, error) {
 // Autoscroll scrolls toward a selection drag past an edge and extends
 // the selection there.
 func (v *View) Autoscroll(t *Terminal) Result {
-	var r C.SlimeResult
-	if !C.slime_vt_view_autoscroll(v.v, t.term, &r) {
+	var r C.SquishResult
+	if !C.squish_vt_view_autoscroll(v.v, t.term, &r) {
 		return Result{}
 	}
 	return result(&r)
 }
 
-func result(r *C.SlimeResult) Result {
+func result(r *C.SquishResult) Result {
 	out := Result{
 		Copied:       bool(r.copied),
 		CopyTag:      uint32(r.copy_tag),

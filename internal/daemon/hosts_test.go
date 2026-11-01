@@ -18,17 +18,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/remote"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/sshbridge"
-	"github.com/aldehir/slime/internal/sshtest"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/remote"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/sshbridge"
+	"github.com/aldehir/squish/internal/sshtest"
 )
 
 const hostPassword = "hunter2"
 
 // fakeHost answers the daemon's commands on a host: the probe, the
-// install (into memory), and `slime connect`, which it bridges to a
+// install (into memory), and `squish connect`, which it bridges to a
 // second in-process Server playing the host's daemon.
 type fakeHost struct {
 	daemon *Server
@@ -44,7 +44,7 @@ func (f *fakeHost) exec(command string, stdin io.Reader, stdout, stderr io.Write
 	case strings.Contains(command, "uname -sm"):
 		f.mu.Lock()
 		defer f.mu.Unlock()
-		fmt.Fprintf(stdout, "Linux x86_64\n/home/alde/.cache/slime/bin\n")
+		fmt.Fprintf(stdout, "Linux x86_64\n/home/alde/.cache/squish/bin\n")
 		for _, name := range f.installed {
 			fmt.Fprintln(stdout, name)
 		}
@@ -96,7 +96,7 @@ func fakeRemote(t *testing.T) *remote.Manifest {
 	dir := t.TempDir()
 	var gz bytes.Buffer
 	w := gzip.NewWriter(&gz)
-	w.Write([]byte("#!/bin/sh\necho fake slime\n"))
+	w.Write([]byte("#!/bin/sh\necho fake squish\n"))
 	w.Close()
 	sum := sha256.Sum256(gz.Bytes())
 	if err := os.WriteFile(filepath.Join(dir, remote.Name("linux", "amd64")), gz.Bytes(), 0o644); err != nil {
@@ -432,7 +432,7 @@ func TestHostConnectPrompts(t *testing.T) {
 	if st.Text != "" {
 		t.Errorf("connected with text %q", st.Text)
 	}
-	if !contains(texts, "installing slime") {
+	if !contains(texts, "installing squish") {
 		t.Errorf("status lines %q lack the install", texts)
 	}
 	h.host.mu.Lock()
@@ -838,7 +838,7 @@ func TestHostProxyPortKept(t *testing.T) {
 
 // host.proxy = false runs none.
 func TestHostProxyOff(t *testing.T) {
-	h := newHostHarnessConfig(t, sshtest.Options{Forwarding: true}, 0, `slime.config{ host = { proxy = false } }`)
+	h := newHostHarnessConfig(t, sshtest.Options{Forwarding: true}, 0, `squish.config{ host = { proxy = false } }`)
 	c := h.connect()
 	st := h.loginState(c, "dev1")
 	if st.Proxy != "" {

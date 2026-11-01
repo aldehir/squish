@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aldehir/slime/internal/lua"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/lua"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // fakeHost answers every call with {} and keeps what was logged.
@@ -53,12 +53,12 @@ func load(t *testing.T, h *fakeHost, files map[string]string) *Config {
 }
 
 func TestPath(t *testing.T) {
-	t.Setenv("SLIME_CONFIG", `C:\elsewhere\init.lua`)
+	t.Setenv("SQUISH_CONFIG", `C:\elsewhere\init.lua`)
 	if got := Path(); got != `C:\elsewhere\init.lua` {
 		t.Errorf("Path %q", got)
 	}
-	t.Setenv("SLIME_CONFIG", "")
-	if got := Path(); !strings.HasSuffix(got, filepath.Join("slime", "init.lua")) {
+	t.Setenv("SQUISH_CONFIG", "")
+	if got := Path(); !strings.HasSuffix(got, filepath.Join("squish", "init.lua")) {
 		t.Errorf("Path %q", got)
 	}
 }
@@ -82,24 +82,24 @@ func TestMissingFileIsEmpty(t *testing.T) {
 func TestSettingsAndBindings(t *testing.T) {
 	h := &fakeHost{}
 	c := load(t, h, map[string]string{"init.lua": `
-		slime.config{ font = { family = { "Cascadia Code", "Consolas" }, size = 12 }, shell = { command = "pwsh" } }
-		slime.config{ font = { size = 14, antialias = "grayscale" }, theme = "catppuccin-mocha" }
-		slime.config{ font = { family = { "Consolas" } } }
-		slime.bind("Ctrl + Shift + D", "new_split", { direction = "right" })
-		slime.bind("ctrl+shift+t", "new_tab")
-		slime.bind("ctrl+shift+t", "dev", { file = "a" })
-		slime.bind("ctrl+alt+l", function(ctx, args) return ctx end)
-		slime.unbind("ctrl+shift+w")
+		squish.config{ font = { family = { "Cascadia Code", "Consolas" }, size = 12 }, shell = { command = "pwsh" } }
+		squish.config{ font = { size = 14, antialias = "grayscale" }, theme = "catppuccin-mocha" }
+		squish.config{ font = { family = { "Consolas" } } }
+		squish.bind("Ctrl + Shift + D", "new_split", { direction = "right" })
+		squish.bind("ctrl+shift+t", "new_tab")
+		squish.bind("ctrl+shift+t", "dev", { file = "a" })
+		squish.bind("ctrl+alt+l", function(ctx, args) return ctx end)
+		squish.unbind("ctrl+shift+w")
 		-- A sequence is a key of its own: unbinding its first key leaves it.
-		slime.bind("Ctrl+B > c", "new_tab")
-		slime.unbind("ctrl+b")
+		squish.bind("Ctrl+B > c", "new_tab")
+		squish.unbind("ctrl+b")
 		-- A repeat is the same key as its sequence: the unbind takes it.
-		slime.bind("Repeat: ctrl+b > ctrl+b > h", "resize_split", { direction = "left" })
-		slime.unbind("ctrl+b>ctrl+b>h")
-		slime.bind("repeat:ctrl+b>h", "resize_split", { direction = "left" })
-		slime.action{ name = "dev", title = "Dev layout", args = { file = "string" }, run = function(ctx, args) return args end }
-		slime.action{ name = "dev", title = "Dev again", run = function(ctx, args) return "again" end }
-		slime.action{ name = "other", run = function() end }
+		squish.bind("Repeat: ctrl+b > ctrl+b > h", "resize_split", { direction = "left" })
+		squish.unbind("ctrl+b>ctrl+b>h")
+		squish.bind("repeat:ctrl+b>h", "resize_split", { direction = "left" })
+		squish.action{ name = "dev", title = "Dev layout", args = { file = "string" }, run = function(ctx, args) return args end }
+		squish.action{ name = "dev", title = "Dev again", run = function(ctx, args) return "again" end }
+		squish.action{ name = "other", run = function() end }
 		print("loaded")
 	`})
 	d := c.Desc()
@@ -137,7 +137,7 @@ func TestSettingsAndBindings(t *testing.T) {
 		t.Errorf("run dev: %s, %v", res, err)
 	}
 	// A repeat needs a sequence: a key alone repeats as it's held.
-	if _, errs := Load(&fakeHost{}, write(t, map[string]string{"init.lua": `slime.bind("repeat:ctrl+b", "new_tab")`}), nil); len(errs) != 1 || !strings.Contains(errs[0], "repeat: needs a sequence") {
+	if _, errs := Load(&fakeHost{}, write(t, map[string]string{"init.lua": `squish.bind("repeat:ctrl+b", "new_tab")`}), nil); len(errs) != 1 || !strings.Contains(errs[0], "repeat: needs a sequence") {
 		t.Errorf("repeat alone: %q", errs)
 	}
 }
@@ -146,12 +146,12 @@ func TestSettingsAndBindings(t *testing.T) {
 // the window's keymap, keeping a single character's case.
 func TestCopyModeBindings(t *testing.T) {
 	c := load(t, &fakeHost{}, map[string]string{"init.lua": `
-		slime.bind("copy-mode:G", "history_bottom")
-		slime.bind("Copy-Mode: Ctrl + V", "rectangle_toggle")
-		slime.bind("copy-mode:PageUp", "page_up")
-		slime.bind("copy-mode:v", "begin_selection")
-		slime.unbind("copy-mode:v")
-		slime.bind("ctrl+shift+m", "copy_mode")
+		squish.bind("copy-mode:G", "history_bottom")
+		squish.bind("Copy-Mode: Ctrl + V", "rectangle_toggle")
+		squish.bind("copy-mode:PageUp", "page_up")
+		squish.bind("copy-mode:v", "begin_selection")
+		squish.unbind("copy-mode:v")
+		squish.bind("ctrl+shift+m", "copy_mode")
 	`})
 	d := c.Desc()
 	want := []rpc.Binding{
@@ -179,21 +179,21 @@ func mustJSON(v any) json.RawMessage {
 func TestInvoke(t *testing.T) {
 	h := &fakeHost{}
 	c := load(t, h, map[string]string{"init.lua": `
-		slime.action{ name = "dev", args = { file = "string", n = "number", on = "boolean" },
+		squish.action{ name = "dev", args = { file = "string", n = "number", on = "boolean" },
 			run = function(ctx, args)
 				print("dev", ctx.origin, ctx.pane_id, ctx.tab_id, ctx.workspace_id)
-				assert(slime.pane_id == ctx.pane_id)
-				local me = slime.pane.info{}
-				slime.log("info", me.id)
-				return { args = args, ids = { slime.workspace_id, slime.tab_id, slime.pane_id }, info = me }
+				assert(squish.pane_id == ctx.pane_id)
+				local me = squish.pane.info{}
+				squish.log("info", me.id)
+				return { args = args, ids = { squish.workspace_id, squish.tab_id, squish.pane_id }, info = me }
 			end }
-		slime.action{ name = "outer", run = function(ctx, args)
-			local r = assert(slime.invoke("dev", { file = "x", n = 2 }))
+		squish.action{ name = "outer", run = function(ctx, args)
+			local r = assert(squish.invoke("dev", { file = "x", n = 2 }))
 			return { inner = r, origin = ctx.origin }
 		end }
-		slime.action{ name = "fails", run = function() error("boom") end }
-		slime.action{ name = "stops", run = function() slime.stop("early") error("not reached") end }
-		slime.bind("ctrl+x", function(ctx, args) return { bound = true, pane = ctx.pane_id } end)
+		squish.action{ name = "fails", run = function() error("boom") end }
+		squish.action{ name = "stops", run = function() squish.stop("early") error("not reached") end }
+		squish.bind("ctrl+x", function(ctx, args) return { bound = true, pane = ctx.pane_id } end)
 	`})
 	var out []string
 	collect := func(stream lua.Stream, text string) { out = append(out, string(stream)+":"+text) }
@@ -261,14 +261,14 @@ func TestInvoke(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	c := load(t, &fakeHost{}, map[string]string{"init.lua": `slime.action{ name = "loop", run = function() while true do end end }`})
+	c := load(t, &fakeHost{}, map[string]string{"init.lua": `squish.action{ name = "loop", run = function() while true do end end }`})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := c.Run(ctx, Invocation{Name: "loop"}, nil); !errors.Is(err, lua.ErrCancelled) {
 		t.Errorf("err %v", err)
 	}
 	// Usable after.
-	c2 := load(t, &fakeHost{}, map[string]string{"init.lua": `slime.action{ name = "n", run = function() return 1 end }`})
+	c2 := load(t, &fakeHost{}, map[string]string{"init.lua": `squish.action{ name = "n", run = function() return 1 end }`})
 	if res, err := c2.Run(context.Background(), Invocation{Name: "n"}, nil); err != nil || string(res) != "1" {
 		t.Errorf("after: %s, %v", res, err)
 	}
@@ -279,8 +279,8 @@ func TestSiblingsAndErrors(t *testing.T) {
 	c := load(t, h, map[string]string{
 		"init.lua": `
 			local lib = require("lib")
-			slime.action{ name = "dev", run = function() return dofile("dev.lua") end }
-			slime.config{ n = lib.n }
+			squish.action{ name = "dev", run = function() return dofile("dev.lua") end }
+			squish.config{ n = lib.n }
 			local f, err = loadfile("missing.lua")
 			assert(f == nil and err)
 		`,
@@ -297,11 +297,11 @@ func TestSiblingsAndErrors(t *testing.T) {
 	for name, src := range map[string]string{
 		"syntax":    "x = = 1",
 		"runtime":   "error('no')",
-		"bad bind":  "slime.bind('', 'x')",
-		"bad bind2": "slime.bind('a', 1)",
-		"no name":   "slime.action{ run = function() end }",
-		"no run":    "slime.action{ name = 'x' }",
-		"not json":  "slime.config{ f = print }",
+		"bad bind":  "squish.bind('', 'x')",
+		"bad bind2": "squish.bind('a', 1)",
+		"no name":   "squish.action{ run = function() end }",
+		"no run":    "squish.action{ name = 'x' }",
+		"not json":  "squish.config{ f = print }",
 	} {
 		_, errs := Load(h, write(t, map[string]string{"init.lua": src}), nil)
 		if len(errs) != 1 || !strings.Contains(errs[0], "init.lua") {
@@ -311,9 +311,9 @@ func TestSiblingsAndErrors(t *testing.T) {
 	// Binding and the rest are for the file's top level: an action
 	// invoked while it runs may still, one invoked later may not.
 	late := load(t, h, map[string]string{"init.lua": `
-		slime.action{ name = "x", run = function() slime.bind("a", "b") end }
-		slime.action{ name = "y", run = function() slime.config{ late = true } end }
-		slime.invoke("x")
+		squish.action{ name = "x", run = function() squish.bind("a", "b") end }
+		squish.action{ name = "y", run = function() squish.config{ late = true } end }
+		squish.invoke("x")
 	`})
 	if len(late.Desc().Keymap) != 1 {
 		t.Errorf("bound while loading: %s", mustJSON(late.Desc().Keymap))
@@ -332,9 +332,9 @@ func TestSiblingsAndErrors(t *testing.T) {
 
 func TestHostProxy(t *testing.T) {
 	for source, want := range map[string]bool{
-		`slime.config{ host = { proxy = false } }`: false,
-		`slime.config{ host = { proxy = true } }`:  true,
-		`slime.config{ host = {} }`:                true,
+		`squish.config{ host = { proxy = false } }`: false,
+		`squish.config{ host = { proxy = true } }`:  true,
+		`squish.config{ host = {} }`:                true,
 	} {
 		c := load(t, &fakeHost{}, map[string]string{"init.lua": source})
 		if c.HostProxy() != want {

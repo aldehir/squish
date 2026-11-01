@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aldehir/slime/internal/sshconfig"
+	"github.com/aldehir/squish/internal/sshconfig"
 )
 
 // DefaultEnv is what the config files are read against: the user's

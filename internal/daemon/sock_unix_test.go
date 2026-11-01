@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // testAddr is a socket in a fresh private directory.
 func testAddr(t *testing.T) string {
-	dir := filepath.Join(t.TempDir(), "slime")
+	dir := filepath.Join(t.TempDir(), "squish")
 	return filepath.Join(dir, "sock")
 }
 

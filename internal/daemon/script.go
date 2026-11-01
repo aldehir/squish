@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/aldehir/slime/internal/lua"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/lua"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // Scripts: Lua the daemon runs against itself (internal/lua). Each is
@@ -188,13 +188,13 @@ func (h *scriptHost) Output(stream lua.Stream, text string) {
 	h.s.scriptEmit(h.sc, rpc.EvScriptOutput, rpc.ScriptOutputParams{ID: h.sc.id, Stream: string(stream), Data: text})
 }
 
-// Log is slime.log: the daemon's log, and the script's stderr.
+// Log is squish.log: the daemon's log, and the script's stderr.
 func (h *scriptHost) Log(text string) {
 	h.s.log.Info("script", "script", h.sc.id, "name", h.sc.name, "msg", text)
 	h.Output(lua.Stderr, text+"\n")
 }
 
-// Invoke is slime.invoke: a config action, run for the script's pane,
+// Invoke is squish.invoke: a config action, run for the script's pane,
 // printing as the script does.
 func (h *scriptHost) Invoke(name string, args json.RawMessage) (json.RawMessage, error) {
 	return h.s.invokeFor(h.sc.ctx, h.sc, name, args, h.Output)

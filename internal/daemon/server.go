@@ -1,4 +1,4 @@
-// Package daemon is slime: a daemon that owns ptys and the terminal
+// Package daemon is squish: a daemon that owns ptys and the terminal
 // state of each (internal/vt), so they outlive the windows showing them.
 //
 // Panes (a pty and its terminal) are arranged in tabs, each a layout
@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aldehir/slime/internal/config"
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/config"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // Server holds the workspaces and serves clients.
@@ -59,7 +59,7 @@ type Server struct {
 	tabs       map[TabID]*tab
 	panes      map[PaneID]pane
 	// moved forwards the id a pane had before it moved tabs to its
-	// current one, for as long as it lives: a shell's SLIME_PANE still
+	// current one, for as long as it lives: a shell's SQUISH_PANE still
 	// finds it. One hop: a pane that moves again rewrites its entries.
 	moved   map[PaneID]PaneID
 	conns   map[*conn]struct{}
@@ -199,7 +199,7 @@ func (s *Server) Serve(l net.Listener) error {
 
 // daemonStop ends the daemon. The reply goes out first, and Serve
 // returns once the caller's connection has written it (or a second has
-// passed), so `slime stop` hears back before the pipe goes away. With
+// passed), so `squish stop` hears back before the pipe goes away. With
 // save, model.json is written as things are and kept for the daemon
 // that starts next (an upgrade), and every client is told
 // daemon.restarting first, so it reconnects rather than giving up.
@@ -335,7 +335,7 @@ func (s *Server) handshake(c *conn, m Message, err error) bool {
 		Build:       s.build,
 	})
 	if hello.Version != Version {
-		c.sendForce(NoPane, &Error{Message: fmt.Sprintf("slime speaks version %d, not %d", Version, hello.Version)})
+		c.sendForce(NoPane, &Error{Message: fmt.Sprintf("squish speaks version %d, not %d", Version, hello.Version)})
 		return false
 	}
 	c.interval = defaultFrameInterval

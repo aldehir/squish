@@ -1,12 +1,12 @@
 //! A row of the sidebar: one or more panes (sessions) laid out in a tree,
-//! as slime keeps them (internal/daemon/layout.go). Splits share
+//! as squish keeps them (internal/daemon/layout.go). Splits share
 //! their space between children by basis points, along a row or down a
 //! column; a tab's panes and the dividers between them tile its area
 //! (`place`, into a `Placement`).
 //!
-//! slime owns a split tab's layout: the window asks it to split or close
+//! squish owns a split tab's layout: the window asks it to split or close
 //! panes and takes the tree it sends back (`fromLayout`). A session that
-//! doesn't run in slime is a tab of its own, one pane. Each slime, the
+//! doesn't run in squish is a tab of its own, one pane. Each squish, the
 //! local one or a host's, numbers its own tabs.
 const Tab = @This();
 
@@ -18,13 +18,13 @@ const Placement = @import("Placement.zig");
 const Rect = @import("renderer/Painter.zig").Rect;
 
 /// The window's number for the tab, never reused: what the chrome names
-/// it by (`Id.Target.tab`). slime's ids repeat across daemons.
+/// it by (`Id.Target.tab`). squish's ids repeat across daemons.
 key: u32 = 0,
-/// slime's id for the tab, or none for a session of its own.
+/// squish's id for the tab, or none for a session of its own.
 id: Daemon.TabRef,
 /// The daemon whose tab it is, or null for a session of its own.
 conn: ?*Daemon = null,
-/// slime's id for the workspace it's in, or 0 for a session of its own.
+/// squish's id for the workspace it's in, or 0 for a session of its own.
 ws: u32 = 0,
 root: Node,
 /// The pane that gets the keys.
@@ -32,13 +32,13 @@ focus: *Session,
 /// The pane filling the tab while it's zoomed. The others keep their
 /// sizes, out of sight.
 zoom: ?*Session = null,
-/// The focus and zoom as slime last had them, from its structure or our
+/// The focus and zoom as squish last had them, from its structure or our
 /// last `workspace.focus`, so a change here is sent once (Window's
-/// syncFocus). Null until slime has said.
+/// syncFocus). Null until squish has said.
 sent_focus: ?Daemon.Focus = null,
 /// Its panes aren't listed under it in the sidebar.
 folded: bool = false,
-/// Set while the tab floats over another, from slime's structure: shown
+/// Set while the tab floats over another, from squish's structure: shown
 /// over its host rather than in a row of its own. The host is linked
 /// anew with each structure (`App.applyStructure`), and a host freed
 /// first unlinks its floats (`App.destroyTab`), so it never dangles.
@@ -70,7 +70,7 @@ pub const Split = struct {
 pub const Child = struct {
     /// Of the split's space, as a fraction of the children's total.
     share: u16,
-    /// The pane this child's space was split from, as slime sent it
+    /// The pane this child's space was split from, as squish sent it
     /// (rpc.Child's From): closing a pane gives its space back that way.
     /// Kept through drags so `toLayout` sends it back.
     from: ?*Session = null,
@@ -89,7 +89,7 @@ pub fn destroy(self: *Tab, alloc: Allocator) void {
     alloc.destroy(self);
 }
 
-/// Swap in a new tree from slime, keeping focus and zoom on panes still
+/// Swap in a new tree from squish, keeping focus and zoom on panes still
 /// in it. Frees the old tree.
 pub fn setRoot(self: *Tab, alloc: Allocator, root: Node) void {
     freeNode(alloc, self.root);
@@ -125,7 +125,7 @@ pub fn iterator(self: *const Tab) Iterator {
 
 pub const Iterator = struct {
     single: ?*Session = null,
-    /// slime's trees are at most 32 deep.
+    /// squish's trees are at most 32 deep.
     stack: [34]struct { children: []const Child, next: usize = 0 } = undefined,
     len: usize = 0,
 
@@ -155,7 +155,7 @@ pub const Iterator = struct {
     }
 };
 
-/// The pane showing slime's pane `id`.
+/// The pane showing squish's pane `id`.
 pub fn findPane(self: *const Tab, id: Daemon.PaneRef) ?*Session {
     var it = self.iterator();
     while (it.next()) |s| if (s.daemonPane()) |p| if (p.eql(id)) return s;
@@ -217,7 +217,7 @@ pub fn first(node: Node) *Session {
     };
 }
 
-/// Take `s` out of the tree, as slime will once it hears: its space goes
+/// Take `s` out of the tree, as squish will once it hears: its space goes
 /// to its heir (`heirOf`), else its siblings share it, and a split left
 /// with one child gives way to it. Returns the pane nearest to where it
 /// was, to focus, or null if it was the tab's last.
@@ -232,8 +232,8 @@ pub fn remove(self: *Tab, alloc: Allocator, s: *const Session) ?*Session {
     return near;
 }
 
-/// slime's removeNode (internal/daemon/layout.go), so the window lays
-/// the tab out as slime will.
+/// squish's removeNode (internal/daemon/layout.go), so the window lays
+/// the tab out as squish will.
 fn removeNode(alloc: Allocator, root: *Node, s: *const Session) ?*Session {
     const p = parentOf(root, s) orelse return null;
     const sp = p.split;
@@ -242,7 +242,7 @@ fn removeNode(alloc: Allocator, root: *Node, s: *const Session) ?*Session {
     const heir = heirOf(sp, i);
     if (heir) |h| sp.children[h].share +|= gone.share;
     const rest = alloc.alloc(Child, sp.children.len - 1) catch {
-        // Leave it in, sharing nothing: slime's tree replaces this one
+        // Leave it in, sharing nothing: squish's tree replaces this one
         // soon.
         sp.children[i].share = 0;
         return first(sp.children[if (i == 0) 1 else i - 1].node);
@@ -300,7 +300,7 @@ fn repoint(node: *Node, gone: *const Session, to: ?*Session) void {
 }
 
 /// Clear every `from` that doesn't name a pane in a sibling's subtree,
-/// as slime does: that child's space goes back in proportion instead.
+/// as squish does: that child's space goes back in proportion instead.
 fn normalize(node: *Node) void {
     switch (node.*) {
         .pane => {},
@@ -679,8 +679,8 @@ pub const Divider = struct {
     }
 };
 
-/// The tree as slime's, in `arena`, for sending back after a drag. Null
-/// if a pane isn't slime's.
+/// The tree as squish's, in `arena`, for sending back after a drag. Null
+/// if a pane isn't squish's.
 pub fn toLayout(self: *const Tab, arena: Allocator) !?Daemon.Node {
     return toLayoutNode(arena, self.root);
 }
@@ -700,7 +700,7 @@ fn toLayoutNode(arena: Allocator, node: Node) !?Daemon.Node {
     }
 }
 
-/// slime's tree for a tab as one of ours, with each pane's session from
+/// squish's tree for a tab as one of ours, with each pane's session from
 /// `ctx.session(pane)`. Panes without one are left out, and splits that
 /// leaves empty or alone collapse. Null if no pane has a session.
 pub fn fromLayout(alloc: Allocator, node: Daemon.Node, ctx: anytype) !?Node {
@@ -1070,8 +1070,8 @@ test fromLayout {
     try std.testing.expectEqual(&b, root.split.children[1].node.pane);
 }
 
-/// Sessions standing for slime's panes 1.1.n, n their index, for tests
-/// that go through slime's trees.
+/// Sessions standing for squish's panes 1.1.n, n their index, for tests
+/// that go through squish's trees.
 const TestPanes = struct {
     sessions: []Session,
 
@@ -1085,8 +1085,8 @@ const TestPanes = struct {
     }
 };
 
-test "closing a pane gives its space back as slime does" {
-    // slime's TestHeirFixtures writes these from its own cases.
+test "closing a pane gives its space back as squish does" {
+    // squish's TestHeirFixtures writes these from its own cases.
     const Fixture = struct { name: []const u8, tree: Daemon.Node, close: Daemon.PaneRef, want: Daemon.Node };
     const alloc = std.testing.allocator;
     var sessions: [8]Session = undefined;
@@ -1188,7 +1188,7 @@ test "a moved pane forgets its origin, and what came from it follows its region"
     }
 }
 
-test "a layout's from goes to slime and back" {
+test "a layout's from goes to squish and back" {
     const alloc = std.testing.allocator;
     var sessions: [4]Session = undefined;
     const panes = TestPanes.init(&sessions);

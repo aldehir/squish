@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aldehir/slime/internal/config"
-	"github.com/aldehir/slime/internal/lua"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/config"
+	"github.com/aldehir/squish/internal/lua"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // The config: init.lua (internal/config), evaluated when the server
@@ -214,7 +214,7 @@ func (s *Server) actionInvoke(cl *callCtx, p rpc.ActionInvokeParams) (*rpc.Scrip
 	return &rpc.ScriptRunResult{ID: sc.id}, nil
 }
 
-// invokeFor is slime.invoke from a script: the action runs in the
+// invokeFor is squish.invoke from a script: the action runs in the
 // config's state for the script's pane, and the script waits for it.
 func (s *Server) invokeFor(ctx context.Context, sc *script, name string, args json.RawMessage, out func(lua.Stream, string)) (json.RawMessage, error) {
 	cfg := s.currentConfig()

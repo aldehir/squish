@@ -395,7 +395,7 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
             if (pal.file) |st| {
                 if (st.reason) |why| {
                     says = switch (why) {
-                        .no_pwd => L("The shell hasn't said where it is: set up slime shell-integration"),
+                        .no_pwd => L("The shell hasn't said where it is: set up squish shell-integration"),
                         .other_host => L("The shell is on another host"),
                         .gone => L("The directory is gone"),
                     };

@@ -13,17 +13,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aldehir/slime/internal/remote"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/socks"
-	"github.com/aldehir/slime/internal/sshbridge"
+	"github.com/aldehir/squish/internal/remote"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/socks"
+	"github.com/aldehir/squish/internal/sshbridge"
 )
 
 // Hosts: the SSH connections the daemon holds. Each host is logged in
 // to once (host.connect), with the prompts going to the client that
 // asked (host.prompt), and then any client reaches the host's own
 // daemon through a bridge: a connection whose first frame is Bridge,
-// spliced to `slime connect` on the host. The connection lives until
+// spliced to `squish connect` on the host. The connection lives until
 // the host hangs up or a client asks (host.disconnect), whatever
 // windows come and go. Every change of state goes to the connections
 // subscribed to host.changed. While connected, a host also has a SOCKS
@@ -36,7 +36,7 @@ type HostOptions struct {
 	// connect. Nil resolves it against the user's ssh config
 	// (sshbridge.ResolveDestination).
 	Resolve func(dest string) (sshbridge.Options, error)
-	// Remote holds the builds of slime to install on hosts, when
+	// Remote holds the builds of squish to install on hosts, when
 	// Resolve doesn't say. Nil means the ones beside the executable.
 	Remote *remote.Manifest
 }
@@ -97,7 +97,7 @@ func (h *host) info() rpc.Host {
 	return info
 }
 
-// hostUpgrade runs `slime upgrade` on a connected host: its daemon, if
+// hostUpgrade runs `squish upgrade` on a connected host: its daemon, if
 // of an older build than the one this daemon installed there, stops
 // keeping its layout, and the installed build starts and restores it.
 // The bridges to it end; windows reconnect.
@@ -117,7 +117,7 @@ func (s *Server) hostUpgrade(_ *callCtx, m rpc.HostParams) (rpc.Empty, error) {
 	}
 	out, err := conn.Upgrade()
 	if err != nil {
-		return rpc.Empty{}, rpc.Errorf(rpc.CodeFailed, "upgrading slime on %s: %v", h.dest, err)
+		return rpc.Empty{}, rpc.Errorf(rpc.CodeFailed, "upgrading squish on %s: %v", h.dest, err)
 	}
 	s.log.Info("host upgraded", "dest", h.dest, "said", strings.TrimSpace(out))
 	return rpc.Empty{}, nil
@@ -147,7 +147,7 @@ func (s *Server) restoreHostsLocked(hs []ModelHost) {
 			continue
 		}
 		s.hosts.nextID = max(s.hosts.nextID, mh.ID)
-		s.hosts.byID[mh.ID] = &host{id: mh.ID, dest: mh.Dest, state: HostLost, text: "slime restarted"}
+		s.hosts.byID[mh.ID] = &host{id: mh.ID, dest: mh.Dest, state: HostLost, text: "squish restarted"}
 		if mh.Port != 0 {
 			s.hosts.ports[mh.Dest] = mh.Port
 		}
@@ -205,7 +205,7 @@ func (s *Server) hostConnect(cl *callCtx, m rpc.HostConnectParams) (*rpc.Host, e
 	return &info, nil
 }
 
-// hostLogin logs in to h and sets slime up there, in attempt gen.
+// hostLogin logs in to h and sets squish up there, in attempt gen.
 func (s *Server) hostLogin(h *host, gen int, ctx context.Context) {
 	opts, err := s.hosts.opts.Resolve(h.dest)
 	if err != nil {
@@ -417,7 +417,7 @@ func (s *Server) hostList(_ *callCtx, _ rpc.Empty) (*rpc.HostListResult, error) 
 	return out, nil
 }
 
-// bridge splices a connection whose first frame was Bridge to `slime
+// bridge splices a connection whose first frame was Bridge to `squish
 // connect` on its host, until either end hangs up. What the client
 // sends next (its Hello) is in r's buffer, and goes through.
 func (s *Server) bridge(rw io.ReadWriteCloser, r *Reader, m *Bridge) {

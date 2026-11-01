@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/aldehir/slime/internal/terminfo"
+	"github.com/aldehir/squish/internal/terminfo"
 )
 
 // terminfoScript leaves a host that knows xterm-ghostty alone, and

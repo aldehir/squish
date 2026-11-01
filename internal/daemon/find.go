@@ -20,11 +20,11 @@ import (
 	"github.com/junegunn/fzf/src/algo"
 	"github.com/junegunn/fzf/src/util"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // pane.find: the window's file picker. The pane's shell reports its
-// directory (OSC 7, slime shell-integration); the first call on a
+// directory (OSC 7, squish shell-integration); the first call on a
 // directory starts a scan of the tree under it, fd's where fd is
 // installed (hidden skipped, .gitignore honored) and a walk of our own
 // where not, and every call answers from what the scan has so far,
@@ -232,7 +232,7 @@ func cleanFindRoot(root string) (string, error) {
 }
 
 // prettyPath is dir home-relative, with forward slashes, for the chip:
-// ~/dev/slime; a directory outside home as the host spells it.
+// ~/dev/squish; a directory outside home as the host spells it.
 func prettyPath(dir string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {

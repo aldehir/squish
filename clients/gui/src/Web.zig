@@ -51,7 +51,7 @@ const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
 /// Why a browser pane has no browser.
 pub const runtime_missing = "WebView2 runtime not found";
-pub const loader_missing = "WebView2Loader.dll is missing beside slime-gui.exe";
+pub const loader_missing = "WebView2Loader.dll is missing beside squish-gui.exe";
 const start_failed = "The browser couldn't start. Click to try again.";
 const browser_exited = "The browser closed. Click to reload.";
 const page_crashed = "The page crashed. Click to reload.";
@@ -451,9 +451,9 @@ test hostFolder {
     try std.testing.expect(!std.mem.eql(u16, &a, &hostFolder(L("ssh://devbox2"))));
 }
 
-/// Where a host's browser keeps its profile: %LOCALAPPDATA%\slime\webview
+/// Where a host's browser keeps its profile: %LOCALAPPDATA%\squish\webview
 /// \<name>, `local` for local or `hostFolder`'s (with -<instance> under
-/// SLIME_INSTANCE, so a test window doesn't share a running browser's).
+/// SQUISH_INSTANCE, so a test window doesn't share a running browser's).
 fn userDataFolder(buf: *[512]u16, name: []const u16) ![:0]const u16 {
     const n = win32.GetEnvironmentVariableW(L("LOCALAPPDATA"), buf, buf.len);
     if (n == 0 or n >= buf.len) return error.NoAppData;
@@ -465,7 +465,7 @@ fn userDataFolder(buf: *[512]u16, name: []const u16) ![:0]const u16 {
             at.* += s.len;
         }
     }.f;
-    try put(buf, &len, L("\\slime\\webview\\"));
+    try put(buf, &len, L("\\squish\\webview\\"));
     try put(buf, &len, name);
     var inst: [64]u16 = undefined;
     if (Daemon.instance(&inst)) |instance| {
@@ -926,7 +926,7 @@ pub const View = struct {
     want_preview: bool = false,
     /// A permission the window is asking the user about.
     pending: ?Pending = null,
-    /// The navigation slime sent the page on (`followTo`), which isn't
+    /// The navigation squish sent the page on (`followTo`), which isn't
     /// reported back wherever it lands (`Session.Browser.followed`):
     /// `asked` from its Navigate to its NavigationStarting, then `on`,
     /// with its id, until it completes.
@@ -1226,7 +1226,7 @@ fn setUp(self: *View, comp: *wv.ICompositionController) !void {
         _ = controller.putZoomFactor(b.zoom);
     };
     try r.commit();
-    // Where slime sent it while it was made is slime's; its own url (a
+    // Where squish sent it while it was made is squish's; its own url (a
     // new pane's, one closed while hidden) is reported as it lands.
     if (self.browser()) |b| {
         if (b.followed != null) followTo(self, b.url) else _ = navigate(self, b.url);
@@ -1247,7 +1247,7 @@ fn navigate(self: *View, url: []const u16) bool {
     return true;
 }
 
-/// Go to `url` because slime said: where it lands isn't reported.
+/// Go to `url` because squish said: where it lands isn't reported.
 fn followTo(self: *View, url: []const u16) void {
     self.following = .asked;
     if (!navigate(self, url)) self.following = .none;
@@ -1272,7 +1272,7 @@ fn reportVisit(self: *View) void {
 }
 
 /// A navigation the user made here (a link, a gesture, our Navigate)
-/// is theirs, and reported as it lands; slime's (`followTo`), its
+/// is theirs, and reported as it lands; squish's (`followTo`), its
 /// redirects, and the page's script going on from it aren't, so two
 /// windows on a page that bounces to a fresh url don't send each other
 /// round.
@@ -1314,7 +1314,7 @@ fn navigationCompleted(self: *View, _: *wv.IWebView, args: *wv.INavigationComple
 }
 
 fn sourceChanged(self: *View, _: *wv.IWebView, args: *wv.ISourceChangedEventArgs) win32.HRESULT {
-    // A change within the page once slime's navigation is done (an
+    // A change within the page once squish's navigation is done (an
     // in-page link) is the user's.
     var new_document: win32.BOOL = 1;
     _ = args.getIsNewDocument(&new_document);
@@ -1800,7 +1800,7 @@ fn standIn(self: *Web, s: *Session, why: []const u8) void {
     self.events.changed(self.events.ctx, s);
 }
 
-/// The pane's url changed in slime (pane.url, or the URL bar's echo):
+/// The pane's url changed in squish (pane.url, or the URL bar's echo):
 /// go there, unless the page is there already (our own report coming
 /// back).
 pub fn follow(self: *Web, s: *Session) void {

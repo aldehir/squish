@@ -7,7 +7,7 @@
 //!
 //! The keys are tmux's copy-mode-vi table (its `send -X` command names,
 //! with underscores; tmux's spelling with hyphens binds too), which
-//! init.lua rebinds with slime.bind("copy-mode:v", "begin_selection");
+//! init.lua rebinds with squish.bind("copy-mode:v", "begin_selection");
 //! the daemon hands the result to `Table.apply`. A key is the character
 //! it types ("v", "G", "$"), a name (escape, enter, space, tab,
 //! backspace, up, down, left, right, home, end, pageup, pagedown, delete,
@@ -247,7 +247,7 @@ fn codepointOf(utf8: []const u8) ?u21 {
 
 /// The keys in force: tmux's copy-mode-vi table, until `apply` lays
 /// init.lua's over it. Its digits (counts here, a repeat prompt there),
-/// `:` (goto-line), and the keys for commands slime lacks aren't in it.
+/// `:` (goto-line), and the keys for commands squish lacks aren't in it.
 pub const Table = struct {
     entries: std.ArrayList(Entry) = .empty,
     /// `entries` replaces `defaults`.

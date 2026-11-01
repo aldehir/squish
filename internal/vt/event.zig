@@ -1,5 +1,5 @@
-//! Events: a client's input to a pane, which slime handles against the
-//! pane's terminal (slime.zig). slime turns window messages into these;
+//! Events: a client's input to a pane, which squish handles against the
+//! pane's terminal (squish.zig). squish turns window messages into these;
 //! anything that depends on the terminal's state (its modes, the
 //! selection, scrollback) is the daemon's to decide.
 //!

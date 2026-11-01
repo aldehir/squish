@@ -1,7 +1,7 @@
-// slime keeps terminals alive while no window shows them: it owns
+// squish keeps terminals alive while no window shows them: it owns
 // each pane's pty and terminal state, arranged in tabs and workspaces,
 // and a window attaches a workspace to draw the frames of its panes.
-// slime-gui is the window; the other commands here script workspaces and
+// squish-gui is the window; the other commands here script workspaces and
 // look at them from a console, over the same control plane
 // (internal/rpc) the window uses.
 package main
@@ -24,11 +24,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aldehir/slime/internal/config"
-	"github.com/aldehir/slime/internal/daemon"
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/config"
+	"github.com/aldehir/squish/internal/daemon"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // jsonOut prints each command's result as the daemon sent it (--json).
@@ -36,7 +36,7 @@ var jsonOut bool
 
 func main() {
 	log.SetFlags(0)
-	log.SetPrefix("slime: ")
+	log.SetPrefix("squish: ")
 	if err := newCommand().Execute(); err != nil {
 		if errors.Is(err, errScriptFailed) || errors.Is(err, errConfigFailed) {
 			os.Exit(1)
@@ -51,7 +51,7 @@ func main() {
 
 func newCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "slime",
+		Use:           "squish",
 		Short:         "Keep terminals alive between attaches",
 		Long:          rootDoc,
 		Version:       fmt.Sprintf("protocol %d", daemon.Version),
@@ -83,7 +83,7 @@ func serveCommand() *cobra.Command {
 		Short: "Run the daemon (the other commands start it when needed)",
 		Long: "Runs the daemon. It keeps model.json in its state directory: the workspaces,\n" +
 			"tabs, and what each pane runs and where. A daemon that starts and finds one\n" +
-			"(after a crash, or after slime upgrade stopped the last one) restores it under\n" +
+			"(after a crash, or after squish upgrade stopped the last one) restores it under\n" +
 			"the same ids, each pane relaunched: its command in the directory its shell\n" +
 			"last reported. The programs don't come back; the pane's first line says so.",
 		Args: cobra.NoArgs,
@@ -119,9 +119,9 @@ func serveCommand() *cobra.Command {
 			return serve(logger, serveOptions{idle: idle, hosts: hosts, stateDir: stateDir, args: os.Args[2:]})
 		},
 	}
-	cmd.Flags().StringVar(&stateDir, "state", "", "directory for model.json (default: slime/state/<instance> in the user's cache)")
-	cmd.Flags().StringVar(&conptyDir, "conpty", "", "directory holding conpty.dll (default: next to slime.exe, else the system's)")
-	cmd.Flags().StringVar(&remoteDir, "remote", "", "directory holding the builds of slime for hosts and their manifest (default: remote/ next to slime.exe)")
+	cmd.Flags().StringVar(&stateDir, "state", "", "directory for model.json (default: squish/state/<instance> in the user's cache)")
+	cmd.Flags().StringVar(&conptyDir, "conpty", "", "directory holding conpty.dll (default: next to squish.exe, else the system's)")
+	cmd.Flags().StringVar(&remoteDir, "remote", "", "directory holding the builds of squish for hosts and their manifest (default: remote/ next to squish.exe)")
 	cmd.Flags().StringVar(&termName, "term", "", "TERM for panes on Unix (default xterm-256color)")
 	cmd.Flags().DurationVar(&idle, "idle", 10*time.Second, "exit after this long with no workspaces and no clients (0 never)")
 	cmd.Flags().StringVar(&logPath, "log", "", "append logs to this file instead of stderr")
@@ -144,7 +144,7 @@ func serve(logger *slog.Logger, o serveOptions) error {
 	}
 	l, err := daemon.Listen(name)
 	if err != nil {
-		return fmt.Errorf("listening on %s (is slime already running?): %w", name, err)
+		return fmt.Errorf("listening on %s (is squish already running?): %w", name, err)
 	}
 	ctx := context.Background()
 	rt, err := vt.NewRuntime(ctx, logger)
@@ -161,36 +161,36 @@ func serve(logger *slog.Logger, o serveOptions) error {
 	return srv.Serve(l)
 }
 
-// defaultStateDir is slime/state/<instance or default> in the user's
+// defaultStateDir is squish/state/<instance or default> in the user's
 // cache directory, beside the logs.
 func defaultStateDir() string {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
 	}
-	inst := os.Getenv("SLIME_INSTANCE")
+	inst := os.Getenv("SQUISH_INSTANCE")
 	if inst == "" {
 		inst = "default"
 	}
-	return filepath.Join(dir, "slime", "state", inst)
+	return filepath.Join(dir, "squish", "state", inst)
 }
 
 func stopCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop [instance]",
 		Short: "End the daemon of an instance, and every pane it owns",
-		Long: "Stops the daemon of an instance: the one named, or SLIME_INSTANCE's. Every\n" +
-			"pane's program is killed, and windows showing them see slime hang up. The\n" +
+		Long: "Stops the daemon of an instance: the one named, or SQUISH_INSTANCE's. Every\n" +
+			"pane's program is killed, and windows showing them see squish hang up. The\n" +
 			"daemon in ordinary use has no instance name and isn't stopped this way: it\n" +
-			"exits by itself once nothing is left in it (slime serve --idle).",
+			"exits by itself once nothing is left in it (squish serve --idle).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// The instance picks the pipe through the same variable the
-			// daemon and its panes carry (slime help env).
+			// daemon and its panes carry (squish help env).
 			if len(args) == 1 {
-				os.Setenv("SLIME_INSTANCE", args[0])
-			} else if os.Getenv("SLIME_INSTANCE") == "" {
-				return errors.New("no instance: name one, or set SLIME_INSTANCE")
+				os.Setenv("SQUISH_INSTANCE", args[0])
+			} else if os.Getenv("SQUISH_INSTANCE") == "" {
+				return errors.New("no instance: name one, or set SQUISH_INSTANCE")
 			}
 			return call(rpc.DaemonStop, nil, nil)
 		},
@@ -203,7 +203,7 @@ func connectCommand() *cobra.Command {
 		Use:   "connect",
 		Short: "Bridge stdin and stdout to the daemon, starting it if needed",
 		Long: "Copies stdin to the daemon and the daemon's replies to stdout, for a client\n" +
-			"that can't reach the socket itself: the local slime runs it over an SSH exec channel.",
+			"that can't reach the socket itself: the local squish runs it over an SSH exec channel.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var serve []string
@@ -259,7 +259,7 @@ func lsCommand() *cobra.Command {
 			// A daemon too old for daemon.info gets no header.
 			var info rpc.DaemonInfoResult
 			if err := c.Call(rpc.DaemonInfo, nil, &info); err == nil {
-				fmt.Fprintf(w, "slime\tbuild %s\tpid %d\n", info.Build.ID, info.PID)
+				fmt.Fprintf(w, "squish\tbuild %s\tpid %d\n", info.Build.ID, info.PID)
 			}
 			for _, ws := range l.Workspaces {
 				fmt.Fprintf(w, "workspace %d\t%s\t%s\n", ws.ID, ws.Name, workspaceState(ws))
@@ -362,7 +362,7 @@ func wsCommand() *cobra.Command {
 		Use:   "new [name]",
 		Short: "Create a workspace with a tab running the shell, and print its id",
 		Long: "Creates a workspace with a tab running the shell. Inside a pane, the windows\n" +
-			"on the pane's workspace open it too ($SLIME_WORKSPACE); --attach names another\n" +
+			"on the pane's workspace open it too ($SQUISH_WORKSPACE); --attach names another\n" +
 			"workspace's windows, and 0 none, leaving it detached for the next window.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -380,14 +380,14 @@ func wsCommand() *cobra.Command {
 			return nil
 		},
 	}
-	newWs.Flags().Uint32Var(&attach, "attach", envWorkspace(), "open it in the windows on this workspace (default $SLIME_WORKSPACE; 0 for none)")
+	newWs.Flags().Uint32Var(&attach, "attach", envWorkspace(), "open it in the windows on this workspace (default $SQUISH_WORKSPACE; 0 for none)")
 	var openAttach bool
 	open := &cobra.Command{
 		Use:   "open <name>",
-		Short: "Open a workspace init.lua defines (slime.workspace.define), or find the one of that name",
+		Short: "Open a workspace init.lua defines (squish.workspace.define), or find the one of that name",
 		Long: "Prints the id of the workspace named name: the one open under that name, else\n" +
-			"one made from init.lua's slime.workspace.define of it. --attach shows it in\n" +
-			"the windows on this console's workspace ($SLIME_WORKSPACE).",
+			"one made from init.lua's squish.workspace.define of it. --attach shows it in\n" +
+			"the windows on this console's workspace ($SQUISH_WORKSPACE).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p := rpc.WorkspaceOpenNamedParams{Name: args[0]}
@@ -409,8 +409,8 @@ func wsCommand() *cobra.Command {
 	var exportTo string
 	export := &cobra.Command{
 		Use:   "export <workspace>",
-		Short: "Print a workspace as a slime.workspace.define call for init.lua",
-		Long: "Prints the workspace as slime.workspace.define{...}: its tabs' layouts with\n" +
+		Short: "Print a workspace as a squish.workspace.define call for init.lua",
+		Long: "Prints the workspace as squish.workspace.define{...}: its tabs' layouts with\n" +
 			"their shares, each terminal pane's command (none for the shell) and the\n" +
 			"directory its shell last reported, and browsers' urls. A running program\n" +
 			"isn't captured: a shell comes back as a shell. -o appends it to a file.",
@@ -521,7 +521,7 @@ func tabCommand() *cobra.Command {
 		Use:   "new [command]...",
 		Short: "Start a tab; with several commands, one pane each, side by side or stacked",
 		Long: "Starts a tab in a workspace: the one given, else the pane's own inside a\n" +
-			"pane ($SLIME_WORKSPACE), else the most recently detached, else a new one. Each\n" +
+			"pane ($SQUISH_WORKSPACE), else the most recently detached, else a new one. Each\n" +
 			"command (CreateProcessW syntax; empty for the shell) gets a pane, sharing the\n" +
 			"tab equally along --split. With --browser, one browser pane showing the url\n" +
 			"instead, and no command.",
@@ -577,7 +577,7 @@ func tabCommand() *cobra.Command {
 			return nil
 		},
 	}
-	newTab.Flags().Uint32VarP(&wsID, "workspace", "w", envWorkspace(), "workspace to start it in (default $SLIME_WORKSPACE)")
+	newTab.Flags().Uint32VarP(&wsID, "workspace", "w", envWorkspace(), "workspace to start it in (default $SQUISH_WORKSPACE)")
 	newTab.Flags().StringVarP(&name, "name", "n", "", "name the tab")
 	newTab.Flags().StringVar(&split, "split", "right", "how several commands share the tab: right (side by side) or down (stacked)")
 	newTab.Flags().StringVar(&browser, "browser", "", "a browser pane showing this url, rather than a command's")
@@ -695,7 +695,7 @@ func paneCommand() *cobra.Command {
 		Long: "Starts a pane on a side of another, running command (empty for the shell),\n" +
 			"taking --percent of its space; with --browser, a browser pane showing the url,\n" +
 			"which a window's browser fills, and no command. Without a pane, beside the one\n" +
-			"this console runs in ($SLIME_PANE).",
+			"this console runs in ($SQUISH_PANE).",
 		Args: cobra.RangeArgs(1, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pane, args, err := paneArg(args)
@@ -740,7 +740,7 @@ func paneCommand() *cobra.Command {
 		Short: "Send a browser pane (this one, by default) to a url, in every window showing it",
 		Long: "Sends a browser pane to url, in every window showing it. A first argument\n" +
 			"that is a pane id (workspace.tab.pane) is the pane; without one, this console's\n" +
-			"($SLIME_PANE).",
+			"($SQUISH_PANE).",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// paneArg's rule, except that a url can have two dots too
@@ -916,7 +916,7 @@ func paneCommand() *cobra.Command {
 		Short: "Describe a pane (this one, by default): its command, title, size, and program status",
 		Long: "Describes a pane. A pane that moved tabs is found under the id it had too,\n" +
 			"and described under the id it has now. Without a pane, the one this console\n" +
-			"runs in ($SLIME_PANE).",
+			"runs in ($SQUISH_PANE).",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := paneOnly(args)
@@ -952,7 +952,7 @@ func callCommand() *cobra.Command {
 		Use:   "call <method> [params-json]",
 		Short: "Call any method on the daemon and print the raw reply",
 		Long: "Calls a method of the control plane with params given as JSON, and prints the\n" +
-			"result; slime help methods lists them. Errors print their code and message.",
+			"result; squish help methods lists them. Errors print their code and message.",
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var params json.RawMessage
@@ -1020,11 +1020,11 @@ func parseID(s string) (uint32, error) {
 }
 
 // errNoPane: a pane command run outside a pane, without a pane.
-var errNoPane = errors.New("which pane? none given, and this console isn't in a slime pane (no SLIME_PANE)")
+var errNoPane = errors.New("which pane? none given, and this console isn't in a squish pane (no SQUISH_PANE)")
 
 // paneArg is the pane a pane command names first, when it does, and the
 // arguments after it: a pane id is w.t.p, which none of the others look
-// like. Without one, the pane is this console's ($SLIME_PANE), or
+// like. Without one, the pane is this console's ($SQUISH_PANE), or
 // errNoPane.
 func paneArg(args []string) (rpc.PaneID, []string, error) {
 	if len(args) > 0 && strings.Count(args[0], ".") == 2 {
@@ -1071,7 +1071,7 @@ func dial(start bool, serve ...string) (net.Conn, error) {
 	cancel()
 	if err != nil && start && isNotRunning(err) {
 		if err := startDaemon(serve...); err != nil {
-			return nil, fmt.Errorf("starting slime: %w", err)
+			return nil, fmt.Errorf("starting squish: %w", err)
 		}
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -1086,7 +1086,7 @@ func dial(start bool, serve ...string) (net.Conn, error) {
 	}
 	if err != nil {
 		if isNotRunning(err) {
-			return nil, fmt.Errorf("slime isn't running")
+			return nil, fmt.Errorf("squish isn't running")
 		}
 		return nil, err
 	}

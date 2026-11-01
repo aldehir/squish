@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aldehir/slime/internal/config"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/config"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // errConfigFailed is a config that didn't load, already printed: the
@@ -25,12 +25,12 @@ func configCommand() *cobra.Command {
 	cfg := &cobra.Command{
 		Use:   "config",
 		Short: "Show, check, and reload the daemon's init.lua",
-		Long: "The daemon evaluates init.lua (slime config path says where; SLIME_CONFIG\n" +
+		Long: "The daemon evaluates init.lua (squish config path says where; SQUISH_CONFIG\n" +
 			"overrides) when it starts, whenever it or a .lua file beside it changes, and on\n" +
-			"slime config reload; a file that fails keeps the config as it was, and the\n" +
-			"windows show why. slime help lua describes\n" +
-			"what the file can do: slime.config for the settings, slime.bind for keys, and\n" +
-			"slime.action for actions that slime do and key bindings run.",
+			"squish config reload; a file that fails keeps the config as it was, and the\n" +
+			"windows show why. squish help lua describes\n" +
+			"what the file can do: squish.config for the settings, squish.bind for keys, and\n" +
+			"squish.action for actions that squish do and key bindings run.",
 	}
 	cfg.AddCommand(&cobra.Command{
 		Use:   "path",
@@ -46,7 +46,7 @@ func configCommand() *cobra.Command {
 				c.Close()
 			}
 			if path == "" {
-				return errors.New("no config directory: set SLIME_CONFIG, APPDATA, or XDG_CONFIG_HOME")
+				return errors.New("no config directory: set SQUISH_CONFIG, APPDATA, or XDG_CONFIG_HOME")
 			}
 			fmt.Println(path)
 			return nil
@@ -193,7 +193,7 @@ func prettyJSON(raw json.RawMessage) string {
 func actionsCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "actions",
-		Short: "List the actions init.lua defined, which slime do runs by name",
+		Short: "List the actions init.lua defined, which squish do runs by name",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var d rpc.ConfigDesc

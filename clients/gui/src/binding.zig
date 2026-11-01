@@ -1,5 +1,5 @@
 //! Key bindings: which key presses run an app action instead of going to
-//! the child. Actions take Ghostty's names, which init.lua's slime.bind
+//! the child. Actions take Ghostty's names, which init.lua's squish.bind
 //! uses to rebind them. Triggers are virtual keys, which follow the
 //! keyboard layout (VK_OEM_PLUS is whichever key types '+'), or a notch
 //! of the wheel (`Wheel`), parsed from chords such as "ctrl+shift+d".
@@ -181,7 +181,7 @@ pub const defaults = [_]Binding{
     .{ .trigger = .{ .vk = @intFromEnum(Wheel.down), .mods = ctrl }, .action = .{ .decrease_font_size = 1 } },
     .{ .trigger = .{ .vk = @intFromEnum(Wheel.up), .mods = ctrl_shift }, .action = .{ .increase_pane_font_size = 1 } },
     .{ .trigger = .{ .vk = @intFromEnum(Wheel.down), .mods = ctrl_shift }, .action = .{ .decrease_pane_font_size = 1 } },
-    // Only slime's tabs split; elsewhere the keys go to the child.
+    // Only squish's tabs split; elsewhere the keys go to the child.
     .{ .trigger = .{ .vk = 'O', .mods = ctrl_shift }, .action = .{ .new_split = .right }, .performable = true },
     .{ .trigger = .{ .vk = 'E', .mods = ctrl_shift }, .action = .{ .new_split = .down }, .performable = true },
     .{ .trigger = .{ .vk = win32.VK_RETURN, .mods = ctrl_shift }, .action = .toggle_split_zoom, .performable = true },

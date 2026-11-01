@@ -6,7 +6,7 @@
 //! `canvas.zig` and `draw/` are vendored from Ghostty's src/font/sprite
 //! (ghostty d0e72a3ab). Changes are limited to imports, with
 //! `compat.zig` standing in for Ghostty's font module, plus the spots
-//! marked "slime:".
+//! marked "squish:".
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

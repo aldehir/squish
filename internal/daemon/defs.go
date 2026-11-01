@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/aldehir/slime/internal/pty"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/pty"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // Defined workspaces: init.lua names a workspace and its layout with
-// slime.workspace.define; workspace.open makes it on demand (or finds
+// squish.workspace.define; workspace.open makes it on demand (or finds
 // the one of that name already open), autostart opens it when the
 // daemon starts with nothing to restore, and workspace.export writes a
 // live workspace back as such a definition.
@@ -140,7 +140,7 @@ func cloneTabs(tabs []*rpc.Layout) []*rpc.Layout {
 	return out
 }
 
-// workspaceExport writes a workspace as a slime.workspace.define call:
+// workspaceExport writes a workspace as a squish.workspace.define call:
 // its tabs' trees with their shares, each terminal pane's command (none
 // for the shell) and the directory its shell last reported as cwd, and
 // browsers as urls. A running program isn't captured: a shell comes
@@ -154,7 +154,7 @@ func (s *Server) workspaceExport(_ *callCtx, p rpc.WorkspaceParams) (*rpc.Worksp
 	}
 	shell := s.shellCommandLocked()
 	var b strings.Builder
-	fmt.Fprintf(&b, "slime.workspace.define{\n  name = %s,\n  tabs = {\n", luaQuote(ws.name))
+	fmt.Fprintf(&b, "squish.workspace.define{\n  name = %s,\n  tabs = {\n", luaQuote(ws.name))
 	for _, t := range ws.tabs {
 		if t.root == nil {
 			continue
@@ -175,7 +175,7 @@ func (s *Server) shellCommandLocked() string {
 	return ""
 }
 
-// exportNode writes n as slime.layout calls, indented depth levels: a
+// exportNode writes n as squish.layout calls, indented depth levels: a
 // two-way split as horizontal/vertical(ratio, a, b), a wider one as
 // the raw split table its shares need.
 func (s *Server) exportNode(b *strings.Builder, n *Node, shell string, depth int) {
@@ -189,7 +189,7 @@ func (s *Server) exportNode(b *strings.Builder, n *Node, shell string, depth int
 		if n.Axis == Column {
 			fn = "vertical"
 		}
-		fmt.Fprintf(b, "slime.layout.%s(%s,\n%s  ", fn, trimFloat(float64(n.Children[0].Share)/Whole), indent)
+		fmt.Fprintf(b, "squish.layout.%s(%s,\n%s  ", fn, trimFloat(float64(n.Children[0].Share)/Whole), indent)
 		s.exportNode(b, n.Children[0].Node, shell, depth+1)
 		fmt.Fprintf(b, ",\n%s  ", indent)
 		s.exportNode(b, n.Children[1].Node, shell, depth+1)
@@ -205,7 +205,7 @@ func (s *Server) exportNode(b *strings.Builder, n *Node, shell string, depth int
 	fmt.Fprintf(b, "%s} } }", indent)
 }
 
-// exportLeaf is one pane as slime.layout.pane{...} or browser{...}.
+// exportLeaf is one pane as squish.layout.pane{...} or browser{...}.
 func (s *Server) exportLeaf(id PaneID, shell string) string {
 	pn := s.panes[id]
 	switch p := pn.(type) {
@@ -213,7 +213,7 @@ func (s *Server) exportLeaf(id PaneID, shell string) string {
 		p.mu.Lock()
 		url := p.url
 		p.mu.Unlock()
-		return fmt.Sprintf("slime.layout.browser{ url = %s }", luaQuote(url))
+		return fmt.Sprintf("squish.layout.browser{ url = %s }", luaQuote(url))
 	case *Pane:
 		var fields []string
 		p.mu.Lock()
@@ -230,11 +230,11 @@ func (s *Server) exportLeaf(id PaneID, shell string) string {
 			fields = append(fields, "cwd = "+luaQuote(dir))
 		}
 		if len(fields) == 0 {
-			return "slime.layout.pane{}"
+			return "squish.layout.pane{}"
 		}
-		return "slime.layout.pane{ " + strings.Join(fields, ", ") + " }"
+		return "squish.layout.pane{ " + strings.Join(fields, ", ") + " }"
 	}
-	return "slime.layout.pane{}"
+	return "squish.layout.pane{}"
 }
 
 // trimFloat writes a ratio briefly: 0.7, not 0.700000.

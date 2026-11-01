@@ -14,8 +14,8 @@ import (
 	glua "github.com/yuin/gopher-lua"
 )
 
-// Processes: slime.exec runs a program on the daemon's host and waits
-// for it; slime.exec.start runs one and hands back a handle to write
+// Processes: squish.exec runs a program on the daemon's host and waits
+// for it; squish.exec.start runs one and hands back a handle to write
 // to, wait for, or kill, with its output collected for wait or passed
 // to callbacks as it comes (in tasks, through the dispatcher, in
 // order). A process doesn't keep a run alive; one still running when
@@ -40,9 +40,9 @@ type proc struct {
 	exited bool
 }
 
-const procType = "slime.process"
+const procType = "squish.process"
 
-// installExec sets slime.exec (callable, with exec.start) and the
+// installExec sets squish.exec (callable, with exec.start) and the
 // process type.
 func (r *Runner) installExec() {
 	L := r.L
@@ -55,7 +55,7 @@ func (r *Runner) installExec() {
 		return r.luaExec(L)
 	}))
 	L.SetMetatable(ex, mt)
-	r.slime.RawSetString("exec", ex)
+	r.squish.RawSetString("exec", ex)
 
 	pmt := L.NewTypeMetatable(procType)
 	methods := L.SetFuncs(L.NewTable(), map[string]glua.LGFunction{
@@ -76,7 +76,7 @@ func (r *Runner) installExec() {
 	}))
 }
 
-// luaExec is slime.exec(argv, opts): the program run to its end, with
+// luaExec is squish.exec(argv, opts): the program run to its end, with
 // {status, ok, stdout, stderr}; nil, err if it couldn't start, or
 // timed out (opts.timeout seconds; it's killed then).
 func (r *Runner) luaExec(L *glua.LState) int {
@@ -100,7 +100,7 @@ func (r *Runner) luaExec(L *glua.LState) int {
 	return 1
 }
 
-// luaExecStart is slime.exec.start(argv, opts): the process, started,
+// luaExecStart is squish.exec.start(argv, opts): the process, started,
 // as a handle; nil, err if it couldn't start.
 func (r *Runner) luaExecStart(L *glua.LState) int {
 	p, err := r.startProc(L, L.Get(1), L.OptTable(2, nil))

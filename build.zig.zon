@@ -1,7 +1,7 @@
 .{
-    .name = .slime,
+    .name = .squish,
     .version = "0.5.1",
-    .fingerprint = 0xa32d552b8d7ff826,
+    .fingerprint = 0xa45a74ed9b40efb7,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
         // The window, built into the same zig-out as the daemon.

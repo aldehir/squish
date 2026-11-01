@@ -11,11 +11,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/aldehir/slime/internal/daemon"
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/daemon"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
-// Upgrading: a new build of slime replaces the daemon serving. The old
+// Upgrading: a new build of squish replaces the daemon serving. The old
 // one stops keeping its layout (daemon.stop with save), the new one
 // starts and restores it from model.json, each pane relaunched: the
 // programs in them end, the shells come back where they were. Windows
@@ -68,7 +68,7 @@ func upgradeDaemon(force bool, out io.Writer) (bool, error) {
 		c.Close()
 		var rerr *rpc.Error
 		if errors.As(err, &rerr) && rerr.Code == rpc.CodeMethodNotFound {
-			return false, errors.New("the daemon is too old to keep its layout: slime stop it first")
+			return false, errors.New("the daemon is too old to keep its layout: squish stop it first")
 		}
 		return false, err
 	}
@@ -120,7 +120,7 @@ func upgradeDaemon(force bool, out io.Writer) (bool, error) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if err := startDaemon(stripServeArgs(info.Args)...); err != nil {
-		return false, fmt.Errorf("starting slime: %w", err)
+		return false, fmt.Errorf("starting squish: %w", err)
 	}
 	deadline = time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -139,11 +139,11 @@ func upgradeDaemon(force bool, out io.Writer) (bool, error) {
 		pid, build := nc.Hello.PID, nc.Hello.Build
 		nc.Close()
 		if pid != old && build.ID == ours.ID {
-			fmt.Fprintf(out, "slime upgraded: build %s (pid %d) replaced %s (pid %d)\n", ours.ID, pid, theirs.ID, old)
+			fmt.Fprintf(out, "squish upgraded: build %s (pid %d) replaced %s (pid %d)\n", ours.ID, pid, theirs.ID, old)
 			return true, nil
 		}
 	}
-	return false, errors.New("the new daemon didn't start in time; see slime.log")
+	return false, errors.New("the new daemon didn't start in time; see squish.log")
 }
 
 // stripServeArgs is a daemon's serve arguments without the log, which

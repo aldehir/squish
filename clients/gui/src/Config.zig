@@ -1,4 +1,4 @@
-//! User configuration: the settings init.lua's `slime.config{...}` set,
+//! User configuration: the settings init.lua's `squish.config{...}` set,
 //! which the daemon hands every window as one JSON object (config.get).
 //! The window takes the keys it understands and keeps a line about each
 //! of the rest (`errors`), which it shows under its title bar with the
@@ -7,7 +7,7 @@
 //! lines) still use.
 //!
 //! ```lua
-//! slime.config{
+//! squish.config{
 //!   font = { family = { "Cascadia Code", "Consolas" }, size = 12, antialias = "grayscale" },
 //!   theme = "Catppuccin Mocha",            -- a bundled theme or a file under themes/; or { light = "...", dark = "..." }
 //!   colors = { background = "#282c34", foreground = "#ffffff", cursor = "#ffcc00",
@@ -239,13 +239,13 @@ pub const LoadOptions = struct {
     light: bool = false,
 };
 
-/// The config directory: `%XDG_CONFIG_HOME%\slime` if that's set,
-/// else `%APPDATA%\slime`: where the daemon's init.lua is unless
-/// SLIME_CONFIG says otherwise, and where the window keeps its own
+/// The config directory: `%XDG_CONFIG_HOME%\squish` if that's set,
+/// else `%APPDATA%\squish`: where the daemon's init.lua is unless
+/// SQUISH_CONFIG says otherwise, and where the window keeps its own
 /// files (hosts, workspaces).
 pub fn defaultDir(alloc: Allocator, environ: *const std.process.Environ.Map) !?[]u8 {
     const base = environ.get("XDG_CONFIG_HOME") orelse environ.get("APPDATA") orelse return null;
-    return try std.fs.path.join(alloc, &.{ base, "slime" });
+    return try std.fs.path.join(alloc, &.{ base, "squish" });
 }
 
 /// Where a config's files are: what `loadFrom` needs besides the
@@ -294,7 +294,7 @@ fn appsUseLightTheme() bool {
 }
 
 /// Build the config from `settings`, the object the daemon describes
-/// init.lua's slime.config with (null or not an object: the defaults).
+/// init.lua's squish.config with (null or not an object: the defaults).
 /// The theme it names loads first; every color it sets applies over it.
 pub fn load(gpa: Allocator, io: std.Io, settings: std.json.Value, opts: LoadOptions) Allocator.Error!Config {
     var self: Config = .init(gpa);

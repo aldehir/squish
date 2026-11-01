@@ -1,11 +1,11 @@
-//! slime's own exports, compiled into libghostty-vt (`-Dvt-extra`) next
+//! squish's own exports, compiled into libghostty-vt (`-Dvt-extra`) next
 //! to its C API. The library's Zig API is `@import("root")`; terminals
 //! come in as the C API's handles. vt.go and view.go declare these.
 //!
 //! A View is one pane as a client sees and drives it: the render state
 //! frames are cut from, and the input state events act on (the
 //! selection gesture, the wheel's remainder, the pane's geometry). Its
-//! event handling is what slime's Session did against its own terminal.
+//! event handling is what squish's Session did against its own terminal.
 //! Calls on a View and its terminal must not overlap.
 
 const std = @import("std");
@@ -27,9 +27,9 @@ fn zigTerminal(t: Terminal) ?*vt.Terminal {
     return (t orelse return null).terminal;
 }
 
-/// The frame codec's layout id (frame.zig), which slime checks against
+/// The frame codec's layout id (frame.zig), which squish checks against
 /// its own.
-export fn slime_vt_frame_layout() u64 {
+export fn squish_vt_frame_layout() u64 {
     return Frames.layout_id;
 }
 
@@ -37,7 +37,7 @@ export fn slime_vt_frame_layout() u64 {
 /// caller frees with free() (null when there's none): for tests and
 /// debugging. A partial frame decodes against a blank screen of its
 /// size. Returns false for a bad frame.
-export fn slime_vt_frame_text(ptr: [*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) bool {
+export fn squish_vt_frame_text(ptr: [*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) bool {
     const bytes = ptr[0..len];
     if (bytes.len < 5) return false;
     var screen: Frames.Screen = .{};
@@ -47,28 +47,28 @@ export fn slime_vt_frame_text(ptr: [*]const u8, len: usize, out_ptr: *?[*]u8, ou
     return screenText(&screen, true, out_ptr, out_len);
 }
 
-/// A screen a client mirrors from a pane's frames, as slime's Session
+/// A screen a client mirrors from a pane's frames, as squish's Session
 /// does: for tests and debugging in Go.
-export fn slime_vt_screen_new() ?*Frames.Screen {
+export fn squish_vt_screen_new() ?*Frames.Screen {
     const s = alloc.create(Frames.Screen) catch return null;
     s.* = .{};
     return s;
 }
 
-export fn slime_vt_screen_free(s: *Frames.Screen) void {
+export fn squish_vt_screen_free(s: *Frames.Screen) void {
     s.deinit(alloc);
     alloc.destroy(s);
 }
 
 /// Apply a frame. Returns false for a bad one, or a partial one that
 /// doesn't fit the screen.
-export fn slime_vt_screen_apply(s: *Frames.Screen, ptr: [*]const u8, len: usize) bool {
+export fn squish_vt_screen_apply(s: *Frames.Screen, ptr: [*]const u8, len: usize) bool {
     s.apply(alloc, ptr[0..len]) catch return false;
     return true;
 }
 
-/// The screen's text, a line a row, as slime_vt_frame_text gives it.
-export fn slime_vt_screen_text(s: *const Frames.Screen, out_ptr: *?[*]u8, out_len: *usize) bool {
+/// The screen's text, a line a row, as squish_vt_frame_text gives it.
+export fn squish_vt_screen_text(s: *const Frames.Screen, out_ptr: *?[*]u8, out_len: *usize) bool {
     return screenText(s, false, out_ptr, out_len);
 }
 
@@ -148,7 +148,7 @@ const Source = struct {
     }
 };
 
-export fn slime_vt_source_new() ?*Source {
+export fn squish_vt_source_new() ?*Source {
     const s = alloc.create(Source) catch return null;
     s.* = .{};
     return s;
@@ -156,7 +156,7 @@ export fn slime_vt_source_new() ?*Source {
 
 /// Free a source. Its views must be gone. `t` is its terminal, which
 /// must still be open: a search holds places in it.
-export fn slime_vt_source_free(s: ?*Source, t: Terminal) void {
+export fn squish_vt_source_free(s: ?*Source, t: Terminal) void {
     const self = s orelse return;
     self.search.deinit(zigTerminal(t));
     self.copy.deinit();
@@ -169,7 +169,7 @@ export fn slime_vt_source_free(s: ?*Source, t: Terminal) void {
 /// "key<tab>action" each (copymode.Table.apply). The first line that
 /// doesn't parse comes back in `bad` (a slice of `text`; null for
 /// none). Returns false if out of memory.
-export fn slime_vt_source_copy_keys(s: ?*Source, ptr: [*]const u8, len: usize, bad_ptr: *?[*]const u8, bad_len: *usize) bool {
+export fn squish_vt_source_copy_keys(s: ?*Source, ptr: [*]const u8, len: usize, bad_ptr: *?[*]const u8, bad_len: *usize) bool {
     const self = s orelse return false;
     bad_ptr.* = null;
     bad_len.* = 0;
@@ -182,7 +182,7 @@ export fn slime_vt_source_copy_keys(s: ?*Source, ptr: [*]const u8, len: usize, b
 }
 
 /// Whether the terminal is in copy mode.
-export fn slime_vt_source_copy_mode(s: ?*Source) bool {
+export fn squish_vt_source_copy_mode(s: ?*Source) bool {
     const self = s orelse return false;
     return self.copy.isOn();
 }
@@ -190,7 +190,7 @@ export fn slime_vt_source_copy_mode(s: ?*Source) bool {
 /// The number libghostty-vt's key enum gives the key called `name`
 /// (ghostty's names: escape, arrow_up, page_down), or 0 for none: for
 /// tests, which encode key events.
-export fn slime_vt_key_code(ptr: [*]const u8, len: usize) u16 {
+export fn squish_vt_key_code(ptr: [*]const u8, len: usize) u16 {
     const key = std.meta.stringToEnum(vt.input.Key, ptr[0..len]) orelse return 0;
     return @intCast(@intFromEnum(key));
 }
@@ -242,7 +242,7 @@ const View = struct {
     /// horizontal, in 1/WHEEL_DELTA notches times the lines per notch.
     wheel_remainder: [2]i32 = .{ 0, 0 },
     /// Copy mode's keys as this view's client gave them
-    /// (slime_vt_view_copy_keys), over the defaults; null takes the
+    /// (squish_vt_view_copy_keys), over the defaults; null takes the
     /// source's, the daemon config's.
     copy_keys: ?copymode.Table = null,
 
@@ -265,7 +265,7 @@ const Result = extern struct {
     /// The pane looks different without new output: the selection or
     /// the viewport moved.
     changed: bool = false,
-    /// A selection drag sits past an edge: tick slime_vt_view_autoscroll
+    /// A selection drag sits past an edge: tick squish_vt_view_autoscroll
     /// every autoscroll_ms while this stays set.
     autoscroll: bool = false,
     /// Copy mode asks the client for a search needle (its / or ?): 1 to
@@ -290,13 +290,13 @@ fn shown(self: *View, live: *vt.Terminal) *vt.Terminal {
 
 /// Whether a search is still working through the history: another frame
 /// should follow for its count.
-export fn slime_vt_source_search_pending(s: ?*Source) bool {
+export fn squish_vt_source_search_pending(s: ?*Source) bool {
     const self = s orelse return false;
     return self.search.pending();
 }
 
 /// A view on the terminal whose source is `source`, which outlives it.
-export fn slime_vt_view_new(source: ?*Source) ?*View {
+export fn squish_vt_view_new(source: ?*Source) ?*View {
     const src = source orelse return null;
     const v = alloc.create(View) catch return null;
     v.* = .{ .source = src, .frame = .init(alloc), .out = .init(alloc), .copied = .init(alloc) };
@@ -308,7 +308,7 @@ export fn slime_vt_view_new(source: ?*Source) ?*View {
 /// `selection-word-chars` default.
 const default_word_boundary = [_]u21{ ' ', '\t', '\'', '"', '│', '`', '|', ':', ';', ',', '(', ')', '[', ']', '{', '}', '<', '>', '$' };
 
-export fn slime_vt_view_free(v: ?*View, t: Terminal) void {
+export fn squish_vt_view_free(v: ?*View, t: Terminal) void {
     const self = v orelse return;
     if (zigTerminal(t)) |term| {
         // The gesture's pin is in the terminal it's in, if that's still
@@ -331,9 +331,9 @@ export fn slime_vt_view_free(v: ?*View, t: Terminal) void {
 }
 
 /// Set the view's own copy mode keys, which it takes over the source's,
-/// as slime_vt_source_copy_keys does them; a null `ptr` drops them for
+/// as squish_vt_source_copy_keys does them; a null `ptr` drops them for
 /// the source's again. Returns false if out of memory.
-export fn slime_vt_view_copy_keys(v: ?*View, ptr: ?[*]const u8, len: usize, bad_ptr: *?[*]const u8, bad_len: *usize) bool {
+export fn squish_vt_view_copy_keys(v: ?*View, ptr: ?[*]const u8, len: usize, bad_ptr: *?[*]const u8, bad_len: *usize) bool {
     const self = v orelse return false;
     bad_ptr.* = null;
     bad_len.* = 0;
@@ -359,7 +359,7 @@ export fn slime_vt_view_copy_keys(v: ?*View, ptr: ?[*]const u8, len: usize, bad_
 /// Forget the input state the last client left, for a new one: a
 /// selection drag in progress (the selection it made stays), the wheel's
 /// remainder, and the cell motion was last reported in.
-export fn slime_vt_view_reset(v: ?*View, t: Terminal) void {
+export fn squish_vt_view_reset(v: ?*View, t: Terminal) void {
     const self = v orelse return;
     const term = zigTerminal(t) orelse return;
     self.gesture.reset(shown(self, term));
@@ -369,7 +369,7 @@ export fn slime_vt_view_reset(v: ?*View, t: Terminal) void {
     self.wheel_remainder = .{ 0, 0 };
 }
 
-/// Give a terminal slime's defaults: mode 2027 clusters multi-codepoint
+/// Give a terminal squish's defaults: mode 2027 clusters multi-codepoint
 /// graphemes (emoji sequences, combining marks) into one cell, as the
 /// Ghostty app does, and a null cursor blink blinks, including after a
 /// DECSCUSR 0, RIS, or DECSTR. `fresh` sets the modes too, for a new
@@ -380,7 +380,7 @@ export fn slime_vt_view_reset(v: ?*View, t: Terminal) void {
 /// empty OSC 22 still resets it to the I-beam. A restored terminal can't
 /// tell the default I-beam from one the program asked for, and takes the
 /// arrow.
-export fn slime_vt_terminal_defaults(t: Terminal, fresh: bool) void {
+export fn squish_vt_terminal_defaults(t: Terminal, fresh: bool) void {
     const term = zigTerminal(t) orelse return;
     term.modes.default.grapheme_cluster = true;
     if (fresh) term.modes.set(.grapheme_cluster, true);
@@ -394,7 +394,7 @@ export fn slime_vt_terminal_defaults(t: Terminal, fresh: bool) void {
 /// on as they're made, so PSReadLine's `?25l`, line redraw, and `?25h`
 /// often arrive apart; a frame between them flashes the cursor off on
 /// every key.
-export fn slime_vt_view_hold(v: ?*View, t: Terminal) u8 {
+export fn squish_vt_view_hold(v: ?*View, t: Terminal) u8 {
     const self = v orelse return 0;
     const term = zigTerminal(t) orelse return 0;
     // Copy mode's snapshot waits on nothing the program does.
@@ -406,7 +406,7 @@ export fn slime_vt_view_hold(v: ?*View, t: Terminal) u8 {
 
 /// End synchronized output that held frames too long, as Ghostty does,
 /// so a program that never ends its update can't freeze the screen.
-export fn slime_vt_end_sync(t: Terminal) void {
+export fn squish_vt_end_sync(t: Terminal) void {
     const term = zigTerminal(t) orelse return;
     term.modes.set(.synchronized_output, false);
 }
@@ -414,9 +414,9 @@ export fn slime_vt_end_sync(t: Terminal) void {
 /// Encode a frame of what changed in `t` since the last one, or of
 /// everything if `full`, which also means a client that has none of
 /// the images. The bytes are the View's own, valid until the next frame
-/// (slime_vt_view_image doesn't touch them). Returns false if out of
+/// (squish_vt_view_image doesn't touch them). Returns false if out of
 /// memory.
-export fn slime_vt_view_frame(
+export fn squish_vt_view_frame(
     v: ?*View,
     t: Terminal,
     full: bool,
@@ -512,7 +512,7 @@ const Image = extern struct {
 /// before it. Returns 0 past the last, 1 with the image (its pixels are
 /// the View's, valid until the next image or the View's end), 2 if it's
 /// gone from the terminal or won't fit in memory, to skip.
-export fn slime_vt_view_image(v: ?*View, t: Terminal, i: usize, out: *Image) u8 {
+export fn squish_vt_view_image(v: ?*View, t: Terminal, i: usize, out: *Image) u8 {
     const self = v orelse return 0;
     const term = zigTerminal(t) orelse return 0;
     out.* = .{};
@@ -536,7 +536,7 @@ export fn slime_vt_view_image(v: ?*View, t: Terminal, i: usize, out: *Image) u8 
 /// the program asked for win32-input-mode (DEC 9001), which
 /// libghostty-vt leaves to us. Returns false for a bad event or no
 /// memory.
-export fn slime_vt_view_event(
+export fn squish_vt_view_event(
     v: ?*View,
     t: Terminal,
     win32_input: bool,
@@ -557,7 +557,7 @@ export fn slime_vt_view_event(
 
 /// Scroll the viewport one row toward a selection drag past an edge,
 /// and extend the selection there.
-export fn slime_vt_view_autoscroll(v: ?*View, t: Terminal, result: *Result) bool {
+export fn squish_vt_view_autoscroll(v: ?*View, t: Terminal, result: *Result) bool {
     const self = v orelse return false;
     const term = shown(self, zigTerminal(t) orelse return false);
     result.* = .{};

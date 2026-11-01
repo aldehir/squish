@@ -1,4 +1,4 @@
-//! The app's state as widgets: the one place that knows both what slime
+//! The app's state as widgets: the one place that knows both what squish
 //! has (workspaces, tabs, panes, hosts) and what the UI draws (`ui/Tree`).
 //! `build` makes a tree each frame, in an arena: the title bar, the
 //! sidebar as a tree of sections, workspaces, tabs, and panes, the
@@ -273,7 +273,7 @@ const Builder = struct {
     }
 
     /// Local, then each remembered host: each with its daemon's
-    /// workspaces and then its tabs in no workspace (there while slime
+    /// workspaces and then its tabs in no workspace (there while squish
     /// couldn't be reached, or standing in for a host's panes).
     fn sections(self: *const Builder) Allocator.Error![]TreeRow {
         const app = self.app;
@@ -325,7 +325,7 @@ const Builder = struct {
         // A newer build is waiting for the section's daemon.
         if (app.upgradeWaiting(if (kind == .local) null else target.host)) {
             // Lucide's circle spans 20 of its 24 units: 13 DIPs in this box.
-            try items.append(self.arena, .{ .id = id.with(.upgrade), .kind = .{ .icon_button = .{ .icon = .circle_arrow_up, .size = 16, .tip = L("Upgrade slime") } } });
+            try items.append(self.arena, .{ .id = id.with(.upgrade), .kind = .{ .icon_button = .{ .icon = .circle_arrow_up, .size = 16, .tip = L("Upgrade squish") } } });
             try items.append(self.arena, .{ .kind = .{ .spacer = button_gap } });
         }
         // A host nothing uses can be dropped from the list.
@@ -665,7 +665,7 @@ const Builder = struct {
     };
 
     /// A pane's buttons: split right and down, and zoom while the tab
-    /// has several panes, if it runs in slime and is wide enough to hold
+    /// has several panes, if it runs in squish and is wide enough to hold
     /// them with room for some title. A browser's back, forward, and
     /// reload (stop while a page loads) come first, unlit while its
     /// browser can't use them; the strip drops them where they'd leave its

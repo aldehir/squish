@@ -90,7 +90,7 @@ pub fn isModifier(wparam: win32.WPARAM, lparam: win32.LPARAM) bool {
 
 /// The button a WM_*BUTTONDOWN/UP/DBLCLK message is about, and whether
 /// it was pressed. Null for other messages. A double click is the
-/// second press: slime counts the clicks on the terminal itself, from
+/// second press: squish counts the clicks on the terminal itself, from
 /// their times.
 pub fn mouseButton(msg: u32, wparam: win32.WPARAM) ?struct { MouseButton, bool } {
     return switch (msg) {

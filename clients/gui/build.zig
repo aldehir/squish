@@ -1,6 +1,6 @@
 const std = @import("std");
 
-/// The Win32 window: slime-gui.exe. Built on its own from this directory, or
+/// The Win32 window: squish-gui.exe. Built on its own from this directory, or
 /// as a path dependency of the repository's build.zig, which installs
 /// it beside the daemon.
 pub fn build(b: *std.Build) void {
@@ -42,13 +42,13 @@ pub fn build(b: *std.Build) void {
         exe_mod.linkSystemLibrary(lib, .{});
     }
     // Drawn in the title bar, as the taskbar shows it at small sizes.
-    exe_mod.addAnonymousImport("slime-small.svg", .{ .root_source_file = b.path("assets/icon/slime-small.svg") });
+    exe_mod.addAnonymousImport("squish-small.svg", .{ .root_source_file = b.path("assets/icon/squish-small.svg") });
     // The chrome's icons, embedded by the module next to them.
     exe_mod.addAnonymousImport("lucide", .{ .root_source_file = b.path("assets/icons/lucide/lucide.zig") });
     // The bundled themes for the `theme` config key, embedded: hundreds
     // of small files are slow to unpack and copy around next to the exe.
     exe_mod.addAnonymousImport("themes", .{ .root_source_file = embedThemes(b) });
-    // The frame and event codecs slime's library defines (src/Screen.zig),
+    // The frame and event codecs squish's library defines (src/Screen.zig),
     // imported from the daemon's tree rather than copied.
     exe_mod.addAnonymousImport("frame", .{ .root_source_file = b.path("../../internal/vt/frame.zig") });
     exe_mod.addAnonymousImport("event", .{ .root_source_file = b.path("../../internal/vt/event.zig") });
@@ -74,12 +74,12 @@ pub fn build(b: *std.Build) void {
     // reruns it only when the tool or an SVG changes.
     const icon = renderIcon(b);
     exe_mod.addWin32ResourceFile(.{
-        .file = b.path("src/slime.rc"),
+        .file = b.path("src/squish.rc"),
         .include_paths = &.{icon.ico.dirname()},
     });
 
     const exe = b.addExecutable(.{
-        .name = "slime-gui",
+        .name = "squish-gui",
         .root_module = exe_mod,
     });
     exe.subsystem = if (console) .console else .windows;
@@ -153,9 +153,9 @@ fn renderIcon(b: *std.Build) Icon {
         }),
     });
     const run = b.addRunArtifact(tool);
-    run.addFileArg(b.path("assets/icon/slime.svg"));
-    run.addFileArg(b.path("assets/icon/slime-small.svg"));
-    const ico = run.addOutputFileArg("slime.ico");
+    run.addFileArg(b.path("assets/icon/squish.svg"));
+    run.addFileArg(b.path("assets/icon/squish-small.svg"));
+    const ico = run.addOutputFileArg("squish.ico");
     const png_dir = run.addOutputDirectoryArg("png");
     return .{ .ico = ico, .png_dir = png_dir };
 }

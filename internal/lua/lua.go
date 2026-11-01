@@ -1,5 +1,5 @@
 // Package lua runs scripts against the daemon: gopher-lua (Lua 5.1,
-// pure Go), one state per run. A script's `slime` table (api.go)
+// pure Go), one state per run. A script's `squish` table (api.go)
 // reaches the daemon it runs in through Host: every namespaced method
 // is a thin wrapper over the same method table the wire dispatches on,
 // so a method that exists for one exists for all. Values cross as JSON
@@ -8,15 +8,15 @@
 // A run is a set of tasks (loop.go): the chunk itself, and each call
 // of a hook, timer, or process callback, which runs on a goroutine of
 // its own in a thread of the state. One task runs Lua at a time: the
-// baton. A blocking call (slime.sleep, wait, exec, a process's wait)
+// baton. A blocking call (squish.sleep, wait, exec, a process's wait)
 // lets the baton go while it waits in Go, so the others run meanwhile,
 // and Lua never runs concurrently with itself.
 //
 // The config file (internal/config) is one Runner that lives as long
 // as the daemon, whose functions are called again for each action and
-// key binding (Call); each `slime do` is another (Run) that ends when
+// key binding (Call); each `squish do` is another (Run) that ends when
 // its chunk has returned and no hook or timer is live, when it's
-// cancelled, or when it calls slime.stop.
+// cancelled, or when it calls squish.stop.
 package lua
 
 import (
@@ -29,7 +29,7 @@ import (
 
 	glua "github.com/yuin/gopher-lua"
 
-	"github.com/aldehir/slime/internal/rpc"
+	"github.com/aldehir/squish/internal/rpc"
 )
 
 // Host is the daemon a script runs in.
@@ -41,9 +41,9 @@ type Host interface {
 	// stderr, when the task printing has no Output of its own
 	// (CallOptions.Out).
 	Output(stream Stream, text string)
-	// Log is slime.log: a line for the daemon's log.
+	// Log is squish.log: a line for the daemon's log.
 	Log(text string)
-	// Invoke is slime.invoke(name, args): runs an action the config
+	// Invoke is squish.invoke(name, args): runs an action the config
 	// file defined and returns what it returned, or the error a Reply
 	// would carry.
 	Invoke(name string, args json.RawMessage) (json.RawMessage, error)
@@ -57,7 +57,7 @@ const (
 	Stderr Stream = "stderr"
 )
 
-// Output takes what a task prints: print to stdout, slime.log to
+// Output takes what a task prints: print to stdout, squish.log to
 // stderr.
 type Output func(stream Stream, text string)
 
@@ -89,10 +89,10 @@ const (
 type Runner struct {
 	L    *glua.LState
 	host Host
-	// slime is the script's table; its ids are read when a call fills
+	// squish is the script's table; its ids are read when a call fills
 	// them in, so a script can change them (they're swapped per task).
-	slime *glua.LTable
-	// stop is what slime.stop raises.
+	squish *glua.LTable
+	// stop is what squish.stop raises.
 	stop      *glua.LUserData
 	traceback glua.LValue
 	// persistent is Context.Persistent; pane is Context.Pane, what Run's
@@ -126,7 +126,7 @@ type Runner struct {
 	items        chan item
 	dropped      int
 	dispatchDone chan struct{}
-	// How the run ended, in a script: stopped by slime.stop (with
+	// How the run ended, in a script: stopped by squish.stop (with
 	// stopResult if it gave one), or failed by a task's error.
 	stopped    bool
 	stopResult glua.LValue
@@ -192,7 +192,7 @@ func New(host Host, ctx Context) *Runner {
 // returned (its first value, as JSON; nil for none) or why it stopped:
 // a syntax or runtime error with its stack trace, or ErrCancelled once
 // ctx is done. In a script, Run returns once the chunk has returned
-// and no hook or timer is live, or slime.stop was called (its result
+// and no hook or timer is live, or squish.stop was called (its result
 // wins), or a hook failed (its error); a persistent run returns when
 // the chunk does.
 func (r *Runner) Run(ctx context.Context, name, source string) (json.RawMessage, error) {
@@ -260,7 +260,7 @@ func (r *Runner) Call(ctx context.Context, opts CallOptions, fn glua.LValue, arg
 	return result, err
 }
 
-// CallNested runs fn with args inside the running task: slime.invoke
+// CallNested runs fn with args inside the running task: squish.invoke
 // from the config's own functions. The caller holds the baton.
 func (r *Runner) CallNested(fn glua.LValue, args ...glua.LValue) (json.RawMessage, error) {
 	t := r.current
@@ -327,34 +327,34 @@ func (r *Runner) Close() {
 	r.L.Close()
 }
 
-// Define sets slime.<name> to fn: what a host adds to the table beyond
-// what every script gets (the config file's slime.config and the rest).
+// Define sets squish.<name> to fn: what a host adds to the table beyond
+// what every script gets (the config file's squish.config and the rest).
 func (r *Runner) Define(name string, fn glua.LGFunction) {
-	r.slime.RawSetString(name, r.L.NewFunction(fn))
+	r.squish.RawSetString(name, r.L.NewFunction(fn))
 }
 
-// DefineIn adds slime.<group>.<name>: a function beside a namespace's
-// methods (slime.workspace.define beside slime.workspace.new).
+// DefineIn adds squish.<group>.<name>: a function beside a namespace's
+// methods (squish.workspace.define beside squish.workspace.new).
 func (r *Runner) DefineIn(group, name string, fn glua.LGFunction) {
-	if t, ok := r.slime.RawGetString(group).(*glua.LTable); ok {
+	if t, ok := r.squish.RawGetString(group).(*glua.LTable); ok {
 		t.RawSetString(name, r.L.NewFunction(fn))
 	}
 }
 
-// IDs is what a task runs for, as slime.workspace_id, tab_id, and
+// IDs is what a task runs for, as squish.workspace_id, tab_id, and
 // pane_id hold it while it runs (a script may have changed them).
 type IDs struct{ Workspace, Tab, Pane glua.LValue }
 
 // IDs reads the ids as they are now. The caller holds the baton (it's
 // a task, or in the host's Call).
 func (r *Runner) IDs() IDs {
-	return IDs{r.slime.RawGetString("workspace_id"), r.slime.RawGetString("tab_id"), r.slime.RawGetString("pane_id")}
+	return IDs{r.squish.RawGetString("workspace_id"), r.squish.RawGetString("tab_id"), r.squish.RawGetString("pane_id")}
 }
 
 func (r *Runner) setIDs(ids IDs) {
-	r.slime.RawSetString("workspace_id", ids.Workspace)
-	r.slime.RawSetString("tab_id", ids.Tab)
-	r.slime.RawSetString("pane_id", ids.Pane)
+	r.squish.RawSetString("workspace_id", ids.Workspace)
+	r.squish.RawSetString("tab_id", ids.Tab)
+	r.squish.RawSetString("pane_id", ids.Pane)
 }
 
 // idsOf is what a run for pane sets the ids to: nothing if it's zero.
@@ -375,7 +375,7 @@ func FromJSON(L *glua.LState, b []byte) (glua.LValue, error) { return fromJSON(L
 
 // onError is a task's error handler: it adds the stack trace to an
 // error's message where the error happened, before the stack unwinds,
-// and lets slime.stop through as it is.
+// and lets squish.stop through as it is.
 func (r *Runner) onError(L *glua.LState) int {
 	v := L.Get(1)
 	if v == r.stop || r.traceback == glua.LNil {
@@ -408,7 +408,7 @@ func (r *Runner) output(stream Stream, text string) {
 	r.host.Output(stream, text)
 }
 
-// errStopped is how runTask reports slime.stop, for Run and Call to
+// errStopped is how runTask reports squish.stop, for Run and Call to
 // tell from a failure.
 var errStopped = errors.New("stopped")
 

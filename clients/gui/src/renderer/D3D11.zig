@@ -154,7 +154,7 @@ wic_factory: ?*wic.IImagingFactory = null,
 /// GPU copies of one terminal's kitty images (see `image.Images`), by
 /// kitty image ID. Each terminal needs its own: image IDs are per
 /// terminal, and pixels are freed once uploaded, so these are the only
-/// copies; after `recover`, slime sends them again.
+/// copies; after `recover`, squish sends them again.
 pub const ImageTextures = struct {
     map: std.AutoArrayHashMapUnmanaged(u32, ImageTexture) = .empty,
     /// The `device_generation` the textures were made at.
@@ -492,7 +492,7 @@ fn createDeviceObjects(self: *D3D11, hwnd: win32.HWND, allow_warp: bool) Error!v
     self.d2d_device = gpu.d2d.device;
     self.d2d_context = gpu.d2d.context;
     self.brush = gpu.d2d.brush;
-    self.icon = Painter.Icon.init(gpu.d2d.context, @embedFile("slime-small.svg"), 1024);
+    self.icon = Painter.Icon.init(gpu.d2d.context, @embedFile("squish-small.svg"), 1024);
     self.lucide = Painter.initLucide(gpu.d2d.context);
     self.released = false;
     errdefer self.releaseDevice();
@@ -1134,7 +1134,7 @@ const AtlasTexture = struct {
 /// Mirror the snapshot's images on the GPU: upload new or changed images,
 /// freeing their pixels, and release textures of images no longer in it.
 fn uploadImages(self: *D3D11, alloc: std.mem.Allocator, images: *image.Images, textures: *ImageTextures) Error!void {
-    // Made on a device that's gone: slime sends the pixels again.
+    // Made on a device that's gone: squish sends the pixels again.
     textures.adopt(self.device_generation);
     var i: usize = 0;
     while (i < textures.map.count()) {

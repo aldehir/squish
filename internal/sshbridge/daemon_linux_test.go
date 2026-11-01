@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aldehir/slime/internal/daemon"
-	"github.com/aldehir/slime/internal/rpc"
-	"github.com/aldehir/slime/internal/sshtest"
-	"github.com/aldehir/slime/internal/vt"
+	"github.com/aldehir/squish/internal/daemon"
+	"github.com/aldehir/squish/internal/rpc"
+	"github.com/aldehir/squish/internal/sshtest"
+	"github.com/aldehir/squish/internal/vt"
 )
 
 // shellHost runs exec requests with sh, as a real host does, in a home
-// and temp directory of their own, so slime installs and runs its
+// and temp directory of their own, so squish installs and runs its
 // daemon there.
 func shellHost(t *testing.T) (run func(string, io.Reader, io.Writer, io.Writer) int, home string) {
 	root := t.TempDir()
@@ -33,7 +33,7 @@ func shellHost(t *testing.T) (run func(string, io.Reader, io.Writer, io.Writer) 
 		"TMPDIR=" + tmp,
 		"SHELL=/bin/sh",
 		"PATH=" + os.Getenv("PATH"),
-		"SLIME_INSTANCE=sshbridge-test",
+		"SQUISH_INSTANCE=sshbridge-test",
 	}
 	return func(command string, stdin io.Reader, stdout, stderr io.Writer) int {
 		cmd := osexec.Command("/bin/sh", "-c", command)
@@ -65,7 +65,7 @@ type rw struct {
 func (c rw) Close() error { return c.close() }
 
 // dialDaemon logs in over a new connection and returns a daemon client
-// talking to the host's slime.
+// talking to the host's squish.
 func dialDaemon(t *testing.T, srv *sshtest.Server, knownHosts string) *daemon.Client {
 	t.Helper()
 	d := startDialog(t, srv, knownHosts)
@@ -94,7 +94,7 @@ func TestDaemonOnLinux(t *testing.T) {
 	c := dialDaemon(t, srv, kh)
 	t.Cleanup(func() { syscall.Kill(int(c.Hello.PID), syscall.SIGKILL) })
 	build, _ := testRemote().For("linux", "amd64")
-	if _, err := os.Stat(filepath.Join(home, ".cache", "slime", "bin", build.ID, "slime")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".cache", "squish", "bin", build.ID, "squish")); err != nil {
 		t.Fatalf("not installed: %v", err)
 	}
 

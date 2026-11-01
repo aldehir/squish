@@ -1,4 +1,4 @@
-# Development environment for slime. Dot-source it:
+# Development environment for squish. Dot-source it:
 #
 #   . .\scripts\setup-msvc.ps1
 #
