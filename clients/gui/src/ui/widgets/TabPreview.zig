@@ -54,7 +54,7 @@ pub fn paint(ui: *const Ui, p: *Painter, tree: *const Tree, img: ?Painter.Image)
     if (src.w < 1 or src.h < 1) return;
     const r = place(ui, pv, tree.frame.window);
     const rad = ui.px(radius);
-    ui.paintShadow(p, r, rad);
+    ui.paintShadowCast(p, r, rad, false);
     // Without the copy, the popup alone says the row was rested on.
     if (img) |i| p.image(i, r, rad, 1) else p.fillRounded(r, rad, ui.theme.ground);
     const k = r.w / src.w;

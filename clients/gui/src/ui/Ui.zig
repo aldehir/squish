@@ -511,8 +511,14 @@ pub fn shadows(self: *const Ui) [2]Shadow {
 /// where the blur has that ring's share of its strength left, so together
 /// they step down its curve. The box itself, drawn over, hides the rest.
 pub fn paintShadow(self: *const Ui, p: *Painter, r: Rect, radius: f32) void {
+    self.paintShadowCast(p, r, radius, true);
+}
+
+/// `paintShadow`, falling below the box or, not `cast`, spread evenly
+/// around it (a popup over the terminal, not a pane beside one).
+pub fn paintShadowCast(self: *const Ui, p: *Painter, r: Rect, radius: f32, cast: bool) void {
     for (self.shadows()) |s| {
-        const fallen: Rect = .{ .x = r.x, .y = r.y + s.offset, .w = r.w, .h = r.h };
+        const fallen: Rect = .{ .x = r.x, .y = r.y + (if (cast) s.offset else 0), .w = r.w, .h = r.h };
         // At the box's edge a blur is at half strength; the rings share it.
         const color = colors.withAlpha(s.color, s.color[3] * 0.5 / blur_rings.len);
         for (blur_rings) |sigmas| {
