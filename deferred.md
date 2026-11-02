@@ -590,6 +590,10 @@ browser…" until the next one starts by itself.
 - **A dragged browser pane's picture is its strip over an empty box**
   until `CapturePreview` comes back (tens of ms); the page in it is as
   it was when the drag began.
+- **A hidden tab's preview shows a browser pane as a labelled box**
+  (favicon and title), its page only if a drag happened to leave a
+  picture: WebView2 can't be captured while hidden. A capture at
+  switch-away, or `CapturePreview` of a hidden control, would fill it.
 - **A failed browser comes back on a click** in its stand-in or Enter
   in its URL bar; a crash shows only the last page's title and url.
 - **Untried on a real display**: modifier chords into a page (posted

@@ -24,6 +24,26 @@ pub const Tree = struct {
     frame: Ui.Frame,
     /// A pane being dragged by its title strip, drawn over the frame.
     drag: ?Drag = null,
+    /// A hidden tab's preview, beside its row (`Ui.tip` is the row).
+    preview: ?Preview = null,
+
+    pub const Preview = struct {
+        /// The row it sits beside.
+        anchor: Rect,
+        /// The tab's area, which the renderer's copy covers; the copy is
+        /// drawn scaled into the popup.
+        source: Rect,
+        /// Browser panes, which the copy has as empty boxes: labelled,
+        /// with their page's picture when the browser has one.
+        pages: []const Page,
+
+        pub const Page = struct {
+            rect: Rect,
+            title: []const u16,
+            favicon: ?Painter.Image,
+            still: ?Painter.Image,
+        };
+    };
 
     pub const Drag = struct {
         /// Where the pane is, while it's on screen: dimmed, and copied
@@ -131,6 +151,8 @@ pub const Row = struct {
     bg: ?Color = null,
     /// The background's corners, in DIPs.
     radius: f32 = 0,
+    /// Resting on it shows a preview, the way a button shows its tip.
+    preview: bool = false,
 };
 
 pub const Label = struct {

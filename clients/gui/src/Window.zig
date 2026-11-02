@@ -115,8 +115,10 @@ web: Web,
 /// `syncKeyFocus` is moving the focus, which comes back here.
 syncing_focus: bool = false,
 
-/// Scratch for `render`.
+/// Scratch for `render`: what the renderer draws for the tab shown
+/// and its floats, and for the hidden tab previewed, built each frame.
 frame_panes: std.ArrayList(Renderer.Pane) = .empty,
+preview_panes: std.ArrayList(Renderer.Pane) = .empty,
 frame_fonts: std.ArrayList(Renderer.Fonts) = .empty,
 /// What the renderer draws a browser pane's box from: no grid, the
 /// configured background. Never built, so never holds anything.
@@ -269,6 +271,7 @@ pub fn destroy(self: *Window) void {
     }
     self.app.deinit();
     self.frame_panes.deinit(self.alloc);
+    self.preview_panes.deinit(self.alloc);
     self.frame_fonts.deinit(self.alloc);
     _ = win32.CloseHandle(self.output_event);
     self.alloc.destroy(self);
@@ -548,8 +551,10 @@ const Overlay = struct {
         return Ui.dragCapture(self.tree);
     }
 
-    pub fn paintOver(self: Overlay, p: *Painter, thumb: ?Painter.Image) void {
-        self.ui.paintDrag(p, self.tree, thumb);
+    /// With the copy a drag asked for, the drag; else the preview's,
+    /// the hidden tab's picture beside its row.
+    pub fn paintOver(self: Overlay, p: *Painter, img: ?Painter.Image) void {
+        if (Ui.dragCapture(self.tree) != null) self.ui.paintDrag(p, self.tree, img) else self.ui.paintPreview(p, self.tree, img);
     }
 };
 
@@ -560,59 +565,26 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
     const stats = self.stats_shown;
     var t: i64 = if (stats) Stats.now() else 0;
     self.frame_panes.clearRetainingCapacity();
+    self.preview_panes.clearRetainingCapacity();
     self.frame_fonts.clearRetainingCapacity();
     // With nothing shown, the chrome alone is drawn.
     const tab: ?*Tab = if (app.hasTabs()) app.activeTab() else null;
+    // The hidden tab whose row the mouse rests on, drawn in its own area
+    // for the picture beside the row.
+    const preview: ?*Tab = app.previewTab();
+    const preview_placed = app.previewPlaced();
     // The host field, a rename, or a dialog has the keyboard while open.
     const terminal_keys = app.keyboard() == .terminal;
+    // One per grid at most, never moved: the panes point at them.
+    const npanes = (if (tab != null) app.placed().panes.items.len else 0) + (if (preview_placed) |pp| pp.panes.items.len else 0);
+    try self.frame_fonts.ensureTotalCapacity(self.alloc, npanes);
     if (tab) |tb| {
-        const panes = app.placed().panes.items;
-        // One per grid at most, never moved: the panes point at them.
-        try self.frame_fonts.ensureTotalCapacity(self.alloc, panes.len);
-        for (panes) |p| {
-            const s = p.session;
-            // A browser's box, under its stand-in.
-            const term = s.term() orelse {
-                self.blank.cells.default_bg = self.config.background;
-                try self.frame_panes.append(self.alloc, .{
-                    .fonts = self.fontsOf(&self.grids.base),
-                    .cells = &self.blank.cells,
-                    .images = &self.blank.images,
-                    .textures = &self.blank.textures,
-                    .frame = p.frame,
-                    .viewport = .{},
-                    .grid_offset = .{ 0, 0 },
-                });
-                continue;
-            };
-            s.applyFrames();
-            if (stats) t = self.stats.lap(.update, t);
-            // Panes without focus show a hollow cursor, as an unfocused
-            // window's does.
-            const focus = s == tb.focus;
-            const grid = self.grids.get(p.size_pt);
-            try term.cells.build(self.alloc, &term.screen, grid, .{
-                .focused = focus and app.focused and terminal_keys,
-                .blink_visible = app.blink_visible,
-            }, .{
-                .cursor_color = self.config.@"cursor-color",
-                .cursor_text = self.config.@"cursor-text",
-                .selection_background = self.config.@"selection-background",
-                .selection_foreground = self.config.@"selection-foreground",
-                .search_match = self.config.@"search-match",
-            });
-            if (stats) t = self.stats.lap(.build, t);
-            try self.frame_panes.append(self.alloc, .{
-                .fonts = self.fontsOf(grid),
-                .cells = &term.cells,
-                .images = &term.images,
-                .textures = &term.textures,
-                .frame = p.frame,
-                .viewport = p.rect,
-                .grid_offset = .{ @floatFromInt(p.pad.left), @floatFromInt(p.pad.top) },
-            });
-        }
+        // Panes without focus show a hollow cursor, as an unfocused
+        // window's does.
+        const focus = if (app.focused and terminal_keys) tb.focus else null;
+        try self.buildPanes(&self.frame_panes, app.placed().panes.items, focus, app.blink_visible, &t);
     }
+    if (preview_placed) |pp| try self.buildPanes(&self.preview_panes, pp.panes.items, null, false, &t);
     self.placeBrowsers();
     self.armIdle();
     // Where each float's panes start: they're placed after the tab's.
@@ -629,12 +601,61 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
         // The chrome's ground, around and between the panes.
         .background = self.ui.theme.ground,
         .box = self.paneBox(&shadows),
+        .preview = if (preview) |pt| .{ .panes = self.preview_panes.items, .region = app.tabArea(pt) } else null,
     }, Overlay{ .ui = &self.ui, .tree = app.view() });
-    // More frames may come for what's drawn.
+    // More frames may come for what's drawn, the preview's panes too.
     for (app.placed().panes.items) |p| p.session.drawn();
+    if (preview_placed) |pp| for (pp.panes.items) |p| p.session.drawn();
     if (stats) {
         _ = self.stats.lap(.draw, t);
         self.stats.frames += 1;
+    }
+}
+
+/// What the renderer draws for `panes`, appended to `into`: each
+/// terminal's cells, built from the frames that came since the last
+/// draw, and a browser's box, blank under its stand-in. `focus` is the
+/// pane that shows a solid cursor, if any.
+fn buildPanes(self: *Window, into: *std.ArrayList(Renderer.Pane), panes: []const Placement.Pane, focus: ?*const Session, blink_visible: bool, t: *i64) !void {
+    const stats = self.stats_shown;
+    for (panes) |p| {
+        const s = p.session;
+        const term = s.term() orelse {
+            self.blank.cells.default_bg = self.config.background;
+            try into.append(self.alloc, .{
+                .fonts = self.fontsOf(&self.grids.base),
+                .cells = &self.blank.cells,
+                .images = &self.blank.images,
+                .textures = &self.blank.textures,
+                .frame = p.frame,
+                .viewport = .{},
+                .grid_offset = .{ 0, 0 },
+            });
+            continue;
+        };
+        s.applyFrames();
+        if (stats) t.* = self.stats.lap(.update, t.*);
+        const grid = self.grids.get(p.size_pt);
+        try term.cells.build(self.alloc, &term.screen, grid, .{
+            .focused = s == focus,
+            .blink_visible = blink_visible,
+        }, .{
+            .cursor_color = self.config.@"cursor-color",
+            .cursor_text = self.config.@"cursor-text",
+            .selection_background = self.config.@"selection-background",
+            .selection_foreground = self.config.@"selection-foreground",
+            .search_match = self.config.@"search-match",
+        });
+        if (stats) t.* = self.stats.lap(.build, t.*);
+        try into.append(self.alloc, .{
+            .fonts = self.fontsOf(grid),
+            .cells = &term.cells,
+            .images = &term.images,
+            .textures = &term.textures,
+            .frame = p.frame,
+            .viewport = p.rect,
+            .grid_offset = .{ @floatFromInt(p.pad.left), @floatFromInt(p.pad.top) },
+        });
     }
 }
 

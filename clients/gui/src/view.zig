@@ -88,6 +88,22 @@ pub fn build(app: *App, arena: Allocator) Allocator.Error!Tree {
     return b.build();
 }
 
+/// The hidden tab's preview beside the row the mouse rests on, once `t`
+/// is laid out (the row's place is known then): the tab's area, which
+/// the renderer copies, and its browser panes, whose boxes the copy has
+/// empty. None while no hidden tab's row is rested on.
+pub fn preview(app: *App, arena: Allocator, t: *const Tree) Allocator.Error!?Tree.Preview {
+    const tab = app.previewTab() orelse return null;
+    const row = Ui.find(t, app.ui.tip) orelse return null;
+    const placed = app.previewPlaced() orelse return null;
+    var pages: std.ArrayList(Tree.Preview.Page) = .empty;
+    for (placed.panes.items) |p| {
+        const b = p.session.browser() orelse continue;
+        try pages.append(arena, .{ .rect = p.rect, .title = p.session.title(), .favicon = b.favicon, .still = b.preview });
+    }
+    return .{ .anchor = row.rect, .source = app.tabArea(tab), .pages = pages.items };
+}
+
 const Builder = struct {
     arena: Allocator,
     app: *App,
@@ -520,6 +536,9 @@ const Builder = struct {
                         // highlight itself.
                         .bg = if (hovered or (active and tab.folded)) t.row_hover else null,
                         .radius = 6,
+                        // A tab that's not on screen shows a picture of
+                        // itself beside the row (`Tree.preview`).
+                        .preview = !app.isShown(tab),
                     },
                 },
             },
@@ -556,6 +575,8 @@ const Builder = struct {
             .h = pane_height,
             .bg = if (focused or self.ui.hover.eql(id)) t.row_hover else null,
             .radius = 6,
+            // Its tab's preview, as the tab's own row shows.
+            .preview = !self.app.isShown(tab),
         } } } };
     }
 

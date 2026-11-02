@@ -59,6 +59,7 @@ const widgets = struct {
     const CaptionButton = @import("widgets/CaptionButton.zig");
     const FloatBox = @import("widgets/FloatBox.zig");
     const Tooltip = @import("widgets/Tooltip.zig");
+    const TabPreview = @import("widgets/TabPreview.zig");
 };
 
 pub const Rect = Painter.Rect;
@@ -427,6 +428,13 @@ pub fn paintDrag(self: *const Ui, p: *Painter, tree: *const Tree, thumb: ?Painte
     widgets.PaneStrip.paintDrag(self, p, tree, thumb);
 }
 
+/// Over the frame `paint` drew: the hidden tab's preview beside its row
+/// (`tree.preview`), with `img`, the copy of its panes the renderer
+/// drew first, or none if the copy failed.
+pub fn paintPreview(self: *const Ui, p: *Painter, tree: *const Tree, img: ?Painter.Image) void {
+    widgets.TabPreview.paint(self, p, tree, img);
+}
+
 /// Track what the mouse is over. Returns true if that changed what's
 /// drawn.
 pub fn setHover(self: *Ui, hit: Id) bool {
@@ -439,11 +447,13 @@ pub fn setHover(self: *Ui, hit: Id) bool {
     return true;
 }
 
-/// Whether `id` is a button a tooltip names: an icon button with a tip.
+/// Whether resting on `id` shows something: an icon button with a tip,
+/// or a row with a preview.
 pub fn hasTip(tree: *const Tree, id: Id) bool {
     const node = find(tree, id) orelse return false;
     return switch (node.kind) {
         .icon_button => |b| b.tip.len > 0,
+        .row => |r| r.preview,
         else => false,
     };
 }
@@ -858,9 +868,13 @@ test "layout and hit testing a small tree" {
         .{ .kind = .{ .label = .{ .text = &.{}, .color = undefined } } },
         .{ .kind = .{ .row = .{ .children = &buttons } } },
     };
+    const hidden_tab: Id_ = .{ .target = .{ .tab = 3 } };
+    const shown_tab: Id_ = .{ .target = .{ .tab = 4 } };
     var regions = [_]Node{
         .{ .id = Id_.window(.caption), .kind = .{ .row = .{ .children = &bar } }, .rect = .{ .w = 1000, .h = 36 } },
         .{ .id = pane, .kind = .{ .pane = .{ .title = &.{}, .focused = true, .bg = undefined } }, .rect = .{ .x = 240, .y = 36, .w = 760, .h = 564 } },
+        .{ .id = hidden_tab, .kind = .{ .row = .{ .children = &.{}, .preview = true } }, .rect = .{ .y = 36, .w = 240, .h = 28 } },
+        .{ .id = shown_tab, .kind = .{ .row = .{ .children = &.{} } }, .rect = .{ .y = 64, .w = 240, .h = 28 } },
     };
     var tree: Tree = .{ .root = .{ .kind = .{ .canvas = &regions } }, .frame = ui.frame(1000, 600) };
     ui.layout(&tree);
@@ -877,6 +891,10 @@ test "layout and hit testing a small tree" {
     try std.testing.expect(find(&tree, Id_.window(.toggle_sidebar)) != null);
     try std.testing.expect(hasTip(&tree, Id_.window(.toggle_sidebar)));
     try std.testing.expect(!hasTip(&tree, Id_.window(.close)));
+    // A hidden tab's row shows a preview the way a button shows its tip;
+    // the shown tab's doesn't.
+    try std.testing.expect(hasTip(&tree, hidden_tab));
+    try std.testing.expect(!hasTip(&tree, shown_tab));
     try std.testing.expectEqual(@as(f32, 40), find(&tree, Id_.window(.toggle_sidebar)).?.rect.w);
     try std.testing.expectEqual(@as(f32, 36), find(&tree, Id_.window(.toggle_sidebar)).?.rect.h);
 }
@@ -903,5 +921,6 @@ test {
     _ = widgets.CaptionButton;
     _ = widgets.FloatBox;
     _ = widgets.Tooltip;
+    _ = widgets.TabPreview;
     _ = Menu;
 }

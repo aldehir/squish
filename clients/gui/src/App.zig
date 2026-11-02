@@ -121,6 +121,11 @@ views: u32 = 0,
 /// tabs has to place them after.
 placement: Placement = .{},
 placement_stale: bool = true,
+/// The hovered hidden tab's panes, placed in its area, while
+/// `previewTab` is one (`preview_placed_for`). Read through
+/// `previewPlaced`; cleared with `placement`.
+preview_placement: Placement = .{},
+preview_placed_for: ?*Tab = null,
 
 /// Something changed since the last frame. UI thread only. Set through
 /// `markDirty`, with the two below.
@@ -953,6 +958,7 @@ pub fn deinit(self: *App) void {
     self.host_states.deinit(self.alloc);
     self.arena.deinit();
     self.placement.deinit(self.alloc);
+    self.preview_placement.deinit(self.alloc);
     self.keymap.deinit();
     self.* = undefined;
 }
@@ -1201,7 +1207,7 @@ fn floatFrame(self: *const App, f: Tab.Floating) Rect {
 /// The area tab `t`'s panes tile: the pane area, or a float's box under
 /// its header, a gap in from its header, sides, and bottom: the gap
 /// between its panes.
-fn tabArea(self: *const App, t: *const Tab) Rect {
+pub fn tabArea(self: *const App, t: *const Tab) Rect {
     const f = t.float orelse return self.geometry.pane_area;
     const box = self.floatFrame(f);
     const g = &self.geometry;
@@ -3474,12 +3480,14 @@ fn cycle(self: *App, forward: bool) void {
 }
 
 /// A session's reader handed it a frame or a status: the active tab's
-/// panes draw, and the others' rows show activity.
+/// panes draw (and the previewed tab's), and the others' rows show
+/// activity.
 fn outputArrived(self: *App) void {
     const quiet = self.shell.tickCount() < self.quiet_until;
     var status_changed = false;
+    const preview = self.previewTab();
     for (self.tabs.items) |t| {
-        const shown = self.isShown(t);
+        const shown = self.isShown(t) or t == preview;
         var it = t.iterator();
         while (it.next()) |s| {
             if (s.status_changed.swap(false, .acq_rel)) status_changed = true;
@@ -5136,6 +5144,11 @@ pub fn view(self: *App) *const Tree {
     self.ui.layout(&self.tree.?);
     // The sidebar's rows scroll only as far as they go.
     if (Ui.find(&self.tree.?, .window(.sidebar))) |list| self.ui.sidebar_scroll = list.kind.tree.scroll;
+    // The preview sits by its row, which layout has just placed.
+    self.tree.?.preview = view_.preview(self, self.arena.allocator(), &self.tree.?) catch |err| preview: {
+        log.err("building the preview failed: {}", .{err});
+        break :preview null;
+    };
     self.tree_stale = false;
     self.views +%= 1;
     // The field with the keyboard scrolls to show its caret, from where
@@ -5158,9 +5171,42 @@ pub fn placed(self: *App) *const Placement {
     if (self.placement_stale) {
         self.placement_stale = false;
         self.placement.clear();
+        // The preview's goes with it, so it never holds a session that's
+        // gone either.
+        self.preview_placement.clear();
+        self.preview_placed_for = null;
         if (self.active < self.tabs.items.len) self.placeShown() catch |err| log.err("placing floats failed: {}", .{err});
     }
     return &self.placement;
+}
+
+/// The hidden tab whose row (or pane's row) the mouse has rested on
+/// (`ui.tip`), whose panes are drawn for a preview beside the row. None
+/// for a tab that's shown, or while a pane is dragged (the drag's
+/// picture takes the renderer's copy).
+pub fn previewTab(self: *App) ?*Tab {
+    if (self.pane_drag != null) return null;
+    const i = switch (self.ui.tip.target) {
+        .tab => |key| self.tabIndexOf(.{ .tab = key }) orelse return null,
+        .pane => |id| (self.findSession(id) orelse return null).tab,
+        else => return null,
+    };
+    const t = self.tabs.items[i];
+    return if (self.isShown(t)) null else t;
+}
+
+/// Where `previewTab`'s panes go, in its area, placed anew for another
+/// tab or once the placement is stale. The grids are the tab's current
+/// ones, which were fit to the same area, so no session is resized.
+pub fn previewPlaced(self: *App) ?*const Placement {
+    const t = self.previewTab() orelse return null;
+    _ = self.placed();
+    if (self.preview_placed_for != t) {
+        self.preview_placement.clear();
+        self.placeTab(t, &self.preview_placement);
+        self.preview_placed_for = t;
+    }
+    return &self.preview_placement;
 }
 
 /// Place the tab shown, then the floats over it bottom to top, each
@@ -5286,12 +5332,24 @@ fn setHover(self: *App, hit: Id) bool {
     const now = self.shell.tickCount();
     if (had_tip) self.tip_warm_until = now + tip_warm_ms;
     if (!Ui.hasTip(self.currentTree(), self.ui.hover)) return true;
-    if (now < self.tip_warm_until) {
+    const delay = self.tipDelay();
+    if (now < self.tip_warm_until or delay == 0) {
         _ = self.ui.showTip(self.currentTree());
         return true;
     }
-    self.shell.setTimer(.tip, self.shell.hoverTime());
+    self.shell.setTimer(.tip, delay);
     return true;
+}
+
+/// How long the mouse rests on what it's over before its tip shows: a
+/// row's preview comes at the configured delay, a button's tooltip at
+/// the system's hover time.
+fn tipDelay(self: *App) u32 {
+    const node = Ui.find(self.currentTree(), self.ui.hover) orelse return self.shell.hoverTime();
+    return switch (node.kind) {
+        .row => self.config.@"chrome-preview-delay",
+        else => self.shell.hoverTime(),
+    };
 }
 
 fn hideTip(self: *App) void {
@@ -7256,4 +7314,99 @@ test "a pane drags between a float and the tab under it: along an edge, or besid
     try std.testing.expect(app.pane_drag.?.drop == null);
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = @intFromFloat(box.x + 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
     try std.testing.expect(app.pane_drag == null);
+}
+
+test "resting on a hidden tab's row previews it beside the row, until the mouse leaves, a key, or a drag" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+    // The layout's quiet time would hide activity.
+    app.quiet_until = 0;
+    const a_row: Id = .{ .target = .{ .tab = tabs.a.key } };
+    const b_row: Id = .{ .target = .{ .tab = tabs.b.key } };
+    const Move = struct {
+        fn to(a: *App, r: Rect) void {
+            _ = a.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = .{ .x = @intFromFloat(r.x + r.w / 2), .y = @intFromFloat(r.y + r.h / 2) } } });
+        }
+    };
+
+    // The shown tab's row starts no timer, and previews nothing.
+    Move.to(app, Ui.find(app.view(), a_row).?.rect);
+    try std.testing.expect(app.ui.hover.eql(a_row));
+    try std.testing.expectEqual(null, shell.timers.get(.tip));
+    _ = app.update(.{ .tick = .tip });
+    try std.testing.expect(app.previewTab() == null);
+
+    // The hidden tab's: the hover time, then the preview beside the row,
+    // of the tab's area, its pane placed there; the shown tab's
+    // placement is untouched.
+    Move.to(app, Ui.find(app.view(), b_row).?.rect);
+    // At the configured delay, not the system's hover time (400 here).
+    try std.testing.expectEqual(@as(?u32, 100), shell.timers.get(.tip));
+    try std.testing.expect(app.previewTab() == null);
+    _ = app.update(.{ .tick = .tip });
+    try std.testing.expect(app.ui.tip.eql(b_row));
+    try std.testing.expectEqual(tabs.b, app.previewTab().?);
+    const built = app.view();
+    const pv = built.preview.?;
+    try std.testing.expectEqual(Ui.find(built, b_row).?.rect, pv.anchor);
+    try std.testing.expectEqual(app.geometry.pane_area, pv.source);
+    try std.testing.expectEqual(@as(usize, 0), pv.pages.len);
+    const pp = app.previewPlaced().?;
+    try std.testing.expectEqual(@as(usize, 1), pp.panes.items.len);
+    try std.testing.expectEqual(tabs.b, pp.panes.items[0].tab);
+    try std.testing.expectEqual(pv.source.w, pp.panes.items[0].frame.w);
+    try std.testing.expectEqual(@as(usize, 3), app.placed().panes.items.len);
+
+    // A frame for the previewed pane draws, and lights no dot.
+    app.dirty = false;
+    tabs.b.focus.unseen.store(true, .release);
+    _ = app.update(.output);
+    try std.testing.expect(app.dirty);
+    try std.testing.expect(!tabs.b.focus.activity);
+
+    // A key hides it, and the dot works again.
+    _ = app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = win32.VK_F1, .lparam = 0 } });
+    try std.testing.expect(app.previewTab() == null);
+    try std.testing.expect(app.view().preview == null);
+    tabs.b.focus.unseen.store(true, .release);
+    _ = app.update(.output);
+    try std.testing.expect(tabs.b.focus.activity);
+
+    // Its pane's row previews the tab as well.
+    const b_pane: Id = .{ .target = .{ .pane = tabs.b.focus.id } };
+    Move.to(app, Ui.find(app.view(), b_pane).?.rect);
+    if (shell.timers.get(.tip) != null) _ = app.update(.{ .tick = .tip });
+    try std.testing.expectEqual(tabs.b, app.previewTab().?);
+    try std.testing.expectEqual(Ui.find(app.view(), b_pane).?.rect, app.view().preview.?.anchor);
+
+    // A pane drag takes the renderer's copy: no preview while it lasts,
+    // and the next rest on the row shows it again.
+    Move.to(app, Ui.find(app.view(), b_row).?.rect);
+    if (shell.timers.get(.tip) != null) _ = app.update(.{ .tick = .tip });
+    try std.testing.expectEqual(tabs.b, app.previewTab().?);
+    app.startPaneDrag(tabs.a.focus, .{ .x = 300, .y = 100 });
+    try std.testing.expect(app.pane_drag != null);
+    try std.testing.expect(app.previewTab() == null);
+    try std.testing.expect(app.view().preview == null);
+    _ = app.update(.capture_lost);
+    try std.testing.expect(app.pane_drag == null);
+    _ = app.update(.mouse_leave);
+    Move.to(app, Ui.find(app.view(), b_row).?.rect);
+    if (shell.timers.get(.tip) != null) _ = app.update(.{ .tick = .tip });
+    try std.testing.expectEqual(tabs.b, app.previewTab().?);
+
+    // Shown, the tab previews no more: a press on its row activates it.
+    const r = Ui.find(app.view(), b_row).?.rect;
+    const pos: win32.POINT = .{ .x = @intFromFloat(r.x + r.w / 2), .y = @intFromFloat(r.y + r.h / 2) };
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = pos } });
+    try std.testing.expect(app.previewTab() == null);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = pos } });
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    try std.testing.expect(app.previewTab() == null);
+    try std.testing.expect(!Ui.find(app.view(), b_row).?.kind.row.preview);
+    try std.testing.expect(Ui.find(app.view(), a_row).?.kind.row.preview);
 }

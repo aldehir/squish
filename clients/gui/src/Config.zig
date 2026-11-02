@@ -14,7 +14,7 @@
 //!              cursor_text = "cell-background", selection_background = "#345",
 //!              selection_foreground = "cell-foreground", palette = { "#000", "#800" } },
 //!   window = { padding = { x = 3, y = { 3, 6 } } },  -- points; a pair is left/top, right/bottom
-//!   chrome = { scale = 1 },
+//!   chrome = { scale = 1, preview_delay = 100 },  -- ms resting on a hidden tab's row before its preview
 //!   pane = { gap = 10, radius = 10 },      -- DIPs, like the chrome
 //!   selection = { word_chars = " \t'\"" },
 //!   clipboard = { read = "ask", write = "allow" },
@@ -52,6 +52,11 @@ const log = std.log.scoped(.config);
 /// How much larger than the monitor's scale to draw the chrome: the
 /// title bar, session list, and dialogs. From 0.5 to 3.
 @"chrome-scale": f32 = 1,
+
+/// Milliseconds the mouse rests on a hidden tab's row (or a pane's row
+/// under it) before a picture of the tab shows beside it; 0 shows it at
+/// once. Buttons' tooltips keep the system's hover time.
+@"chrome-preview-delay": u32 = 100,
 /// Between panes, and around them in the terminal area, in DIPs (the
 /// chrome's units, so `chrome-scale` grows it too). From 0 to 64.
 @"pane-gap": f32 = 10,
@@ -426,6 +431,10 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
             const scale = try floatOf(value);
             if (scale < 0.5 or scale > 3) return error.InvalidValue;
             self.@"chrome-scale" = scale;
+        } else if (eql(u8, name, "preview_delay")) {
+            const ms = try unsignedOf(value);
+            if (ms > 10_000) return error.InvalidValue;
+            self.@"chrome-preview-delay" = ms;
         } else return error.UnknownKey,
         .pane => if (eql(u8, name, "gap")) {
             const gap = try floatOf(value);
@@ -633,7 +642,7 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
         \\{"window": {"padding": {"x": [2, 4], "y": 6}},
         \\ "selection": {"word_chars": "\\t;\\u{2502}"},
         \\ "theme": {"light": "No Such Latte", "dark": "No Such Mocha"},
-        \\ "clipboard": {"write": "deny"}, "chrome": {"scale": 1.25}, "ssh": {"terminfo": false}, "browser": {"idle": 30},
+        \\ "clipboard": {"write": "deny"}, "chrome": {"scale": 1.25, "preview_delay": 50}, "ssh": {"terminfo": false}, "browser": {"idle": 30},
         \\ "font": {"size": -1, "antialias": "subpixel", "weight": 3}, "colors": {"background": "nope"}, "nonsense": 1}
     );
     defer c.deinit();
@@ -645,6 +654,7 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     try std.testing.expectEqual(.ask, c.@"clipboard-read");
     try std.testing.expectEqual(.deny, c.@"clipboard-write");
     try std.testing.expectEqual(1.25, c.@"chrome-scale");
+    try std.testing.expectEqual(50, c.@"chrome-preview-delay");
     try std.testing.expect(!c.@"ssh-terminfo");
     try std.testing.expectEqual(30, c.@"browser-idle");
     try std.testing.expectEqual(12, c.@"font-size");
@@ -663,6 +673,7 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     defer none.deinit();
     try std.testing.expectEqual(12, none.@"font-size");
     try std.testing.expectEqual(600, none.@"browser-idle");
+    try std.testing.expectEqual(100, none.@"chrome-preview-delay");
 
     var pane = try testConfig(
         \\{"pane": {"gap": 0, "radius": 4.5}}

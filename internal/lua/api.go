@@ -292,7 +292,7 @@ one without applying it.
     theme = "Catppuccin Mocha",      -- a bundled Ghostty theme, or a file under themes/ beside init.lua
     colors = { background = "#282c34", cursor = "#ffcc00" },
     window = { padding = { x = 3, y = 3 } },
-    chrome = { scale = 1 },
+    chrome = { scale = 1, preview_delay = 100 }, -- ms resting on a hidden tab's row before its preview shows (0: at once)
     pane = { gap = 10, radius = 10 }, -- DIPs between panes and of their corners; 0 tiles them square
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     shell = { command = "pwsh -NoLogo" },

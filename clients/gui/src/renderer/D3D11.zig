@@ -244,6 +244,12 @@ pub const Frame = struct {
     background: [4]f32,
     /// How each pane's box looks.
     box: BoxStyle,
+    /// Panes drawn first and alone, and the part of the target copied
+    /// before the frame proper is drawn: `paintOver` gets the copy (a
+    /// hidden tab's preview).
+    preview: ?Preview = null,
+
+    pub const Preview = struct { panes: []const Pane, region: Painter.Rect };
 };
 
 /// A pane's box: a rounded rectangle in its terminal's background, with
@@ -655,7 +661,9 @@ pub fn resize(self: *D3D11, width: u32, height: u32) Error!void {
 /// `paint(*Painter, Ui.Layer)` method, and `capture() ?Painter.Rect` and
 /// `paintOver(*Painter, ?Painter.Image)`: when `capture` names a part of
 /// the frame, that part is copied once `paint` is done, and `paintOver`
-/// draws over the frame with the copy. While there's an overlay chain,
+/// draws over the frame with the copy; with `Frame.preview`, its panes
+/// are drawn first and alone, its region copied, and the target cleared
+/// again, and `paintOver` gets that copy. While there's an overlay chain,
 /// `paint`'s `.ground` goes into the swap chain and its `.over` and
 /// `paintOver` into the overlay, which is drawn while `hasOver()` says
 /// it has something; otherwise `paint` draws `.all`. The floats
@@ -673,7 +681,8 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
     // Each grid's atlases once, however many panes are at its size; a
     // grid no pane is drawn at any more loses its copies after.
     for (self.gpu_fonts.values()) |*g| g.seen = false;
-    for (f.panes) |pane| {
+    const preview_panes: []const Pane = if (f.preview) |pv| pv.panes else &.{};
+    for ([_][]const Pane{ f.panes, preview_panes }) |panes| for (panes) |pane| {
         const gop = self.gpu_fonts.getOrPut(self.alloc, pane.fonts.id) catch return error.HResult;
         if (!gop.found_existing) gop.value_ptr.* = .{};
         const g = gop.value_ptr;
@@ -682,8 +691,22 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
         try g.atlas.upload(self.device, ctx, pane.fonts.atlas);
         try g.color_atlas.upload(self.device, ctx, pane.fonts.color_atlas);
         try g.lcd_atlas.upload(self.device, ctx, pane.fonts.lcd_atlas);
-    }
+    };
     defer self.dropUnseenFonts();
+
+    // The preview's panes alone, copied, and cleared away: the frame
+    // proper is drawn over them from scratch.
+    var img: ?Painter.Image = null;
+    if (f.preview) |pv| {
+        ctx.clearState();
+        ctx.omSetRenderTargets(&.{rtv});
+        ctx.clearRenderTargetView(rtv, &f.background);
+        try self.drawPanes(alloc, f, pv.panes);
+        img = self.captureRegion(pv.region) catch |err| img: {
+            log.warn("capturing the preview failed: {}", .{err});
+            break :img null;
+        };
+    }
 
     // Direct2D shares the context and leaves its own state bound.
     ctx.clearState();
@@ -703,25 +726,26 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
         try self.paintUi(ui, .ground);
         try self.drawFloats(alloc, f, ui, rtv);
     }
+    // The drag's copy and the preview's share the texture; the UI never
+    // asks for both at once.
+    const capture = ui.capture();
+    const over = capture != null or f.preview != null;
     if (self.overlay) |*o| {
         if (f.floats.len == 0 or layered) try self.paintUi(ui, .ground);
-        const capture = ui.capture();
-        const img = if (capture) |region| self.captureRegion(region) catch |err| img: {
+        if (capture) |region| img = self.captureRegion(region) catch |err| img: {
             log.warn("capturing the frame failed: {}", .{err});
             break :img null;
-        } else null;
+        };
         try self.presentGround();
         if (self.float_chain) |*fc| try self.drawFloatChain(fc, alloc, f, ui, layered);
-        try self.drawOverlay(o, ui, capture != null, img);
+        try self.drawOverlay(o, ui, over, img);
     } else {
         if (f.floats.len > 0) try self.paintUi(ui, .over) else try self.paintUi(ui, .all);
-        if (ui.capture()) |region| {
-            const img = self.captureRegion(region) catch |err| img: {
-                log.warn("capturing the frame failed: {}", .{err});
-                break :img null;
-            };
-            try self.paintOver(ui, img);
-        }
+        if (capture) |region| img = self.captureRegion(region) catch |err| img: {
+            log.warn("capturing the frame failed: {}", .{err});
+            break :img null;
+        };
+        if (over) try self.paintOver(ui, img);
         try self.presentGround();
     }
     if (self.comp.dirty) try self.commit();
@@ -828,10 +852,10 @@ fn checkPresent(hr: win32.HRESULT) error{ DeviceLost, HResult }!void {
     try com.check(hr, "IDXGISwapChain::Present");
 }
 
-/// The overlay's frame: `ui`'s `.over` and, if `capture`, `paintOver`
+/// The overlay's frame: `ui`'s `.over` and, if `with_copy`, `paintOver`
 /// with `img`, over transparency. An overlay with nothing to show is
 /// presented cleared, and then left alone.
-fn drawOverlay(self: *D3D11, o: *LayerChain, ui: anytype, capture: bool, img: ?Painter.Image) error{ DeviceLost, HResult }!void {
+fn drawOverlay(self: *D3D11, o: *LayerChain, ui: anytype, with_copy: bool, img: ?Painter.Image) error{ DeviceLost, HResult }!void {
     const over = ui.hasOver();
     if (!over) {
         if (o.shown) try self.clearLayer(o);
@@ -850,7 +874,7 @@ fn drawOverlay(self: *D3D11, o: *LayerChain, ui: anytype, capture: bool, img: ?P
     d2d.beginDraw();
     var p = self.painter();
     ui.paint(&p, .over);
-    if (capture) ui.paintOver(&p, img);
+    if (with_copy) ui.paintOver(&p, img);
     try com.check(d2d.endDraw(), "ID2D1DeviceContext::EndDraw(overlay)");
     try checkPresent(o.swap_chain.?.present(0, 0));
 }
