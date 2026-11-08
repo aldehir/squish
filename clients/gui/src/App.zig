@@ -1543,16 +1543,29 @@ fn showWorkspace(self: *App, key: u32) void {
     self.markDirty();
 }
 
-/// Show shown workspace `ws`'s active tab, as squish last said, else its
-/// first docked one. Nothing for a workspace with no tabs here yet.
+/// Show shown workspace `ws`'s active tab, as squish last said (a float,
+/// raised, if that's what it is), else its first docked one. Nothing for
+/// a workspace with no tabs here yet.
 fn activateWorkspace(self: *App, ws: *const Workspace) void {
     var first: ?usize = null;
     for (self.tabs.items, 0..) |t, i| {
-        if (t.float != null or t.conn != ws.conn or t.ws != ws.id) continue;
+        if (t.conn != ws.conn or t.ws != ws.id) continue;
         if (t.id.eql(ws.active_tab)) return self.activate(i);
-        if (first == null) first = i;
+        if (first == null and t.float == null) first = i;
     }
     if (first) |i| self.activate(i);
+}
+
+/// A workspace's row was clicked. With the tabs in the sidebar the row
+/// folds its tabs away by hiding the workspace, and shows it again; with
+/// them on top the row picks the workspace whose tabs the strip lists
+/// (hiding it is in its menu).
+fn workspaceClicked(self: *App, ws: *const Workspace) void {
+    if (!ws.shown) return self.showWorkspace(ws.key);
+    switch (self.ui.tabs) {
+        .top => self.activateWorkspace(ws),
+        .sidebar => self.hideWorkspace(ws.key),
+    }
 }
 
 /// Hide workspace `key`: let go of its tabs, which its squish keeps
@@ -4074,7 +4087,7 @@ fn endPaletteScroll(self: *App) void {
 
 /// The title bar's strip of tabs in the current tree, laid out, while
 /// the tabs are on top.
-fn tabStrip(self: *App) ?*const Ui.Node {
+pub fn tabStrip(self: *App) ?*const Ui.Node {
     return Ui.find(self.currentTree(), .window(.tab_strip));
 }
 
@@ -5535,9 +5548,11 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
 /// A wheel turned at a client position: the pane under it, or the one
 /// with the mouse, scrolls.
 fn wheelInput(self: *App, m: Msg.Mouse) void {
+    // What's under the wheel, once: the pane with the mouse needs no
+    // looking up.
+    const hit: Id = if (self.mode == .palette or !self.mouse_in_terminal) self.hitAt(m.pos) else .none;
     // Over the palette, its list scrolls.
     if (self.mode == .palette and m.msg == win32.WM_MOUSEWHEEL) {
-        const hit = self.hitAt(m.pos);
         if (hit.target == .palette or hit.eql(.window(.palette)) or hit.eql(.window(.field))) {
             const p = &self.mode.palette;
             const delta: i16 = @bitCast(@as(u16, @truncate(m.wparam >> 16)));
@@ -5552,7 +5567,6 @@ fn wheelInput(self: *App, m: Msg.Mouse) void {
     // Over the title bar's tabs, they scroll sideways: a wheel's notch
     // (up is left), or a tilt's (right is right).
     if (!self.mouse_in_terminal and (m.msg == win32.WM_MOUSEWHEEL or m.msg == win32.WM_MOUSEHWHEEL)) if (self.tabStrip()) |strip| {
-        const hit = self.hitAt(m.pos);
         if (hit.eql(.window(.tab_strip)) or (hit.target != .none and Ui.findIn(strip, hit) != null)) {
             const delta: f32 = @floatFromInt(@as(i16, @bitCast(@as(u16, @truncate(m.wparam >> 16)))));
             const notches = if (m.msg == win32.WM_MOUSEHWHEEL) delta / 120 else -delta / 120;
@@ -5566,7 +5580,6 @@ fn wheelInput(self: *App, m: Msg.Mouse) void {
     };
     // Over the sidebar's rows (not a menu over them), they scroll.
     if (!self.mouse_in_terminal and m.msg == win32.WM_MOUSEWHEEL) if (self.sidebarList()) |list| {
-        const hit = self.hitAt(m.pos);
         // (Rows' icons have no id: a miss elsewhere isn't one of them.)
         if (hit.eql(.window(.sidebar_scrollbar)) or (hit.target != .none and Ui.findIn(list, hit) != null)) {
             const delta: i16 = @bitCast(@as(u16, @truncate(m.wparam >> 16)));
@@ -5576,7 +5589,6 @@ fn wheelInput(self: *App, m: Msg.Mouse) void {
         }
     };
     const pane = if (self.mouse_in_terminal) (self.focusedSession() orelse return) else pane: {
-        const hit = self.hitAt(m.pos);
         if (hit.part != .terminal) return;
         break :pane self.shownPane(hit.target) orelse return;
     };
@@ -5653,15 +5665,7 @@ fn widgetClick(self: *App, hit: Id) void {
         .body => switch (hit.target) {
             .menu => |i| self.chooseItem(i),
             .palette => |i| self.choosePalette(i),
-            // With the tabs on top, a shown workspace's row switches the
-            // strip to its tabs; hiding it is in its menu.
-            else => if (self.workspaceOf(hit.target)) |ws| {
-                if (!ws.shown) {
-                    self.showWorkspace(ws.key);
-                } else if (self.ui.tabs == .top) {
-                    self.activateWorkspace(ws);
-                } else self.hideWorkspace(ws.key);
-            },
+            else => if (self.workspaceOf(hit.target)) |ws| self.workspaceClicked(ws),
         },
         .show => if (self.workspaceOf(hit.target)) |ws| self.showWorkspace(ws.key),
         .hide => if (self.workspaceOf(hit.target)) |ws| self.hideWorkspace(ws.key),
@@ -7524,9 +7528,13 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     built = app.view();
     try std.testing.expect(Ui.findIn(Ui.find(built, .window(.tab_strip)).?, a_id) == Ui.find(built, a_id));
     try std.testing.expect(Ui.find(built, .{ .target = .{ .pane = tabs.a.focus.id } }) == null);
-    // Between the tabs is the caption's, which moves the window.
+    // Between the tabs is the strip's own: not a tab (and past them,
+    // the caption's, `TabStrip.pastTabs`).
     const b_rect = Ui.find(built, b_id).?.rect;
     try std.testing.expectEqual(Id.window(.tab_strip), app.ui.hitTest(built, b_rect.x - 1, b_rect.y + 5));
+    const strip_now = Ui.find(built, .window(.tab_strip)).?;
+    try std.testing.expect(!TabStrip.pastTabs(strip_now, b_rect.x - 1));
+    try std.testing.expect(TabStrip.pastTabs(strip_now, b_rect.right() + 1));
 
     // Resting on hidden B previews it under its tab.
     Move.to(app, b_rect);

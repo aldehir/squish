@@ -104,8 +104,12 @@ pub fn preview(app: *App, arena: Allocator, t: *const Tree) Allocator.Error!?Tre
         const b = p.session.browser() orelse continue;
         try pages.append(arena, .{ .rect = p.rect, .title = p.session.title(), .favicon = b.favicon, .still = b.preview });
     }
-    const in_strip = if (Ui.find(t, .window(.tab_strip))) |strip| Ui.findIn(strip, app.ui.tip) != null else false;
-    return .{ .anchor = row.rect, .source = app.tabArea(tab), .pages = pages.items, .side = if (in_strip) .below else .right };
+    // A strip tab partly scrolled out of the strip is anchored by the
+    // part of it that shows.
+    const strip = Ui.find(t, .window(.tab_strip));
+    const in_strip = if (strip) |s| Ui.findIn(s, app.ui.tip) != null else false;
+    const anchor = if (in_strip) row.rect.intersect(strip.?.rect) else row.rect;
+    return .{ .anchor = anchor, .source = app.tabArea(tab), .pages = pages.items, .side = if (in_strip) .below else .right };
 }
 
 const Builder = struct {
@@ -156,35 +160,31 @@ const Builder = struct {
     fn titleBar(self: *const Builder) Allocator.Error!Node {
         const app = self.app;
         const t = &self.ui.theme;
-        const title: []const u16 = if (app.hasTabs()) app.activeTab().focus.title() else &.{};
         const maximized = app.shell.maximized();
-        if (self.ui.tabs == .top and app.hasTabs()) {
-            const children = try self.nodes(&.{
-                .{ .kind = .{ .spacer = 12 } },
-                .{ .kind = .{ .icon = .{ .icon = null, .size = 18 } } },
-                .{ .kind = .{ .spacer = 6 } },
-                self.sidebarToggle(),
-                .{ .kind = .{ .spacer = 4 } },
-                try self.tabStrip(),
-                // A sliver of caption past the strip, however full.
-                .{ .kind = .{ .spacer = 12 } },
-                self.captionButton(.minimize, maximized),
-                self.captionButton(.maximize, maximized),
-                self.captionButton(.close, maximized),
-            });
-            return .{ .id = .window(.caption), .kind = .{ .row = .{ .children = children, .bg = t.ground } }, .rect = self.frame.titlebar };
-        }
-        const children = try self.nodes(&.{
+        var children: std.ArrayList(Node) = .empty;
+        try children.appendSlice(self.arena, &.{
             .{ .kind = .{ .spacer = 12 } },
             .{ .kind = .{ .icon = .{ .icon = null, .size = 18 } } },
             .{ .kind = .{ .spacer = 6 } },
             self.sidebarToggle(),
-            .{ .kind = .{ .label = .{ .text = title, .font = .title, .color = if (app.focused) t.text_muted else t.text_inactive, .pad_x = 8 } } },
+        });
+        if (self.ui.tabs == .top and app.hasTabs()) {
+            try children.appendSlice(self.arena, &.{
+                .{ .kind = .{ .spacer = 4 } },
+                try self.tabStrip(),
+                // A sliver of caption past the strip, however full.
+                .{ .kind = .{ .spacer = 12 } },
+            });
+        } else {
+            const title: []const u16 = if (app.hasTabs()) app.activeTab().focus.title() else &.{};
+            try children.append(self.arena, .{ .kind = .{ .label = .{ .text = title, .font = .title, .color = if (app.focused) t.text_muted else t.text_inactive, .pad_x = 8 } } });
+        }
+        try children.appendSlice(self.arena, &.{
             self.captionButton(.minimize, maximized),
             self.captionButton(.maximize, maximized),
             self.captionButton(.close, maximized),
         });
-        return .{ .id = .window(.caption), .kind = .{ .row = .{ .children = children, .bg = t.ground } }, .rect = self.frame.titlebar };
+        return .{ .id = .window(.caption), .kind = .{ .row = .{ .children = children.items, .bg = t.ground } }, .rect = self.frame.titlebar };
     }
 
     /// The strip under the title bar that says what's wrong with the
@@ -262,6 +262,22 @@ const Builder = struct {
             .font = if (active) .body_strong else .body,
             .color = if (active) t.text_strong else t.text_muted,
         } } });
+        try self.tabTrailing(&items, tab, active, hovered, mostPressing(tab));
+        // A tab that's not on screen shows a picture of itself under it
+        // (`Tree.preview`).
+        return .{ .id = id, .kind = .{ .row = .{
+            .children = items.items,
+            .bg = if (hovered or active) t.row_hover else null,
+            .radius = 6,
+            .preview = !app.isShown(tab),
+        } } };
+    }
+
+    /// What ends a tab's row, in the strip and in the sidebar: its close
+    /// button while `hovered`; else `status`, the most pressing of its
+    /// panes', if any; else an activity dot; else the margin alone.
+    fn tabTrailing(self: *const Builder, items: *std.ArrayList(Node), tab: *const Tab, active: bool, hovered: bool, status: ?ProgramStatus.State) Allocator.Error!void {
+        const id: Id = .{ .target = .{ .tab = tab.key } };
         if (hovered) {
             try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
             // Lucide's x spans 12 of its 24 units: 8 DIPs in this box.
@@ -272,9 +288,9 @@ const Builder = struct {
                 .key = if (active) self.keys.close_tab.slice() else &.{},
             } } });
             try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
-        } else if (mostPressing(tab)) |status| {
+        } else if (status) |s| {
             try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
-            try items.append(self.arena, .{ .kind = .{ .status = .{ .status = status, .spinner = app.spinner_step } } });
+            try items.append(self.arena, .{ .kind = .{ .status = .{ .status = s, .spinner = self.app.spinner_step } } });
             try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
         } else if (tab.activity()) {
             try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
@@ -283,14 +299,6 @@ const Builder = struct {
         } else {
             try items.append(self.arena, .{ .kind = .{ .spacer = 8 } });
         }
-        // A tab that's not on screen shows a picture of itself under it
-        // (`Tree.preview`).
-        return .{ .id = id, .kind = .{ .row = .{
-            .children = items.items,
-            .bg = if (hovered or active) t.row_hover else null,
-            .radius = 6,
-            .preview = !app.isShown(tab),
-        } } };
     }
 
     fn captionButton(self: *const Builder, part: Id.Part, maximized: bool) Node {
@@ -606,28 +614,7 @@ const Builder = struct {
             .color = if (active) t.text_strong else t.text_muted,
         } } });
         // Folded, its panes' most pressing status stands in for theirs.
-        const folded_status = if (tab.folded) mostPressing(tab) else null;
-        if (hovered) {
-            try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
-            // Lucide's x spans 12 of its 24 units: 8 DIPs in this box.
-            try items.append(self.arena, .{ .id = id.with(.close), .kind = .{ .icon_button = .{
-                .icon = .x,
-                .size = 16,
-                .tip = L("Close tab"),
-                .key = if (active) self.keys.close_tab.slice() else &.{},
-            } } });
-            try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
-        } else if (folded_status) |status| {
-            try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
-            try items.append(self.arena, .{ .kind = .{ .status = .{ .status = status, .spinner = app.spinner_step } } });
-            try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
-        } else if (tab.activity()) {
-            try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
-            try items.append(self.arena, .{ .kind = .{ .status = .{ .status = null, .activity = true } } });
-            try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
-        } else {
-            try items.append(self.arena, .{ .kind = .{ .spacer = 8 } });
-        }
+        try self.tabTrailing(&items, tab, active, hovered, if (tab.folded) mostPressing(tab) else null);
         var panes: std.ArrayList(TreeRow) = .empty;
         var it = tab.iterator();
         const keys = app.hasTabs() and app.activeTab() == tab;

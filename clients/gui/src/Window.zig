@@ -36,6 +36,7 @@ const Renderer = @import("renderer/D3D11.zig");
 const Painter = Renderer.Painter;
 const Web = @import("Web.zig");
 const PaneStrip = @import("ui/widgets/PaneStrip.zig");
+const TabStrip = @import("ui/widgets/TabStrip.zig");
 
 const log = std.log.scoped(.window);
 
@@ -417,8 +418,12 @@ fn hitTestFrame(self: *Window, lparam: win32.LPARAM) win32.LRESULT {
     const hit = self.app.hitAt(pos);
     if (hit.target != .window) return win32.HTCLIENT;
     return switch (hit.part) {
-        // Between the strip's tabs, the bar is the caption still.
-        .caption, .tab_strip => win32.HTCAPTION,
+        .caption => win32.HTCAPTION,
+        // Past the strip's tabs, the bar is the caption still. Between
+        // two of them it isn't: there a double click or a right click
+        // that misses a tab by a pixel would maximize the window or open
+        // its system menu.
+        .tab_strip => if (self.app.tabStrip()) |strip| (if (TabStrip.pastTabs(strip, @floatFromInt(pos.x))) win32.HTCAPTION else win32.HTCLIENT) else win32.HTCAPTION,
         .minimize => win32.HTMINBUTTON,
         .maximize => win32.HTMAXBUTTON,
         .close => win32.HTCLOSE,

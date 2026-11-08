@@ -120,6 +120,19 @@ pub const Rect = struct {
         return .{ .x = @round(self.x + (self.w - w) / 2), .y = @round(self.y + (self.h - h) / 2), .w = w, .h = h };
     }
 
+    /// The part of this rectangle inside `other`: empty, at `other`'s
+    /// nearest edge, where they're apart.
+    pub fn intersect(self: Rect, other: Rect) Rect {
+        const x = std.math.clamp(self.x, other.x, other.right());
+        const y = std.math.clamp(self.y, other.y, other.bottom());
+        return .{
+            .x = x,
+            .y = y,
+            .w = @max(0, @min(self.right(), other.right()) - x),
+            .h = @max(0, @min(self.bottom(), other.bottom()) - y),
+        };
+    }
+
     fn d2d(self: Rect) d2d1.RECT_F {
         return .{ .left = self.x, .top = self.y, .right = self.right(), .bottom = self.bottom() };
     }
@@ -278,6 +291,10 @@ test "Rect" {
     try std.testing.expect(!r.contains(40, 20));
     try std.testing.expectEqual(Rect{ .x = 12, .y = 21, .w = 26, .h = 38 }, r.inset(2, 1));
     try std.testing.expectEqual(Rect{ .x = 20, .y = 35, .w = 10, .h = 10 }, r.center(10, 10));
+    // Hanging out of another on the left, the part inside; apart, empty.
+    try std.testing.expectEqual(Rect{ .x = 25, .y = 20, .w = 15, .h = 40 }, r.intersect(.{ .x = 25, .y = 0, .w = 100, .h = 100 }));
+    try std.testing.expectEqual(Rect{ .x = 10, .y = 20, .w = 30, .h = 40 }, r.intersect(.{ .x = 0, .y = 0, .w = 100, .h = 100 }));
+    try std.testing.expectEqual(@as(f32, 0), r.intersect(.{ .x = 50, .y = 0, .w = 10, .h = 100 }).w);
 }
 
 test "an image of another device generation isn't drawn" {

@@ -82,8 +82,8 @@ pub const Part = enum {
     /// The sidebar's tree of rows, where no row is; and its scrollbar.
     sidebar,
     sidebar_scrollbar,
-    /// The title bar's tab strip between its tabs, which moves the
-    /// window like the caption, and takes the wheel.
+    /// The title bar's tab strip where no tab is, which takes the wheel;
+    /// past the last tab it moves the window like the caption.
     tab_strip,
     /// The host field, or the button that opens it.
     connect,

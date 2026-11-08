@@ -40,9 +40,12 @@ pub fn layout(ui: *const Ui, node: *Node) void {
     const most = @max(0, @round(s.content_w - r.w));
     var scroll = std.math.clamp(@round(s.scroll), 0, most);
     if (s.reveal) if (s.active) |a| if (a < s.items.len) {
+        // Rounded, as the clamp above: a strip of a fractional width
+        // (a flexible share of the bar at an odd scale) would put every
+        // tab on a half pixel.
         const x0 = (w + gap) * @as(f32, @floatFromInt(a));
-        if (x0 < scroll) scroll = x0;
-        if (x0 + w > scroll + r.w) scroll = x0 + w - r.w;
+        if (x0 < scroll) scroll = @round(x0);
+        if (x0 + w > scroll + r.w) scroll = @round(x0 + w - r.w);
         scroll = std.math.clamp(scroll, 0, most);
     };
     s.scroll = scroll;
@@ -61,6 +64,13 @@ pub fn scrolledBy(node: *const Node, pixels: f32) f32 {
     return std.math.clamp(@round(s.scroll + pixels), 0, most);
 }
 
+/// Whether `x` is past `node`'s last tab: the strip's run that is the
+/// caption's, unlike the gaps between two tabs.
+pub fn pastTabs(node: *const Node, x: f32) bool {
+    const s = node.kind.tab_strip;
+    return x >= node.rect.x - s.scroll + s.content_w;
+}
+
 /// A tab about tab `key`, for the tests.
 fn testItem(key: u32) Node {
     return .{ .id = .{ .target = .{ .tab = key } }, .kind = .{ .row = .{ .children = &.{} } } };
@@ -76,10 +86,14 @@ test "tabs share the strip within their range, a gap apart" {
     try std.testing.expectEqual(@as(f32, 100 + max_tab_w + item_gap), items[1].rect.x);
     try std.testing.expectEqual(@as(f32, 0), node.kind.tab_strip.scroll);
     // Hit testing finds a tab; between two is the strip; past the last,
-    // the strip still.
+    // the strip still, which is where it's the caption.
     try std.testing.expectEqual(Id{ .target = .{ .tab = 2 } }, ui.hitNode(&node, items[1].rect.x + 5, 10).?);
     try std.testing.expectEqual(Id.window(.tab_strip), ui.hitNode(&node, items[1].rect.x - 1, 10).?);
+    try std.testing.expect(!pastTabs(&node, items[1].rect.x - 1));
     try std.testing.expectEqual(Id.window(.tab_strip), ui.hitNode(&node, 990, 10).?);
+    try std.testing.expect(pastTabs(&node, 990));
+    try std.testing.expect(pastTabs(&node, items[2].rect.right()));
+    try std.testing.expect(!pastTabs(&node, items[2].rect.right() - 1));
     try std.testing.expect(Ui.findIn(&node, .{ .target = .{ .tab = 3 } }) != null);
 }
 
@@ -114,4 +128,23 @@ test "tabs past the end scroll, and the active one is brought into view" {
     try std.testing.expectEqual(@as(f32, 50), s.scroll);
     try std.testing.expectEqual(@as(f32, -50), items[0].rect.x);
     try std.testing.expectEqual(@as(f32, 49), scrolledBy(&node, -1));
+    // Scrolled, the run past the tabs starts where the last one ends.
+    try std.testing.expect(pastTabs(&node, items[19].rect.right()));
+    try std.testing.expect(!pastTabs(&node, items[19].rect.right() - 1));
+}
+
+test "revealing in a strip of a fractional width lands the tabs on whole pixels" {
+    const ui: Ui = .{ .scale = 1, .fonts = .none, .theme = undefined };
+    var items: [20]Node = undefined;
+    for (&items, 0..) |*it, i| it.* = testItem(@intCast(i));
+    var node: Node = .{ .id = Id.window(.tab_strip), .kind = .{ .tab_strip = .{ .items = &items, .active = 19, .reveal = true } }, .rect = .{ .w = 731.5, .h = 36 }, .clip = true };
+    ui.layoutNode(&node);
+    const s = &node.kind.tab_strip;
+    try std.testing.expectEqual(@round(s.scroll), s.scroll);
+    try std.testing.expectEqual(@round(items[19].rect.x), items[19].rect.x);
+    try std.testing.expect(items[19].rect.right() <= 731.5 + 0.5);
+    // The first likewise.
+    s.active = 0;
+    ui.layoutNode(&node);
+    try std.testing.expectEqual(@as(f32, 0), node.kind.tab_strip.scroll);
 }
