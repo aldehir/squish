@@ -1,6 +1,6 @@
 .{
     .name = .squish_gui,
-    .version = "0.6.0",
+    .version = "0.6.1",
     .fingerprint = 0x7f96c2446ec9f944,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
