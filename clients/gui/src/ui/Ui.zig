@@ -32,6 +32,7 @@ const com = win32.com;
 const dwrite = win32.dwrite;
 const Painter = @import("../renderer/Painter.zig");
 const colors = @import("theme.zig");
+const Config = @import("../Config.zig");
 pub const Theme = colors.Theme;
 pub const TextField = @import("TextField.zig");
 pub const Dialog = @import("Dialog.zig");
@@ -60,6 +61,7 @@ const widgets = struct {
     const FloatBox = @import("widgets/FloatBox.zig");
     const Tooltip = @import("widgets/Tooltip.zig");
     const TabPreview = @import("widgets/TabPreview.zig");
+    const TabStrip = @import("widgets/TabStrip.zig");
 };
 
 pub const Rect = Painter.Rect;
@@ -104,6 +106,14 @@ sidebar_width: f32 = default_sidebar_width,
 /// their scrollbar last left them. Layout clamps it; `App.view` keeps
 /// the clamped value.
 sidebar_scroll: f32 = 0,
+/// Where the tabs are listed: in the sidebar, or a strip in the title
+/// bar (`chrome.tabs`).
+tabs: Config.Tabs = .sidebar,
+/// How far the strip's tabs are scrolled left, in pixels, kept as
+/// `sidebar_scroll` is; and the tab it last brought into view, by key,
+/// so it does so again only when another becomes active.
+tab_strip_scroll: f32 = 0,
+tab_strip_revealed: ?u32 = null,
 /// Lines in the notice under the title bar (what's wrong with the
 /// config); 0 while there's none.
 notice_lines: u8 = 0,
@@ -214,6 +224,17 @@ pub fn paneBarHeight(self: *const Ui) f32 {
     return self.px(widgets.PaneStrip.bar_height);
 }
 
+/// List the tabs in the sidebar or the title bar (a config reload).
+pub fn setTabs(self: *Ui, tabs: Config.Tabs) void {
+    if (self.tabs == tabs) return;
+    self.tabs = tabs;
+    self.hover = .none;
+    self.pressed = .none;
+    self.tip = .none;
+    self.tab_strip_scroll = 0;
+    self.tab_strip_revealed = null;
+}
+
 pub fn toggleSidebar(self: *Ui) void {
     self.sidebar_shown = !self.sidebar_shown;
     self.hover = .none;
@@ -231,6 +252,7 @@ fn Widget(comptime tag: std.meta.Tag(Kind)) type {
         .text_field => widgets.TextFieldView,
         .status => widgets.Status,
         .fold, .tree => widgets.TreeList,
+        .tab_strip => widgets.TabStrip,
         .pane => widgets.PaneStrip,
         .dialog => widgets.Modal,
         .menu => widgets.Popup,
@@ -275,6 +297,7 @@ pub fn children(node: *const Node) []Node {
         .stack, .canvas => |nodes| nodes,
         .pane => |p| p.buttons,
         .float => |f| f.children,
+        .tab_strip => |s| s.items,
         else => &.{},
     };
 }
@@ -438,9 +461,10 @@ pub fn paintPreview(self: *const Ui, p: *Painter, tree: *const Tree, img: ?Paint
 /// Track what the mouse is over. Returns true if that changed what's
 /// drawn.
 pub fn setHover(self: *Ui, hit: Id) bool {
-    // The caption, dividers, and corners draw nothing for hover, nor
-    // does a pane's title strip; a pane shows its buttons.
-    const h: Id = if (hit.part == .caption or hit.part == .title or hit.target == .divider or hit.target == .corner) .none else hit;
+    // The caption (and the strip between its tabs), dividers, and
+    // corners draw nothing for hover, nor does a pane's title strip; a
+    // pane shows its buttons.
+    const h: Id = if (hit.part == .caption or hit.part == .tab_strip or hit.part == .title or hit.target == .divider or hit.target == .corner) .none else hit;
     if (self.hover.eql(h)) return false;
     self.hover = h;
     self.tip = .none;
@@ -928,5 +952,6 @@ test {
     _ = widgets.FloatBox;
     _ = widgets.Tooltip;
     _ = widgets.TabPreview;
+    _ = widgets.TabStrip;
     _ = Menu;
 }

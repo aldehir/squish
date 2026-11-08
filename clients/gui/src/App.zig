@@ -35,6 +35,7 @@ const Menu = Ui.Menu;
 const Palette = Ui.Palette;
 const PaletteView = @import("ui/widgets/PaletteView.zig");
 const TreeList = @import("ui/widgets/TreeList.zig");
+const TabStrip = @import("ui/widgets/TabStrip.zig");
 const PaneStrip = @import("ui/widgets/PaneStrip.zig");
 const Modal = @import("ui/widgets/Modal.zig");
 const TextFieldView = @import("ui/widgets/TextFieldView.zig");
@@ -1540,6 +1541,18 @@ fn showWorkspace(self: *App, key: u32) void {
     self.activate_ws = key;
     self.rememberShown();
     self.markDirty();
+}
+
+/// Show shown workspace `ws`'s active tab, as squish last said, else its
+/// first docked one. Nothing for a workspace with no tabs here yet.
+fn activateWorkspace(self: *App, ws: *const Workspace) void {
+    var first: ?usize = null;
+    for (self.tabs.items, 0..) |t, i| {
+        if (t.float != null or t.conn != ws.conn or t.ws != ws.id) continue;
+        if (t.id.eql(ws.active_tab)) return self.activate(i);
+        if (first == null) first = i;
+    }
+    if (first) |i| self.activate(i);
 }
 
 /// Hide workspace `key`: let go of its tabs, which its squish keeps
@@ -4059,6 +4072,12 @@ fn endPaletteScroll(self: *App) void {
     self.shell.releaseMouse();
 }
 
+/// The title bar's strip of tabs in the current tree, laid out, while
+/// the tabs are on top.
+fn tabStrip(self: *App) ?*const Ui.Node {
+    return Ui.find(self.currentTree(), .window(.tab_strip));
+}
+
 /// The sidebar's tree of rows in the current tree, laid out.
 fn sidebarList(self: *App) ?*const Ui.Node {
     return Ui.find(self.currentTree(), .window(.sidebar));
@@ -5144,6 +5163,12 @@ pub fn view(self: *App) *const Tree {
     self.ui.layout(&self.tree.?);
     // The sidebar's rows scroll only as far as they go.
     if (Ui.find(&self.tree.?, .window(.sidebar))) |list| self.ui.sidebar_scroll = list.kind.tree.scroll;
+    // So do the strip's tabs, which bring the active one into view once.
+    if (Ui.find(&self.tree.?, .window(.tab_strip))) |strip| {
+        const s = strip.kind.tab_strip;
+        self.ui.tab_strip_scroll = s.scroll;
+        self.ui.tab_strip_revealed = if (s.active) |a| s.items[a].id.target.tab else null;
+    } else self.ui.tab_strip_revealed = null;
     // The preview sits by its row, which layout has just placed.
     self.tree.?.preview = view_.preview(self, self.arena.allocator(), &self.tree.?) catch |err| preview: {
         log.err("building the preview failed: {}", .{err});
@@ -5186,6 +5211,8 @@ pub fn placed(self: *App) *const Placement {
 /// picture takes the renderer's copy).
 pub fn previewTab(self: *App) ?*Tab {
     if (self.pane_drag != null) return null;
+    // A button on the row (its close) shows its own tooltip instead.
+    if (self.ui.tip.part != .body) return null;
     const i = switch (self.ui.tip.target) {
         .tab => |key| self.tabIndexOf(.{ .tab = key }) orelse return null,
         .pane => |id| (self.findSession(id) orelse return null).tab,
@@ -5522,6 +5549,21 @@ fn wheelInput(self: *App, m: Msg.Mouse) void {
             return;
         }
     }
+    // Over the title bar's tabs, they scroll sideways: a wheel's notch
+    // (up is left), or a tilt's (right is right).
+    if (!self.mouse_in_terminal and (m.msg == win32.WM_MOUSEWHEEL or m.msg == win32.WM_MOUSEHWHEEL)) if (self.tabStrip()) |strip| {
+        const hit = self.hitAt(m.pos);
+        if (hit.eql(.window(.tab_strip)) or (hit.target != .none and Ui.findIn(strip, hit) != null)) {
+            const delta: f32 = @floatFromInt(@as(i16, @bitCast(@as(u16, @truncate(m.wparam >> 16)))));
+            const notches = if (m.msg == win32.WM_MOUSEHWHEEL) delta / 120 else -delta / 120;
+            const scroll = TabStrip.scrolledBy(strip, notches * self.ui.px(TabStrip.min_tab_w));
+            if (scroll != self.ui.tab_strip_scroll) {
+                self.ui.tab_strip_scroll = scroll;
+                self.markDirty();
+            }
+            return;
+        }
+    };
     // Over the sidebar's rows (not a menu over them), they scroll.
     if (!self.mouse_in_terminal and m.msg == win32.WM_MOUSEWHEEL) if (self.sidebarList()) |list| {
         const hit = self.hitAt(m.pos);
@@ -5611,8 +5653,14 @@ fn widgetClick(self: *App, hit: Id) void {
         .body => switch (hit.target) {
             .menu => |i| self.chooseItem(i),
             .palette => |i| self.choosePalette(i),
+            // With the tabs on top, a shown workspace's row switches the
+            // strip to its tabs; hiding it is in its menu.
             else => if (self.workspaceOf(hit.target)) |ws| {
-                if (ws.shown) self.hideWorkspace(ws.key) else self.showWorkspace(ws.key);
+                if (!ws.shown) {
+                    self.showWorkspace(ws.key);
+                } else if (self.ui.tabs == .top) {
+                    self.activateWorkspace(ws);
+                } else self.hideWorkspace(ws.key);
             },
         },
         .show => if (self.workspaceOf(hit.target)) |ws| self.showWorkspace(ws.key),
@@ -7409,4 +7457,160 @@ test "resting on a hidden tab's row previews it beside the row, until the mouse 
     try std.testing.expect(app.previewTab() == null);
     try std.testing.expect(!Ui.find(app.view(), b_row).?.kind.row.preview);
     try std.testing.expect(Ui.find(app.view(), a_row).?.kind.row.preview);
+}
+
+test "with the tabs on top, the title bar lists the active workspace's tabs, its row is lit, and a row switches to its own" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    app.ui.setTabs(.top);
+    const tabs = try testFloats(&t);
+    // A second shown workspace, with a tab of its own.
+    _ = try t.workspace(2, L("v"), 1, 1, true);
+    const alloc = std.testing.allocator;
+    const cs = try app.createSession(.{ .failed = .{ .title = L("c"), .why = "test" } }, .{ .cols = 80, .rows = 24 });
+    const c = Tab.create(alloc, app.nextTabKey(), &t.daemon, 2, .{ .ws = 2, .n = 1 }, .{ .pane = cs }, cs) catch |err| {
+        cs.destroy();
+        return err;
+    };
+    try app.tabs.append(alloc, c);
+    t.relayout();
+    app.quiet_until = 0;
+    const a_id: Id = .{ .target = .{ .tab = tabs.a.key } };
+    const b_id: Id = .{ .target = .{ .tab = tabs.b.key } };
+    const c_id: Id = .{ .target = .{ .tab = c.key } };
+    const Move = struct {
+        fn to(a: *App, r: Rect) void {
+            _ = a.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = center(r) } });
+        }
+        fn center(r: Rect) win32.POINT {
+            return .{ .x = @intFromFloat(r.x + r.w / 2), .y = @intFromFloat(r.y + r.h / 2) };
+        }
+    };
+
+    const Row = struct {
+        /// Whether workspace `i`'s row keeps the highlight.
+        fn lit(ap: *App, i: usize) bool {
+            return Ui.find(ap.view(), .{ .target = .{ .workspace = ap.workspaces.items[i].key } }).?.kind.row.bg != null;
+        }
+        fn click(ap: *App, i: usize) void {
+            const r = Ui.find(ap.view(), .{ .target = .{ .workspace = ap.workspaces.items[i].key } }).?.rect;
+            const pos: win32.POINT = .{ .x = @intFromFloat(r.x + 30), .y = @intFromFloat(r.y + r.h / 2) };
+            _ = ap.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = pos } });
+            _ = ap.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = pos } });
+            _ = ap.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = pos } });
+            _ = ap.update(.mouse_leave);
+        }
+    };
+
+    // The strip has the active workspace's docked tabs alone; the
+    // active one is A. Its workspace's row keeps the highlight.
+    var built = app.view();
+    const strip = Ui.find(built, .window(.tab_strip)).?;
+    const s = strip.kind.tab_strip;
+    try std.testing.expectEqual(@as(usize, 2), s.items.len);
+    try std.testing.expectEqual(a_id, s.items[0].id);
+    try std.testing.expectEqual(b_id, s.items[1].id);
+    try std.testing.expectEqual(@as(?usize, 0), s.active);
+    try std.testing.expect(Ui.find(built, c_id) == null);
+    try std.testing.expect(t.frame.titlebar.contains(s.items[1].rect.x + 1, s.items[1].rect.y + 1));
+    try std.testing.expect(Row.lit(app, 0));
+    try std.testing.expect(!Row.lit(app, 1));
+    // The sidebar lists the workspaces, with no tab or pane rows: the
+    // tab ids are the strip's alone, and panes are in the terminal area
+    // only.
+    built = app.view();
+    try std.testing.expect(Ui.findIn(Ui.find(built, .window(.tab_strip)).?, a_id) == Ui.find(built, a_id));
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .pane = tabs.a.focus.id } }) == null);
+    // Between the tabs is the caption's, which moves the window.
+    const b_rect = Ui.find(built, b_id).?.rect;
+    try std.testing.expectEqual(Id.window(.tab_strip), app.ui.hitTest(built, b_rect.x - 1, b_rect.y + 5));
+
+    // Resting on hidden B previews it under its tab.
+    Move.to(app, b_rect);
+    try std.testing.expect(app.ui.hover.eql(b_id));
+    try std.testing.expectEqual(@as(?u32, 100), shell.timers.get(.tip));
+    _ = app.update(.{ .tick = .tip });
+    try std.testing.expectEqual(tabs.b, app.previewTab().?);
+    built = app.view();
+    const pv = built.preview.?;
+    try std.testing.expectEqual(Ui.find(built, b_id).?.rect, pv.anchor);
+    try std.testing.expect(pv.side == .below);
+    // Under the mouse, its close button shows, and is hit.
+    const close = Ui.find(built, b_id.with(.close)).?.rect;
+    try std.testing.expectEqual(b_id.with(.close), app.ui.hitTest(built, close.x + close.w / 2, close.y + close.h / 2));
+    // Resting on the button shows its tooltip, and no preview.
+    Move.to(app, close);
+    try std.testing.expect(app.previewTab() == null);
+    if (shell.timers.get(.tip) != null) _ = app.update(.{ .tick = .tip });
+    try std.testing.expect(app.ui.tip.eql(b_id.with(.close)));
+    try std.testing.expect(app.previewTab() == null);
+    try std.testing.expect(app.view().preview == null);
+
+    // A right click opens the tab's menu.
+    _ = app.update(.{ .context_menu = Move.center(Ui.find(app.view(), b_id).?.rect) });
+    try std.testing.expect(app.mode == .menu);
+    try std.testing.expectEqual(b_id.target, app.mode.menu.target);
+    app.closeMenu();
+
+    // A press activates it.
+    const at = Move.center(Ui.find(app.view(), b_id).?.rect);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = at } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = at } });
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    try std.testing.expectEqual(@as(?usize, 1), Ui.find(app.view(), .window(.tab_strip)).?.kind.tab_strip.active);
+
+    // A click on the other workspace's row switches to it: the strip
+    // has its tab, and its row the highlight. Clicked again, it stays.
+    Row.click(app, 1);
+    try std.testing.expectEqual(c, app.activeTab());
+    built = app.view();
+    const strip_v = Ui.find(built, .window(.tab_strip)).?.kind.tab_strip;
+    try std.testing.expectEqual(@as(usize, 1), strip_v.items.len);
+    try std.testing.expectEqual(c_id, strip_v.items[0].id);
+    try std.testing.expect(Ui.find(built, a_id) == null);
+    try std.testing.expect(Row.lit(app, 1));
+    try std.testing.expect(!Row.lit(app, 0));
+    Row.click(app, 1);
+    try std.testing.expect(app.workspaces.items[1].shown);
+    try std.testing.expectEqual(c, app.activeTab());
+    // Back on the first, one of its tabs is shown.
+    Row.click(app, 0);
+    try std.testing.expectEqual(@as(u32, 1), app.activeTab().ws);
+    try std.testing.expect(Row.lit(app, 0));
+
+    // A middle click closes the hidden one of its two.
+    const hidden_id = if (app.activeTab() == tabs.a) b_id else a_id;
+    const h_at = Move.center(Ui.find(app.view(), hidden_id).?.rect);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MBUTTONDOWN, .wparam = 0, .pos = h_at } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MBUTTONUP, .wparam = 0, .pos = h_at } });
+    try std.testing.expect(Ui.find(app.view(), hidden_id) == null);
+
+    // In a window too narrow for them, the tabs scroll with the wheel,
+    // as far as they go; with the sidebar hidden, the strip stays.
+    t.frame = t.ui.frame(300, 600);
+    t.relayout();
+    built = app.view();
+    const narrow = Ui.find(built, .window(.tab_strip)).?;
+    const most = narrow.kind.tab_strip.content_w - narrow.rect.w;
+    try std.testing.expect(most > 0);
+    const wheel_at: win32.POINT = .{ .x = @intFromFloat(narrow.rect.x + 10), .y = @intFromFloat(narrow.rect.y + narrow.rect.h / 2) };
+    const down: win32.WPARAM = @as(u32, @bitCast(@as(i32, -120))) << 16;
+    _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = down, .pos = wheel_at } });
+    try std.testing.expectEqual(@min(most, app.ui.px(TabStrip.min_tab_w)), app.ui.tab_strip_scroll);
+    app.ui.toggleSidebar();
+    t.frame = t.ui.frame(300, 600);
+    try std.testing.expect(Ui.find(app.view(), .window(.tab_strip)) != null);
+    try std.testing.expectEqual(@as(f32, Ui.titlebar_height_plain), t.frame.titlebar.h);
+
+    // Back in the sidebar, the strip goes and the rows come back.
+    app.ui.setTabs(.sidebar);
+    built = app.view();
+    try std.testing.expect(Ui.find(built, .window(.tab_strip)) == null);
+    app.ui.toggleSidebar();
+    t.frame = t.ui.frame(1000, 600);
+    built = app.view();
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .pane = tabs.a.focus.id } }) != null);
 }

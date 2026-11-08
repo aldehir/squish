@@ -14,7 +14,8 @@
 //!              cursor_text = "cell-background", selection_background = "#345",
 //!              selection_foreground = "cell-foreground", palette = { "#000", "#800" } },
 //!   window = { padding = { x = 3, y = { 3, 6 } } },  -- points; a pair is left/top, right/bottom
-//!   chrome = { scale = 1, preview_delay = 100 },  -- ms resting on a hidden tab's row before its preview
+//!   chrome = { scale = 1, preview_delay = 100,  -- ms resting on a hidden tab's row before its preview
+//!              tabs = "sidebar" },         -- or "top": the active workspace's tabs in the title bar, workspaces alone in the sidebar
 //!   pane = { gap = 10, radius = 10 },      -- DIPs, like the chrome
 //!   selection = { word_chars = " \t'\"" },
 //!   clipboard = { read = "ask", write = "allow" },
@@ -40,6 +41,11 @@ const RGB = ghostty_vt.color.RGB;
 
 const log = std.log.scoped(.config);
 
+/// Where the window lists its tabs: in the sidebar, under their
+/// workspace, or as a strip in the title bar (the sidebar then lists
+/// workspaces alone).
+pub const Tabs = enum { sidebar, top };
+
 /// Font families tried in order; the first one installed is used. Empty
 /// tries Cascadia Code, Cascadia Mono, Consolas, then Courier New.
 @"font-family": std.ArrayList([]const u8) = .empty,
@@ -57,6 +63,8 @@ const log = std.log.scoped(.config);
 /// under it) before a picture of the tab shows beside it; 0 shows it at
 /// once. Buttons' tooltips keep the system's hover time.
 @"chrome-preview-delay": u32 = 100,
+/// Where the window lists its tabs.
+@"chrome-tabs": Tabs = .sidebar,
 /// Between panes, and around them in the terminal area, in DIPs (the
 /// chrome's units, so `chrome-scale` grows it too). From 0 to 64.
 @"pane-gap": f32 = 10,
@@ -435,6 +443,8 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
             const ms = try unsignedOf(value);
             if (ms > 10_000) return error.InvalidValue;
             self.@"chrome-preview-delay" = ms;
+        } else if (eql(u8, name, "tabs")) {
+            self.@"chrome-tabs" = try enumOf(Tabs, value);
         } else return error.UnknownKey,
         .pane => if (eql(u8, name, "gap")) {
             const gap = try floatOf(value);
@@ -674,6 +684,7 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     try std.testing.expectEqual(12, none.@"font-size");
     try std.testing.expectEqual(600, none.@"browser-idle");
     try std.testing.expectEqual(100, none.@"chrome-preview-delay");
+    try std.testing.expectEqual(.sidebar, none.@"chrome-tabs");
 
     var pane = try testConfig(
         \\{"pane": {"gap": 0, "radius": 4.5}}
@@ -700,6 +711,18 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     defer text.deinit();
     try std.testing.expectEqual(10, text.@"pane-gap");
     try std.testing.expectEqualStrings("pane.gap: invalid value: InvalidValue", text.errors.items[0]);
+
+    var top = try testConfig(
+        \\{"chrome": {"tabs": "top"}}
+    );
+    defer top.deinit();
+    try std.testing.expectEqual(.top, top.@"chrome-tabs");
+    var side = try testConfig(
+        \\{"chrome": {"tabs": "side"}}
+    );
+    defer side.deinit();
+    try std.testing.expectEqual(.sidebar, side.@"chrome-tabs");
+    try std.testing.expectEqualStrings("chrome.tabs: invalid value: InvalidValue", side.errors.items[0]);
 }
 
 test "theme under user colors" {

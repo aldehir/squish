@@ -1,7 +1,9 @@
 //! The app's state as widgets: the one place that knows both what squish
 //! has (workspaces, tabs, panes, hosts) and what the UI draws (`ui/Tree`).
 //! `build` makes a tree each frame, in an arena: the title bar, the
-//! sidebar as a tree of sections, workspaces, tabs, and panes, the
+//! sidebar as a tree of sections, workspaces, tabs, and panes (or, with
+//! the tabs on top, a strip of them in the title bar and the sidebar's
+//! tree down to workspaces), the
 //! terminal area's pane strips, the floats over them (the minimized ones
 //! listed at the sidebar's bottom), a dialog over it, and a context menu
 //! or the command palette over everything. What a row shows under the mouse (the buttons that
@@ -88,10 +90,11 @@ pub fn build(app: *App, arena: Allocator) Allocator.Error!Tree {
     return b.build();
 }
 
-/// The hidden tab's preview beside the row the mouse rests on, once `t`
-/// is laid out (the row's place is known then): the tab's area, which
-/// the renderer copies, and its browser panes, whose boxes the copy has
-/// empty. None while no hidden tab's row is rested on.
+/// The hidden tab's preview beside the row the mouse rests on (under it,
+/// for a tab in the title bar's strip), once `t` is laid out (the row's
+/// place is known then): the tab's area, which the renderer copies, and
+/// its browser panes, whose boxes the copy has empty. None while no
+/// hidden tab's row is rested on.
 pub fn preview(app: *App, arena: Allocator, t: *const Tree) Allocator.Error!?Tree.Preview {
     const tab = app.previewTab() orelse return null;
     const row = Ui.find(t, app.ui.tip) orelse return null;
@@ -101,7 +104,8 @@ pub fn preview(app: *App, arena: Allocator, t: *const Tree) Allocator.Error!?Tre
         const b = p.session.browser() orelse continue;
         try pages.append(arena, .{ .rect = p.rect, .title = p.session.title(), .favicon = b.favicon, .still = b.preview });
     }
-    return .{ .anchor = row.rect, .source = app.tabArea(tab), .pages = pages.items };
+    const in_strip = if (Ui.find(t, .window(.tab_strip))) |strip| Ui.findIn(strip, app.ui.tip) != null else false;
+    return .{ .anchor = row.rect, .source = app.tabArea(tab), .pages = pages.items, .side = if (in_strip) .below else .right };
 }
 
 const Builder = struct {
@@ -146,27 +150,35 @@ const Builder = struct {
         };
     }
 
-    /// The app icon, the sidebar toggle, the active tab's title, and the
-    /// caption buttons. The bar itself is the caption, which moves the
-    /// window.
+    /// The app icon, the sidebar toggle, the active tab's title (or,
+    /// with the tabs on top, the strip of them), and the caption buttons.
+    /// The bar itself is the caption, which moves the window.
     fn titleBar(self: *const Builder) Allocator.Error!Node {
         const app = self.app;
         const t = &self.ui.theme;
         const title: []const u16 = if (app.hasTabs()) app.activeTab().focus.title() else &.{};
         const maximized = app.shell.maximized();
+        if (self.ui.tabs == .top and app.hasTabs()) {
+            const children = try self.nodes(&.{
+                .{ .kind = .{ .spacer = 12 } },
+                .{ .kind = .{ .icon = .{ .icon = null, .size = 18 } } },
+                .{ .kind = .{ .spacer = 6 } },
+                self.sidebarToggle(),
+                .{ .kind = .{ .spacer = 4 } },
+                try self.tabStrip(),
+                // A sliver of caption past the strip, however full.
+                .{ .kind = .{ .spacer = 12 } },
+                self.captionButton(.minimize, maximized),
+                self.captionButton(.maximize, maximized),
+                self.captionButton(.close, maximized),
+            });
+            return .{ .id = .window(.caption), .kind = .{ .row = .{ .children = children, .bg = t.ground } }, .rect = self.frame.titlebar };
+        }
         const children = try self.nodes(&.{
             .{ .kind = .{ .spacer = 12 } },
             .{ .kind = .{ .icon = .{ .icon = null, .size = 18 } } },
             .{ .kind = .{ .spacer = 6 } },
-            .{ .id = .window(.toggle_sidebar), .kind = .{ .icon_button = .{
-                .icon = .panel_left,
-                .size = 20,
-                .w = 40,
-                .h = null,
-                .style = .bar,
-                .color = if (app.focused) t.text else t.text_inactive,
-                .tip = if (self.ui.sidebar_shown) L("Hide sidebar") else L("Show sidebar"),
-            } } },
+            self.sidebarToggle(),
             .{ .kind = .{ .label = .{ .text = title, .font = .title, .color = if (app.focused) t.text_muted else t.text_inactive, .pad_x = 8 } } },
             self.captionButton(.minimize, maximized),
             self.captionButton(.maximize, maximized),
@@ -189,6 +201,96 @@ const Builder = struct {
             .{ .kind = .{ .spacer = 10 } },
         });
         return .{ .id = .window(.notice), .kind = .{ .row = .{ .children = children, .bg = t.notice } }, .rect = self.frame.notice };
+    }
+
+    fn sidebarToggle(self: *const Builder) Node {
+        const t = &self.ui.theme;
+        return .{ .id = .window(.toggle_sidebar), .kind = .{ .icon_button = .{
+            .icon = .panel_left,
+            .size = 20,
+            .w = 40,
+            .h = null,
+            .style = .bar,
+            .color = if (self.app.focused) t.text else t.text_inactive,
+            .tip = if (self.ui.sidebar_shown) L("Hide sidebar") else L("Show sidebar"),
+        } } };
+    }
+
+    /// The active workspace's tabs in the title bar: those in the group
+    /// of the tab shown (a workspace, or a section's tabs in none).
+    /// Floating tabs aren't listed, as in the sidebar.
+    fn tabStrip(self: *const Builder) Allocator.Error!Node {
+        const app = self.app;
+        const shown = app.shownHost();
+        const group = app.groupOf(shown);
+        var items: std.ArrayList(Node) = .empty;
+        var active: ?usize = null;
+        for (app.tabs.items) |tab| {
+            if (tab.float != null or app.groupOf(tab) != group) continue;
+            if (tab == shown) active = items.items.len;
+            try items.append(self.arena, try self.stripTab(tab));
+        }
+        // The active tab is brought into view as it becomes active;
+        // scrolled away from after, it stays where the wheel left it.
+        const key: ?u32 = if (active) |a| items.items[a].id.target.tab else null;
+        return .{ .id = .window(.tab_strip), .kind = .{ .tab_strip = .{
+            .items = items.items,
+            .active = active,
+            .reveal = key == null or !std.meta.eql(key, self.ui.tab_strip_revealed),
+            .scroll = self.ui.tab_strip_scroll,
+        } }, .clip = true };
+    }
+
+    /// A tab in the strip: its icon and title, and at the right its close
+    /// button while the mouse is over it; else its panes' most pressing
+    /// status, or an activity dot, as a folded tab row shows. The active
+    /// tab keeps the highlight.
+    fn stripTab(self: *const Builder, tab: *Tab) Allocator.Error!Node {
+        const app = self.app;
+        const t = &self.ui.theme;
+        const target: Id.Target = .{ .tab = tab.key };
+        const id: Id = .{ .target = target };
+        const active = app.shownHost() == tab;
+        const hovered = self.ui.hover.on(target);
+        var items: std.ArrayList(Node) = .empty;
+        try items.append(self.arena, .{ .kind = .{ .spacer = 8 } });
+        // Lucide's panels-top-left spans 18 of its 24 units: 12 DIPs here.
+        try items.append(self.arena, .{ .kind = .{ .icon = .{ .icon = .panels_top_left, .size = 16, .color = if (active) t.text_strong else t.text_muted } } });
+        try items.append(self.arena, .{ .kind = .{ .spacer = 6 } });
+        try items.append(self.arena, .{ .kind = .{ .label = .{
+            .text = tab.focus.title(),
+            .font = if (active) .body_strong else .body,
+            .color = if (active) t.text_strong else t.text_muted,
+        } } });
+        if (hovered) {
+            try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
+            // Lucide's x spans 12 of its 24 units: 8 DIPs in this box.
+            try items.append(self.arena, .{ .id = id.with(.close), .kind = .{ .icon_button = .{
+                .icon = .x,
+                .size = 16,
+                .tip = L("Close tab"),
+                .key = if (active) self.keys.close_tab.slice() else &.{},
+            } } });
+            try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
+        } else if (mostPressing(tab)) |status| {
+            try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
+            try items.append(self.arena, .{ .kind = .{ .status = .{ .status = status, .spinner = app.spinner_step } } });
+            try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
+        } else if (tab.activity()) {
+            try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
+            try items.append(self.arena, .{ .kind = .{ .status = .{ .status = null, .activity = true } } });
+            try items.append(self.arena, .{ .kind = .{ .spacer = button_margin } });
+        } else {
+            try items.append(self.arena, .{ .kind = .{ .spacer = 8 } });
+        }
+        // A tab that's not on screen shows a picture of itself under it
+        // (`Tree.preview`).
+        return .{ .id = id, .kind = .{ .row = .{
+            .children = items.items,
+            .bg = if (hovered or active) t.row_hover else null,
+            .radius = 6,
+            .preview = !app.isShown(tab),
+        } } };
     }
 
     fn captionButton(self: *const Builder, part: Id.Part, maximized: bool) Node {
@@ -311,6 +413,8 @@ const Builder = struct {
         for (app.workspaces.items) |w| {
             if (app.sectionOf(w.conn) == s) try rows.append(self.arena, try self.workspaceRow(w));
         }
+        // With the tabs on top, the strip lists them.
+        if (self.ui.tabs == .top) return rows.items;
         const none = app.noneGroup(s);
         for (app.tabs.items) |t| {
             if (t.float == null and app.groupOf(t) == none) try rows.append(self.arena, try self.tabRow(t));
@@ -387,7 +491,7 @@ const Builder = struct {
     }
 
     /// Workspace `w`'s row: a fold arrow (its tabs are listed while
-    /// shown), its name, and at the right a button to open a tab in it,
+    /// shown; with the tabs on top, a space, and none are), its name, and at the right a button to open a tab in it,
     /// before which a hidden workspace shows how many tabs it has, and
     /// one other windows show, an eye. Hiding, renaming, and killing it
     /// are in its context menu. Being renamed, the row is the field.
@@ -397,16 +501,17 @@ const Builder = struct {
         const target: Id.Target = .{ .workspace = w.key };
         const id: Id = .{ .target = target };
         const group = app.workspaceGroup(w.key);
+        const top = self.ui.tabs == .top;
         var tabs: std.ArrayList(TreeRow) = .empty;
         // Floating tabs aren't listed: they're over the tab they float
         // over, or its chips, and in the palette.
-        for (app.tabs.items) |tab| {
+        if (!top) for (app.tabs.items) |tab| {
             if (tab.float == null and app.groupOf(tab) == group) try tabs.append(self.arena, try self.tabRow(tab));
-        }
+        };
 
         if (app.mode == .rename and app.mode.rename.ws == w.key) {
             const children = try self.nodes(&.{
-                .{ .kind = .{ .fold = .{ .folded = !w.shown, .color = t.text_muted } } },
+                if (top) .{ .kind = .{ .spacer = 4 } } else .{ .kind = .{ .fold = .{ .folded = !w.shown, .color = t.text_muted } } },
                 .{ .id = id.with(.field), .kind = .{ .text_field = .{
                     .field = &app.mode.rename.field,
                     .placeholder = L("Workspace name"),
@@ -421,9 +526,12 @@ const Builder = struct {
         }
 
         const hovered = self.ui.hover.on(target);
-        const text = if (hovered) t.text_strong else if (w.shown) t.text_muted else t.text_inactive;
+        // With the tabs on top, the row of the workspace whose tabs the
+        // strip lists keeps the highlight.
+        const active = top and self.activeGroupIs(target);
+        const text = if (hovered or active) t.text_strong else if (w.shown) t.text_muted else t.text_inactive;
         var items: std.ArrayList(Node) = .empty;
-        try items.append(self.arena, .{ .kind = .{ .fold = .{ .folded = !w.shown, .color = text } } });
+        try items.append(self.arena, if (top) .{ .kind = .{ .spacer = 4 } } else .{ .kind = .{ .fold = .{ .folded = !w.shown, .color = text } } });
         try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
         try items.append(self.arena, .{ .kind = .{ .label = .{ .text = w.name, .font = .body_strong, .color = text } } });
         try items.append(self.arena, .{ .kind = .{ .spacer = label_gap } });
@@ -445,7 +553,7 @@ const Builder = struct {
             .node = .{ .id = id, .kind = .{ .row = .{
                 .children = items.items,
                 .h = workspace_height,
-                .bg = if (self.ui.hover.eql(id)) t.row_hover else null,
+                .bg = if (active or self.ui.hover.eql(id)) t.row_hover else null,
                 .radius = 6,
             } } },
             .children = tabs.items,

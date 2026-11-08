@@ -8,14 +8,20 @@ item out when it's done.
 The window draws its own title bar and session list with Direct2D over
 the terminal, from a tree of widgets (`clients/gui/src/ui/`) that
 `clients/gui/src/view.zig` builds from the app's state each frame. The
-list has two layouts behind the title bar's toggle: a sidebar, which is
-done, and tabs, which isn't. The sidebar is a tree: each tab's row folds
-open to a row per pane, with what its programs report doing (OSC 7501,
+list has two layouts (`chrome.tabs`): a sidebar of workspaces, tabs, and
+panes, or the active workspace's tabs in a strip in the title bar with
+the sidebar listing workspaces alone (a click on one switches to it);
+the title bar's toggle hides the sidebar in either. The sidebar is a
+tree: each tab's row folds open to a row per pane, with what its
+programs report doing (OSC 7501,
 `clients/gui/src/ProgramStatus.zig`), which squish keeps while no window
 is attached.
 
-- **Tabs in the title bar.** The toggle only hides the sidebar; the
-  tabs (titles, close buttons, overflow) aren't drawn in the bar.
+- **The title bar's tab strip** (`chrome.tabs = "top"`) can't reorder
+  tabs by drag or take a pane dragged onto a tab, and the layout isn't
+  kept per window or flipped from the palette. Tabs in no workspace (a
+  section's) have no row to switch to; they're reached by the keyboard,
+  the palette, or when one becomes active.
 - **The sidebar's scroll follows nothing.** Its rows scroll with the
   wheel and the overlay scrollbar (`clients/gui/src/ui/Scrollbar.zig`,
   shared with the palette), but switching tabs from the keyboard or the

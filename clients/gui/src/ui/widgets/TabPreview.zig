@@ -1,7 +1,8 @@
 //! The preview of the hidden tab whose row the mouse has rested on
 //! (`Tree.preview`): a picture of its panes as they stand, scaled into a
-//! popup to the right of the row, over the terminal area, vertically
-//! centered on the row and kept inside the window. The picture is the
+//! popup to the right of the row, over the terminal area, its top on the
+//! row's, or under a tab of the title bar's strip, and kept inside the
+//! window. The picture is the
 //! renderer's copy of the tab drawn in its own area (`Frame.preview`);
 //! a browser pane's box is empty in it, so its page's title stands in,
 //! or its picture when the browser has one.
@@ -17,7 +18,8 @@ const Tree = Ui.Tree;
 /// The popup at most, keeping the tab's aspect.
 pub const max_w = 320;
 pub const max_h = 240;
-/// From the row's right to the popup, and from the window's edges.
+/// From the row's right (or a strip tab's bottom) to the popup, and
+/// from the window's edges.
 const offset = 8;
 const margin = 8;
 const radius = 6;
@@ -30,7 +32,8 @@ const page_pad = 8;
 /// Where the popup goes for `preview` in `window`, at the scale `source`
 /// takes to fit `max_w` by `max_h` (never grown): its top on the row's,
 /// or its bottom on the row's where there's no room below, and inside
-/// the window either way.
+/// the window either way. Below a strip tab, its left on the tab's, and
+/// over the tab where there's no room under it.
 pub fn place(ui: *const Ui, preview: *const Tree.Preview, window: Rect) Rect {
     const src = preview.source;
     const scale = @min(1, @min(ui.px(max_w) / src.w, ui.px(max_h) / src.h));
@@ -38,10 +41,20 @@ pub fn place(ui: *const Ui, preview: *const Tree.Preview, window: Rect) Rect {
     const h = @round(src.h * scale);
     const m = ui.px(margin);
     const anchor = preview.anchor;
+    var x = anchor.right() + ui.px(offset);
     var y = anchor.y;
-    if (y + h > window.h - m) y = anchor.bottom() - h;
+    switch (preview.side) {
+        .right => if (y + h > window.h - m) {
+            y = anchor.bottom() - h;
+        },
+        .below => {
+            x = anchor.x;
+            y = anchor.bottom() + ui.px(offset);
+            if (y + h > window.h - m) y = anchor.y - ui.px(offset) - h;
+        },
+    }
     return .{
-        .x = @round(std.math.clamp(anchor.right() + ui.px(offset), m, @max(m, window.w - m - w))),
+        .x = @round(std.math.clamp(x, m, @max(m, window.w - m - w))),
         .y = @round(std.math.clamp(y, m, @max(m, window.h - m - h))),
         .w = w,
         .h = h,
@@ -114,4 +127,15 @@ test "the popup sits right of the row, its top on the row's, at the tab's aspect
     try std.testing.expectEqual(@as(f32, 760 + 28 - 50), lr.y);
     const lowest: Tree.Preview = .{ .anchor = .{ .x = 10, .y = 790, .w = 200, .h = 28 }, .source = low.source, .pages = &.{} };
     try std.testing.expectEqual(@as(f32, 800 - margin - 50), place(&ui, &lowest, window).y);
+}
+
+test "under a strip tab, the popup's left is on the tab's, kept in the window" {
+    const ui: Ui = .{ .scale = 1, .fonts = .none, .theme = undefined };
+    const window: Rect = .{ .w = 1200, .h = 800 };
+    const mid: Tree.Preview = .{ .anchor = .{ .x = 400, .y = 4, .w = 160, .h = 28 }, .source = .{ .w = 960, .h = 720 }, .pages = &.{}, .side = .below };
+    const r = place(&ui, &mid, window);
+    try std.testing.expectEqual(@as(f32, 400), r.x);
+    try std.testing.expectEqual(@as(f32, 32 + offset), r.y);
+    const edge: Tree.Preview = .{ .anchor = .{ .x = 1100, .y = 4, .w = 96, .h = 28 }, .source = mid.source, .pages = &.{}, .side = .below };
+    try std.testing.expectEqual(@as(f32, 1200 - margin - 320), place(&ui, &edge, window).x);
 }

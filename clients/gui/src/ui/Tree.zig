@@ -24,7 +24,8 @@ pub const Tree = struct {
     frame: Ui.Frame,
     /// A pane being dragged by its title strip, drawn over the frame.
     drag: ?Drag = null,
-    /// A hidden tab's preview, beside its row (`Ui.tip` is the row).
+    /// A hidden tab's preview, beside its row or under its tab in the
+    /// strip (`Ui.tip` is the row).
     preview: ?Preview = null,
 
     pub const Preview = struct {
@@ -36,6 +37,9 @@ pub const Tree = struct {
         /// Browser panes, which the copy has as empty boxes: labelled,
         /// with their page's picture when the browser has one.
         pages: []const Page,
+        /// Which side of the anchor the popup goes: right of a sidebar
+        /// row, below a strip tab.
+        side: enum { right, below } = .right,
 
         pub const Page = struct {
             rect: Rect,
@@ -110,6 +114,8 @@ pub const Kind = union(enum) {
     fold: Fold,
     /// Rows under rows, with fold-away children joined by guides.
     tree: TreeList,
+    /// The title bar's row of tabs, which scrolls sideways.
+    tab_strip: TabStrip,
     /// A pane's chrome in the terminal area: its title strip over the
     /// terminal the renderer draws.
     pane: Pane,
@@ -269,6 +275,22 @@ pub const TreeList = struct {
     /// Space at the right the rows leave, in DIPs, where the scrollbar
     /// goes: in the owner's padding, not over the rows' buttons.
     gutter: f32 = 0,
+};
+
+/// The title bar's row of tabs (`widgets/TabStrip.zig`): every tab the
+/// same width within a range, scrolled sideways once they don't fit.
+pub const TabStrip = struct {
+    /// The tabs, usually `row`s; the strip sizes them.
+    items: []Node,
+    /// The active tab's item, kept in view while `reveal`.
+    active: ?usize = null,
+    /// Layout scrolls the active item into view: it just became active.
+    reveal: bool = true,
+    /// How far the items are scrolled left past the strip's start, in
+    /// pixels. Layout clamps it and writes it back.
+    scroll: f32 = 0,
+    /// The items' width together, in pixels: set by layout.
+    content_w: f32 = 0,
 };
 
 /// A row of a `TreeList`, with the rows under it.

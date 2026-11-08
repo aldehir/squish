@@ -214,6 +214,7 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
     errdefer self.ui.deinit();
     self.ui.pane_gap = config.@"pane-gap";
     self.ui.pane_radius = config.@"pane-radius";
+    self.ui.tabs = config.@"chrome-tabs";
 
     const size = self.clientSize();
     self.updateLayout(size);
@@ -354,6 +355,7 @@ fn applyConfig(self: *Window, new: Config) void {
     }
     self.ui.pane_gap = config.@"pane-gap";
     self.ui.pane_radius = config.@"pane-radius";
+    self.ui.setTabs(config.@"chrome-tabs");
     if (zoom_changed) self.ui.setZoom(self.dpi, config.@"chrome-scale") catch |err| log.err("chrome scale change failed: {}", .{err});
     if (fonts_changed) {
         if (font.Grid.init(self.alloc, self.io, config.@"font-family".items, config.@"font-size", self.dpi, config.@"font-antialias")) |grid| {
@@ -415,7 +417,8 @@ fn hitTestFrame(self: *Window, lparam: win32.LPARAM) win32.LRESULT {
     const hit = self.app.hitAt(pos);
     if (hit.target != .window) return win32.HTCLIENT;
     return switch (hit.part) {
-        .caption => win32.HTCAPTION,
+        // Between the strip's tabs, the bar is the caption still.
+        .caption, .tab_strip => win32.HTCAPTION,
         .minimize => win32.HTMINBUTTON,
         .maximize => win32.HTMAXBUTTON,
         .close => win32.HTCLOSE,
