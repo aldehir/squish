@@ -5643,7 +5643,9 @@ fn widgetClick(self: *App, hit: Id) void {
         // A section's header makes a workspace on its daemon (connecting
         // a host first); a workspace's row, a tab in it. With no daemon
         // listing workspaces, Local's connects to one, which shows some.
+        // The tab strip's, a tab where the active one is, as the key.
         .new_tab => switch (hit.target) {
+            .window => self.newSession(),
             .local => if (self.localDaemon()) |conn| self.newWorkspace(conn),
             .host => |h| self.openOnHost(h) catch |err| log.err("new session failed: {}", .{err}),
             .workspace => |key| self.newTabInWorkspace(key),
@@ -7514,9 +7516,11 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     var built = app.view();
     const strip = Ui.find(built, .window(.tab_strip)).?;
     const s = strip.kind.tab_strip;
-    try std.testing.expectEqual(@as(usize, 2), s.items.len);
+    // Then the button for a new tab.
+    try std.testing.expectEqual(@as(usize, 3), s.items.len);
     try std.testing.expectEqual(a_id, s.items[0].id);
     try std.testing.expectEqual(b_id, s.items[1].id);
+    try std.testing.expectEqual(Id.window(.new_tab), s.items[2].id);
     try std.testing.expectEqual(@as(?usize, 0), s.active);
     try std.testing.expect(Ui.find(built, c_id) == null);
     try std.testing.expect(t.frame.titlebar.contains(s.items[1].rect.x + 1, s.items[1].rect.y + 1));
@@ -7528,13 +7532,17 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     built = app.view();
     try std.testing.expect(Ui.findIn(Ui.find(built, .window(.tab_strip)).?, a_id) == Ui.find(built, a_id));
     try std.testing.expect(Ui.find(built, .{ .target = .{ .pane = tabs.a.focus.id } }) == null);
-    // Between the tabs is the strip's own: not a tab (and past them,
-    // the caption's, `TabStrip.pastTabs`).
+    // Between the tabs is the strip's own: not a tab (and past them
+    // and the button, the caption's, `TabStrip.pastTabs`).
     const b_rect = Ui.find(built, b_id).?.rect;
     try std.testing.expectEqual(Id.window(.tab_strip), app.ui.hitTest(built, b_rect.x - 1, b_rect.y + 5));
     const strip_now = Ui.find(built, .window(.tab_strip)).?;
+    const add_rect = Ui.find(built, .window(.new_tab)).?.rect;
+    try std.testing.expectEqual(b_rect.right() + app.ui.px(TabStrip.item_gap), add_rect.x);
+    try std.testing.expectEqual(Id.window(.new_tab), app.ui.hitTest(built, add_rect.x + 1, add_rect.y + 5));
     try std.testing.expect(!TabStrip.pastTabs(strip_now, b_rect.x - 1));
-    try std.testing.expect(TabStrip.pastTabs(strip_now, b_rect.right() + 1));
+    try std.testing.expect(!TabStrip.pastTabs(strip_now, b_rect.right() + 1));
+    try std.testing.expect(TabStrip.pastTabs(strip_now, add_rect.right()));
 
     // Resting on hidden B previews it under its tab.
     Move.to(app, b_rect);
@@ -7576,7 +7584,7 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     try std.testing.expectEqual(c, app.activeTab());
     built = app.view();
     const strip_v = Ui.find(built, .window(.tab_strip)).?.kind.tab_strip;
-    try std.testing.expectEqual(@as(usize, 1), strip_v.items.len);
+    try std.testing.expectEqual(@as(usize, 2), strip_v.items.len);
     try std.testing.expectEqual(c_id, strip_v.items[0].id);
     try std.testing.expect(Ui.find(built, a_id) == null);
     try std.testing.expect(Row.lit(app, 1));
@@ -7602,7 +7610,7 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     t.relayout();
     built = app.view();
     const narrow = Ui.find(built, .window(.tab_strip)).?;
-    const most = narrow.kind.tab_strip.content_w - narrow.rect.w;
+    const most = narrow.kind.tab_strip.content_w - narrow.kind.tab_strip.view_w;
     try std.testing.expect(most > 0);
     const wheel_at: win32.POINT = .{ .x = @intFromFloat(narrow.rect.x + 10), .y = @intFromFloat(narrow.rect.y + narrow.rect.h / 2) };
     const down: win32.WPARAM = @as(u32, @bitCast(@as(i32, -120))) << 16;

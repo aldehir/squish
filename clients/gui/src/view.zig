@@ -217,10 +217,12 @@ const Builder = struct {
     }
 
     /// The active workspace's tabs in the title bar: those in the group
-    /// of the tab shown (a workspace, or a section's tabs in none).
-    /// Floating tabs aren't listed, as in the sidebar.
+    /// of the tab shown (a workspace, or a section's tabs in none), and
+    /// the button for a new one. Floating tabs aren't listed, as in the
+    /// sidebar.
     fn tabStrip(self: *const Builder) Allocator.Error!Node {
         const app = self.app;
+        const t = &self.ui.theme;
         const shown = app.shownHost();
         const group = app.groupOf(shown);
         var items: std.ArrayList(Node) = .empty;
@@ -233,8 +235,19 @@ const Builder = struct {
         // The active tab is brought into view as it becomes active;
         // scrolled away from after, it stays where the wheel left it.
         const key: ?u32 = if (active) |a| items.items[a].id.target.tab else null;
+        // After the tabs, a button that opens one in their group.
+        try items.append(self.arena, .{ .id = .window(.new_tab), .kind = .{ .icon_button = .{
+            .icon = .plus,
+            .size = 16,
+            .w = 28,
+            .h = null,
+            .color = if (app.focused) t.text_muted else t.text_inactive,
+            .tip = L("New tab"),
+            .key = self.keys.new_tab.slice(),
+        } } });
         return .{ .id = .window(.tab_strip), .kind = .{ .tab_strip = .{
             .items = items.items,
+            .add = true,
             .active = active,
             .reveal = key == null or !std.meta.eql(key, self.ui.tab_strip_revealed),
             .scroll = self.ui.tab_strip_scroll,

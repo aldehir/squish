@@ -280,8 +280,10 @@ pub const TreeList = struct {
 /// The title bar's row of tabs (`widgets/TabStrip.zig`): every tab the
 /// same width within a range, scrolled sideways once they don't fit.
 pub const TabStrip = struct {
-    /// The tabs, usually `row`s; the strip sizes them.
+    /// The tabs, usually `row`s; the strip sizes them. With `add`, the
+    /// last isn't a tab but the button after them, which keeps its size.
     items: []Node,
+    add: bool = false,
     /// The active tab's item, kept in view while `reveal`.
     active: ?usize = null,
     /// Layout scrolls the active item into view: it just became active.
@@ -289,8 +291,11 @@ pub const TabStrip = struct {
     /// How far the items are scrolled left past the strip's start, in
     /// pixels. Layout clamps it and writes it back.
     scroll: f32 = 0,
-    /// The items' width together, in pixels: set by layout.
+    /// The tabs' width together, in pixels: set by layout.
     content_w: f32 = 0,
+    /// The width the tabs show in, the strip's less `add`'s: set by
+    /// layout.
+    view_w: f32 = 0,
 };
 
 /// A row of a `TreeList`, with the rows under it.
