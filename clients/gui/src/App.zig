@@ -642,6 +642,9 @@ pub const Shell = struct {
         /// A caption button was clicked: minimize, maximize, close.
         caption: *const fn (*anyopaque, Id.Part) void,
         maximized: *const fn (*anyopaque) bool,
+        /// Cover the window's monitor, with no frame, or put the window
+        /// back where it was; and lay it out again.
+        setFullscreen: *const fn (*anyopaque, bool) void,
         /// Milliseconds since the system started.
         tickCount: *const fn (*anyopaque) u64,
         /// Whether a virtual key is down.
@@ -730,6 +733,9 @@ pub const Shell = struct {
     }
     pub fn maximized(self: Shell) bool {
         return self.vt.maximized(self.ctx);
+    }
+    fn setFullscreen(self: Shell, on: bool) void {
+        self.vt.setFullscreen(self.ctx, on);
     }
     fn tickCount(self: Shell) u64 {
         return self.vt.tickCount(self.ctx);
@@ -3630,6 +3636,11 @@ fn runAction(self: *App, action: binding.Action) bool {
         },
         .toggle_command_palette => return self.togglePalette(),
         .pick_file => return self.pickFile(),
+        .toggle_fullscreen => {
+            self.ui.toggleFullscreen();
+            self.shell.setFullscreen(self.ui.fullscreen);
+            return true;
+        },
         else => {},
     }
     const s = self.focusedSession() orelse switch (action) {
@@ -3701,7 +3712,7 @@ fn runAction(self: *App, action: binding.Action) bool {
         .dock_float => if (self.activeTab().float != null) self.dockFloat(self.activeTab()) else return false,
         .toggle_floats => self.toggleFloats(),
         .focus_float => self.focusFloat(),
-        .lua, .invoke, .toggle_command_palette, .pick_file => unreachable,
+        .lua, .invoke, .toggle_command_palette, .pick_file, .toggle_fullscreen => unreachable,
     }
     return true;
 }
@@ -4619,6 +4630,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     const Command = struct { label: []const u16, icon: ?Painter.Lucide, action: binding.Action };
     const zoomed = self.hasTabs() and self.activeTab().zoom != null;
     const floats_shown = self.hasTabs() and self.placed().floats.items.len > 0;
+    const fullscreen = self.ui.fullscreen;
     const commands = [_]Command{
         .{ .label = L("New tab"), .icon = .plus, .action = .new_tab },
         .{ .label = L("Close pane"), .icon = .x, .action = .close_surface },
@@ -4626,6 +4638,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = L("Split down"), .icon = .rows_2, .action = .{ .new_split = .down } },
         .{ .label = if (zoomed) L("Unzoom pane") else L("Zoom pane"), .icon = if (zoomed) .minimize_2 else .maximize_2, .action = .toggle_split_zoom },
         .{ .label = L("Equalize splits"), .icon = .columns_2, .action = .equalize_splits },
+        .{ .label = if (fullscreen) L("Exit fullscreen") else L("Enter fullscreen"), .icon = if (fullscreen) .minimize_2 else .maximize_2, .action = .toggle_fullscreen },
         .{ .label = L("Search"), .icon = .search, .action = .start_search },
         .{ .label = L("Copy mode"), .icon = .copy, .action = .copy_mode },
         .{ .label = L("Pick a file…"), .icon = .file, .action = .pick_file },
@@ -5945,6 +5958,8 @@ pub const TestShell = struct {
     timers: std.EnumArray(Timer, ?u32) = .initFill(null),
     captured: bool = false,
     closed: bool = false,
+    /// What `setFullscreen` was last told.
+    fullscreen: bool = false,
     /// The window text last set, and how many times it was.
     title_buf: [64]u16 = undefined,
     title_len: usize = 0,
@@ -5985,6 +6000,9 @@ pub const TestShell = struct {
     fn caption(_: *anyopaque, _: Id.Part) void {}
     fn maximized(_: *anyopaque) bool {
         return false;
+    }
+    fn setFullscreen(ctx: *anyopaque, on: bool) void {
+        self_(ctx).fullscreen = on;
     }
     fn tickCount(_: *anyopaque) u64 {
         return 1000;
@@ -6076,6 +6094,7 @@ pub const TestShell = struct {
         .setTitle = setTitle,
         .caption = caption,
         .maximized = maximized,
+        .setFullscreen = setFullscreen,
         .tickCount = tickCount,
         .keyDown = keyDown,
         .mods = mods,
@@ -6698,6 +6717,32 @@ test "a mouse move builds the tree at most once, even with a frame pending" {
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = pos } });
     _ = app.cursor(pos);
     try std.testing.expectEqual(before, app.views);
+}
+
+test "F11 shows the panes alone over the whole window, and again brings the chrome back" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const f11 = win32.VK_F1 + 10;
+    try std.testing.expect(Ui.find(app.view(), .window(.caption)) != null);
+    try std.testing.expect(Ui.find(app.view(), .window(.sidebar)) != null);
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = f11, .lparam = 0 } }));
+    _ = app.update(.{ .key = .{ .msg = win32.WM_KEYUP, .wparam = f11, .lparam = 0 } });
+    try std.testing.expect(shell.fullscreen);
+    t.frame = t.ui.frame(1000, 600);
+    t.relayout();
+    try std.testing.expectEqual(t.frame.window, app.geometry.pane_area);
+    try std.testing.expect(Ui.find(app.view(), .window(.caption)) == null);
+    try std.testing.expect(Ui.find(app.view(), .window(.sidebar)) == null);
+    // The sidebar is as it was left.
+    try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = f11, .lparam = 0 } }));
+    try std.testing.expect(!shell.fullscreen);
+    t.frame = t.ui.frame(1000, 600);
+    t.relayout();
+    try std.testing.expect(Ui.find(app.view(), .window(.caption)) != null);
+    try std.testing.expect(Ui.find(app.view(), .window(.sidebar)) != null);
 }
 
 test "ctrl+shift+p opens the command palette, which takes the keys until an entry runs or Escape" {

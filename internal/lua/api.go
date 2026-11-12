@@ -172,7 +172,9 @@ which are for the top level only:
                              args (squish-gui's: new_tab, new_split {direction},
                              close_surface, next_tab, previous_tab, goto_split
                              {direction}, resize_split {direction, amount},
-                             equalize_splits, toggle_split_zoom, the floating
+                             equalize_splits, toggle_split_zoom,
+                             toggle_fullscreen (F11: the panes alone over the
+                             whole monitor, no title bar or sidebar), the floating
                              tabs' float_pane, float_tab (picks a tab in the
                              palette), dock_float, toggle_floats, and
                              focus_float, which have no keys by default,

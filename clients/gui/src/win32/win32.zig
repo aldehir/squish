@@ -34,6 +34,7 @@ pub const HICON = *opaque {};
 pub const HCURSOR = *opaque {};
 pub const HBRUSH = *opaque {};
 pub const HMENU = *opaque {};
+pub const HMONITOR = *opaque {};
 pub const DPI_AWARENESS_CONTEXT = *opaque {};
 
 pub const GUID = extern struct {
@@ -143,6 +144,22 @@ pub const NCCALCSIZE_PARAMS = extern struct {
     lppos: ?*anyopaque,
 };
 
+pub const WINDOWPLACEMENT = extern struct {
+    length: u32 = @sizeOf(WINDOWPLACEMENT),
+    flags: u32 = 0,
+    showCmd: u32 = 0,
+    ptMinPosition: POINT = .{ .x = 0, .y = 0 },
+    ptMaxPosition: POINT = .{ .x = 0, .y = 0 },
+    rcNormalPosition: RECT = std.mem.zeroes(RECT),
+};
+
+pub const MONITORINFO = extern struct {
+    cbSize: u32 = @sizeOf(MONITORINFO),
+    rcMonitor: RECT = std.mem.zeroes(RECT),
+    rcWork: RECT = std.mem.zeroes(RECT),
+    dwFlags: u32 = 0,
+};
+
 pub const TRACKMOUSEEVENT = extern struct {
     cbSize: u32 = @sizeOf(TRACKMOUSEEVENT),
     dwFlags: u32,
@@ -245,6 +262,8 @@ pub const SW_MINIMIZE = 6;
 pub const SW_RESTORE = 9;
 pub const SW_SHOWDEFAULT = 10;
 pub const GWLP_USERDATA = -21;
+pub const GWL_STYLE = -16;
+pub const MONITOR_DEFAULTTONEAREST = 2;
 pub const SIZE_MINIMIZED = 1;
 pub const SWP_NOSIZE = 0x0001;
 pub const SWP_NOMOVE = 0x0002;
@@ -571,6 +590,10 @@ pub extern "user32" fn DefWindowProcW(HWND, u32, WPARAM, LPARAM) callconv(.winap
 pub extern "user32" fn ShowWindow(HWND, i32) callconv(.winapi) BOOL;
 pub extern "user32" fn SetWindowPos(HWND, ?HWND, i32, i32, i32, i32, u32) callconv(.winapi) BOOL;
 pub extern "user32" fn IsZoomed(HWND) callconv(.winapi) BOOL;
+pub extern "user32" fn GetWindowPlacement(HWND, *WINDOWPLACEMENT) callconv(.winapi) BOOL;
+pub extern "user32" fn SetWindowPlacement(HWND, *const WINDOWPLACEMENT) callconv(.winapi) BOOL;
+pub extern "user32" fn MonitorFromWindow(HWND, u32) callconv(.winapi) ?HMONITOR;
+pub extern "user32" fn GetMonitorInfoW(?HMONITOR, *MONITORINFO) callconv(.winapi) BOOL;
 pub extern "user32" fn GetSystemMetricsForDpi(i32, u32) callconv(.winapi) i32;
 pub extern "user32" fn TrackMouseEvent(*TRACKMOUSEEVENT) callconv(.winapi) BOOL;
 pub extern "user32" fn GetClientRect(HWND, *RECT) callconv(.winapi) BOOL;

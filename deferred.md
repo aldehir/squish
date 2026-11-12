@@ -22,6 +22,10 @@ is attached.
   kept per window or flipped from the palette. Tabs in no workspace (a
   section's) have no row to switch to; they're reached by the keyboard,
   the palette, or when one becomes active.
+- **Fullscreen** (F11, `toggle_fullscreen`) shows the panes alone, and
+  only the key or the palette leaves it: the chrome doesn't come back
+  at the top edge under the mouse. It isn't kept across runs, and
+  there's no config key to start in it.
 - **The sidebar's scroll follows nothing.** Its rows scroll with the
   wheel and the overlay scrollbar (`clients/gui/src/ui/Scrollbar.zig`,
   shared with the palette), but switching tabs from the keyboard or the

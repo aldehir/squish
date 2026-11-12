@@ -36,6 +36,9 @@ pub const Action = union(enum) {
     resize_split: ResizeSplit,
     equalize_splits,
     toggle_split_zoom,
+    /// The window over its whole monitor, showing the panes alone: no
+    /// title bar, tabs, or sidebar. Again puts it back.
+    toggle_fullscreen,
     /// Floating tabs, shown over the tab shown (a movable box in the
     /// terminal area that splits as any tab does): the focused pane into
     /// a new one; a tab picked in the palette over the shown one; the
@@ -198,6 +201,7 @@ pub const defaults = [_]Binding{
     .{ .trigger = .{ .vk = win32.VK_LEFT, .mods = ctrl_alt_shift }, .action = .{ .resize_split = .{ .direction = .left, .amount = 1 } }, .performable = true },
     .{ .trigger = .{ .vk = win32.VK_RIGHT, .mods = ctrl_alt_shift }, .action = .{ .resize_split = .{ .direction = .right, .amount = 1 } }, .performable = true },
     .{ .trigger = .{ .vk = win32.VK_OEM_PLUS, .mods = ctrl_alt_shift }, .action = .equalize_splits, .performable = true },
+    .{ .trigger = .{ .vk = win32.VK_F1 + 10 }, .action = .toggle_fullscreen },
     .{ .trigger = .{ .vk = 'P', .mods = ctrl_shift }, .action = .toggle_command_palette },
     // A distinct key from Tab on Windows, though the legacy encoding
     // sent both as 0x09.
@@ -414,6 +418,7 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .copy_mode => .copy_mode,
         .equalize_splits => .equalize_splits,
         .toggle_split_zoom => .toggle_split_zoom,
+        .toggle_fullscreen => .toggle_fullscreen,
         .float_pane => .float_pane,
         .float_tab => .float_tab,
         .dock_float => .dock_float,
@@ -719,6 +724,7 @@ test labelIn {
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+C"), labelIn(&defaults, .copy_to_clipboard).slice());
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+E"), labelIn(&defaults, .{ .new_split = .down }).slice());
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+Enter"), labelIn(&defaults, .toggle_split_zoom).slice());
+    try std.testing.expectEqualSlices(u16, L("F11"), labelIn(&defaults, .toggle_fullscreen).slice());
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift+Wheel Up"), labelIn(&defaults, .{ .increase_pane_font_size = 1 }).slice());
     // The first default: the keyboard's.
     try std.testing.expectEqualSlices(u16, L("Ctrl+Shift++"), labelIn(&defaults, .{ .increase_font_size = 1 }).slice());

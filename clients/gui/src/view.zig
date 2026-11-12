@@ -125,16 +125,17 @@ const Builder = struct {
 
     fn build(self: *Builder) Allocator.Error!Tree {
         var regions: std.ArrayList(Node) = .empty;
-        try regions.append(self.arena, try self.titleBar());
+        // Fullscreen, the panes alone (and a notice, while there's one).
+        if (!self.ui.fullscreen) try regions.append(self.arena, try self.titleBar());
         if (self.frame.notice.h > 0) try regions.append(self.arena, try self.notice());
-        if (self.ui.sidebar_shown) try regions.append(self.arena, try self.sidebar());
+        if (self.ui.sidebarVisible()) try regions.append(self.arena, try self.sidebar());
         try regions.append(self.arena, try self.terminal());
         // Each float over the panes, bottom to top.
         if (self.app.hasTabs()) {
             for (0..self.app.placed().floats.items.len) |k| try regions.append(self.arena, try self.floatNode(k));
         }
         // Over both, so the edge is taken hold of before anything under it.
-        if (self.ui.sidebar_shown) try regions.append(self.arena, self.sidebarEdge());
+        if (self.ui.sidebarVisible()) try regions.append(self.arena, self.sidebarEdge());
         if (self.dialog()) |d| try regions.append(self.arena, d);
         // A menu is over everything: the window under it is its scrim,
         // which takes the click that closes it.
@@ -704,7 +705,7 @@ const Builder = struct {
             const area = self.frame.terminal;
             const h = self.ui.px(20);
             try items.append(self.arena, .{ .kind = .{ .label = .{
-                .text = if (self.ui.sidebar_shown) L("Show a workspace from the list, or make one.") else L("No tabs. Show the sidebar to pick a workspace."),
+                .text = if (self.ui.sidebarVisible()) L("Show a workspace from the list, or make one.") else L("No tabs. Show the sidebar to pick a workspace."),
                 .font = .title,
                 .color = t.text_inactive,
             } }, .rect = .{ .x = area.x, .y = area.y + @round((area.h - h) / 2), .w = area.w, .h = h } });

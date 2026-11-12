@@ -99,6 +99,9 @@ grids: font.Grids,
 ui: Ui,
 /// The window's regions, from the last `layout`.
 frame: Ui.Frame = .{},
+/// Where the window was before it went fullscreen (`setFullscreen`),
+/// to put it back; null while it has its frame.
+windowed: ?win32.WINDOWPLACEMENT = null,
 
 /// Set last during creation; messages sent during CreateWindowExW
 /// (WM_SIZE, etc.) arrive before everything else is ready.
@@ -395,6 +398,34 @@ fn captionClick(self: *Window, part: Id.Part) void {
     }
 }
 
+/// Cover the window's monitor with the client area, the frame gone, or
+/// give the window its frame and its place back. The taskbar gets out
+/// of the way of a window that covers its monitor.
+fn setFullscreen(self: *Window, on: bool) void {
+    const hwnd = self.hwnd.?;
+    const style: u32 = @truncate(@as(usize, @bitCast(win32.GetWindowLongPtrW(hwnd, win32.GWL_STYLE))));
+    if (on and self.windowed == null) {
+        var placement: win32.WINDOWPLACEMENT = .{};
+        var monitor: win32.MONITORINFO = .{};
+        if (win32.GetWindowPlacement(hwnd, &placement) != 0 and
+            win32.GetMonitorInfoW(win32.MonitorFromWindow(hwnd, win32.MONITOR_DEFAULTTONEAREST), &monitor) != 0)
+        {
+            // Set first: WM_NCCALCSIZE comes from inside these calls.
+            self.windowed = placement;
+            _ = win32.SetWindowLongPtrW(hwnd, win32.GWL_STYLE, @intCast(style & ~win32.WS_OVERLAPPEDWINDOW));
+            const m = monitor.rcMonitor;
+            _ = win32.SetWindowPos(hwnd, null, m.left, m.top, m.right - m.left, m.bottom - m.top, win32.SWP_NOZORDER | win32.SWP_FRAMECHANGED);
+        } else log.warn("going fullscreen failed: the window keeps its frame", .{});
+    } else if (!on) if (self.windowed) |placement| {
+        self.windowed = null;
+        _ = win32.SetWindowLongPtrW(hwnd, win32.GWL_STYLE, @intCast(style | win32.WS_OVERLAPPEDWINDOW));
+        _ = win32.SetWindowPlacement(hwnd, &placement);
+        _ = win32.SetWindowPos(hwnd, null, 0, 0, 0, 0, win32.SWP_FRAMECHANGED | win32.SWP_NOMOVE | win32.SWP_NOSIZE | win32.SWP_NOZORDER | win32.SWP_NOACTIVATE);
+    };
+    // The chrome went or came back, whether or not the size changed.
+    self.layout();
+}
+
 /// The sizing border's thickness: what Windows puts above a maximized
 /// window's client area, off screen, and the top resize edge otherwise.
 fn frameThickness(hwnd: win32.HWND) i32 {
@@ -409,7 +440,7 @@ fn hitTestFrame(self: *Window, lparam: win32.LPARAM) win32.LRESULT {
     _ = win32.ScreenToClient(hwnd, &pos);
     // The top resize edge, which the caption took with it.
     const frame = frameThickness(hwnd);
-    if (win32.IsZoomed(hwnd) == 0 and pos.y < frame) {
+    if (self.windowed == null and win32.IsZoomed(hwnd) == 0 and pos.y < frame) {
         const width: i32 = @intCast(self.clientSize().width);
         if (pos.x < 2 * frame) return win32.HTTOPLEFT;
         if (pos.x >= width - 2 * frame) return win32.HTTOPRIGHT;
@@ -902,6 +933,7 @@ const shell_vtable: App.Shell.VTable = .{
     .setTitle = shellSetTitle,
     .caption = shellCaption,
     .maximized = shellMaximized,
+    .setFullscreen = shellSetFullscreen,
     .tickCount = shellTickCount,
     .keyDown = shellKeyDown,
     .mods = shellMods,
@@ -978,6 +1010,10 @@ fn shellCaption(ctx: *anyopaque, part: Id.Part) void {
 
 fn shellMaximized(ctx: *anyopaque) bool {
     return win32.IsZoomed(fromCtx(ctx).hwnd.?) != 0;
+}
+
+fn shellSetFullscreen(ctx: *anyopaque, on: bool) void {
+    fromCtx(ctx).setFullscreen(on);
 }
 
 fn shellTickCount(_: *anyopaque) u64 {
@@ -1211,7 +1247,8 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
     switch (msg) {
         // Take the caption's space for the client area, keeping the
         // other borders. A maximized window hangs its borders off
-        // screen, so its client area starts below the top one.
+        // screen, so its client area starts below the top one. A
+        // fullscreen one has no borders: all of it is the client area.
         win32.WM_NCCALCSIZE => {
             if (wparam == 0) return win32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const params: *win32.NCCALCSIZE_PARAMS = @ptrFromInt(@as(usize, @bitCast(lparam)));
@@ -1219,7 +1256,7 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
             const result_ = win32.DefWindowProcW(hwnd, msg, wparam, lparam);
             if (result_ != 0) return result_;
             params.rgrc[0].top = top;
-            if (win32.IsZoomed(hwnd) != 0) params.rgrc[0].top += frameThickness(hwnd);
+            if (self.windowed == null and win32.IsZoomed(hwnd) != 0) params.rgrc[0].top += frameThickness(hwnd);
             return 0;
         },
 
