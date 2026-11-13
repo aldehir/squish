@@ -84,6 +84,9 @@ pub const Tabs = enum { sidebar, top };
 @"fullscreen-radius": ?f32 = null,
 @"fullscreen-margin": ?f32 = null,
 @"fullscreen-padding": ?f32 = null,
+/// Fullscreen keeps the title bar's strip of tabs (`chrome-tabs` on
+/// top; with the sidebar's, there's no strip to keep).
+@"fullscreen-tabs": bool = false,
 
 /// Ghostty's default colors. Programs can override these with OSC 10/11.
 background: RGB = .{ .r = 0x28, .g = 0x2c, .b = 0x34 },
@@ -483,6 +486,11 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
             self.@"fullscreen-margin" = try gapOf(value);
         } else if (eql(u8, name, "padding")) {
             self.@"fullscreen-padding" = try gapOf(value);
+        } else if (eql(u8, name, "tabs")) {
+            self.@"fullscreen-tabs" = switch (value) {
+                .bool => |b| b,
+                else => return error.InvalidValue,
+            };
         } else return error.UnknownKey,
         .selection => if (eql(u8, name, "word_chars")) {
             try self.@"selection-word-chars".parse(alloc, try stringOf(value));
@@ -736,12 +744,14 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     try std.testing.expectEqual(null, pane.@"fullscreen-radius");
     try std.testing.expectEqual(null, pane.@"fullscreen-margin");
     try std.testing.expectEqual(null, pane.@"fullscreen-padding");
+    try std.testing.expect(!pane.@"fullscreen-tabs");
 
     var full = try testConfig(
         \\{"pane": {"margin": 4, "padding": 6, "outer_gap": 1},
-        \\ "fullscreen": {"gap": 2, "radius": 0, "margin": 0, "padding": 65}}
+        \\ "fullscreen": {"gap": 2, "radius": 0, "margin": 0, "tabs": true, "padding": 65}}
     );
     defer full.deinit();
+    try std.testing.expect(full.@"fullscreen-tabs");
     try std.testing.expectEqual(4, full.@"pane-margin".?);
     try std.testing.expectEqual(6, full.@"pane-padding");
     try std.testing.expectEqual(2, full.@"fullscreen-gap".?);

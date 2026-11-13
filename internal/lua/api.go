@@ -176,7 +176,8 @@ which are for the top level only:
                              fewer), last_tab, goto_split {direction}, resize_split {direction, amount},
                              equalize_splits, toggle_split_zoom,
                              toggle_fullscreen (F11: the panes alone over the
-                             whole monitor, no title bar or sidebar), the floating
+                             whole monitor, no title bar (but fullscreen.tabs)
+                             or sidebar), the floating
                              tabs' float_pane, float_tab (picks a tab in the
                              palette), dock_float, toggle_floats, and
                              focus_float, which have no keys by default,
@@ -301,7 +302,8 @@ one without applying it.
     pane = { gap = 10, radius = 10,  -- DIPs between panes and of their corners; 0 tiles them square
              margin = 10,           -- around the panes, to the chrome and the window's edges (unset: gap)
              padding = 10 },         -- inside each pane, around its grid, under window.padding
-    fullscreen = { gap = 10, radius = 10, margin = 10, padding = 10 }, -- pane's four, fullscreen (F11); each unset takes pane's
+    fullscreen = { gap = 10, radius = 10, margin = 10, padding = 10, -- pane's four, fullscreen (F11); each unset takes pane's
+                   tabs = false },   -- true: fullscreen keeps the title bar's tabs (chrome.tabs = "top")
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     shell = { command = "pwsh -NoLogo" },
     host = { proxy = true },         -- a SOCKS proxy per connected host (squish host ls)

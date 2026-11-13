@@ -126,8 +126,9 @@ const Builder = struct {
 
     fn build(self: *Builder) Allocator.Error!Tree {
         var regions: std.ArrayList(Node) = .empty;
-        // Fullscreen, the panes alone (and a notice, while there's one).
-        if (!self.ui.fullscreen) try regions.append(self.arena, try self.titleBar());
+        // Fullscreen, the panes alone (and a notice, while there's one),
+        // or under the bar's tabs (`fullscreen.tabs`).
+        if (self.ui.barVisible()) try regions.append(self.arena, try self.titleBar());
         if (self.frame.notice.h > 0) try regions.append(self.arena, try self.notice());
         if (self.ui.sidebarVisible()) try regions.append(self.arena, try self.sidebar());
         try regions.append(self.arena, try self.terminal());
@@ -158,23 +159,26 @@ const Builder = struct {
 
     /// The app icon, the sidebar toggle, the active tab's title (or,
     /// with the tabs on top, the strip of them), and the caption buttons.
-    /// The bar itself is the caption, which moves the window.
+    /// The bar itself is the caption, which moves the window. Fullscreen
+    /// (`fullscreen.tabs`), the strip alone: there's no sidebar to
+    /// toggle, and no frame for the buttons to act on.
     fn titleBar(self: *const Builder) Allocator.Error!Node {
         const app = self.app;
         const t = &self.ui.theme;
         const maximized = app.shell.maximized();
+        const windowed = !self.ui.fullscreen;
         var children: std.ArrayList(Node) = .empty;
-        try children.appendSlice(self.arena, &.{
+        if (windowed) try children.appendSlice(self.arena, &.{
             .{ .kind = .{ .spacer = 12 } },
             .{ .kind = .{ .icon = .{ .icon = null, .size = 18 } } },
             .{ .kind = .{ .spacer = 6 } },
             self.sidebarToggle(),
         });
-        const captions = [_]Node{
+        const captions: []const Node = if (windowed) try self.nodes(&.{
             self.captionButton(.minimize, maximized),
             self.captionButton(.maximize, maximized),
             self.captionButton(.close, maximized),
-        };
+        }) else &.{};
         if (self.ui.tabs == .top and app.hasTabs()) {
             // The strip starts in line with the panes' left edge, or just
             // past the toggle where that's further right (no sidebar); in
@@ -185,7 +189,7 @@ const Builder = struct {
             var lead: f32 = 0;
             for (children.items) |*c| lead += self.ui.measure(c).w.?;
             var rest = self.frame.titlebar.w - lead - self.ui.px(12);
-            for (&captions) |*c| rest -= self.ui.measure(c).w.?;
+            for (captions) |*c| rest -= self.ui.measure(c).w.?;
             rest -= self.ui.px(TabStrip.min_tab_w) + self.ui.px(TabStrip.item_gap) + self.ui.measure(&items[items.len - 1]).w.?;
             const gap = @max(self.ui.px(4), @min(self.ui.paneArea(&self.frame).x - lead, rest));
             try children.appendSlice(self.arena, &.{
@@ -198,7 +202,7 @@ const Builder = struct {
             const title: []const u16 = if (app.hasTabs()) app.activeTab().focus.title() else &.{};
             try children.append(self.arena, .{ .kind = .{ .label = .{ .text = title, .font = .title, .color = if (app.focused) t.text_muted else t.text_inactive, .pad_x = 8 } } });
         }
-        try children.appendSlice(self.arena, &captions);
+        try children.appendSlice(self.arena, captions);
         return .{ .id = .window(.caption), .kind = .{ .row = .{ .children = children.items, .bg = t.ground } }, .rect = self.frame.titlebar };
     }
 

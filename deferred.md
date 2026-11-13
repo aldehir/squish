@@ -26,8 +26,11 @@ is attached.
   the window's gap, corners, margins, and padding or its own (the
   `fullscreen` table), and
   only the key or the palette leaves it: the chrome doesn't come back
-  at the top edge under the mouse. It isn't kept across runs, and
-  there's no config key to start in it.
+  at the top edge under the mouse. `fullscreen.tabs` keeps the title
+  bar's strip of tabs (`chrome.tabs = "top"`), always shown: it doesn't
+  hide until the mouse is at the top edge, has no button that leaves
+  fullscreen, and there's no action to flip it. It isn't kept across
+  runs, and there's no config key to start in it.
 - **The sidebar's scroll follows nothing.** Its rows scroll with the
   wheel and the overlay scrollbar (`clients/gui/src/ui/Scrollbar.zig`,
   shared with the palette), but switching tabs from the keyboard or the

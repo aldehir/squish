@@ -222,6 +222,7 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
     self.ui.fullscreen_radius = config.@"fullscreen-radius";
     self.ui.fullscreen_margin = config.@"fullscreen-margin";
     self.ui.fullscreen_padding = config.@"fullscreen-padding";
+    self.ui.fullscreen_tabs = config.@"fullscreen-tabs";
     self.ui.pane_margin = config.@"pane-margin";
     self.ui.pane_padding = config.@"pane-padding";
     self.ui.tabs = config.@"chrome-tabs";
@@ -369,6 +370,7 @@ fn applyConfig(self: *Window, new: Config) void {
     self.ui.fullscreen_radius = config.@"fullscreen-radius";
     self.ui.fullscreen_margin = config.@"fullscreen-margin";
     self.ui.fullscreen_padding = config.@"fullscreen-padding";
+    self.ui.fullscreen_tabs = config.@"fullscreen-tabs";
     self.ui.pane_margin = config.@"pane-margin";
     self.ui.pane_padding = config.@"pane-padding";
     self.ui.setTabs(config.@"chrome-tabs");
@@ -459,7 +461,9 @@ fn hitTestFrame(self: *Window, lparam: win32.LPARAM) win32.LRESULT {
         return win32.HTTOP;
     }
     const hit = self.app.hitAt(pos);
-    if (hit.target != .window) return win32.HTCLIENT;
+    // Fullscreen, a bar of tabs (`fullscreen.tabs`) is no caption: the
+    // window stays where it is.
+    if (hit.target != .window or self.windowed != null) return win32.HTCLIENT;
     return switch (hit.part) {
         .caption => win32.HTCAPTION,
         // Past the strip's tabs, the bar is the caption still. Between

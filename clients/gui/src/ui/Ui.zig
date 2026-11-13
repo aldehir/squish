@@ -106,13 +106,17 @@ fullscreen_gap: ?f32 = null,
 fullscreen_radius: ?f32 = null,
 fullscreen_margin: ?f32 = null,
 fullscreen_padding: ?f32 = null,
+/// The configured `fullscreen.tabs`: fullscreen keeps the title bar's
+/// strip of tabs, while the tabs are on top.
+fullscreen_tabs: bool = false,
 fonts: Fonts,
 theme: Theme,
 /// The tabs are listed in a sidebar; hidden, the terminal area takes
 /// the width.
 sidebar_shown: bool = true,
 /// The window covers its monitor and shows the panes alone: no title
-/// bar and no sidebar, whatever `sidebar_shown` (`toggle_fullscreen`).
+/// bar (but `barVisible`) and no sidebar, whatever `sidebar_shown`
+/// (`toggle_fullscreen`).
 fullscreen: bool = false,
 /// The sidebar's width in DIPs, as its edge was last dragged.
 sidebar_width: f32 = default_sidebar_width,
@@ -193,7 +197,7 @@ pub fn px(self: *const Ui, dip: f32) f32 {
 
 /// Where the regions go in a window `width` by `height`.
 pub fn frame(self: *const Ui, width: f32, height: f32) Frame {
-    const bar_h = if (self.fullscreen) 0 else self.px(if (self.sidebar_shown) titlebar_height else titlebar_height_plain);
+    const bar_h = if (self.barVisible()) self.px(if (self.sidebar_shown) titlebar_height else titlebar_height_plain) else 0;
     const lines: f32 = @floatFromInt(self.notice_lines);
     const notice_h = if (lines > 0) self.px(2 * notice_pad + lines * notice_line_height) else 0;
     const side_w = if (self.sidebarVisible()) @min(self.px(self.sidebar_width), width) else 0;
@@ -212,11 +216,11 @@ pub fn frame(self: *const Ui, width: f32, height: f32) Frame {
 
 /// The part of the terminal area a tab's panes tile, leaving the chrome's
 /// ground around them (`paneMargin`) but at the top, under the title
-/// bar. Fullscreen, there's none: at the top too.
+/// bar. With no bar (fullscreen), at the top too.
 pub fn paneArea(self: *const Ui, f: *const Frame) Rect {
     const m = self.paneMargin();
     const t = f.terminal;
-    if (self.fullscreen) return .{ .x = t.x + m, .y = t.y + m, .w = @max(0, t.w - 2 * m), .h = @max(0, t.h - 2 * m) };
+    if (!self.barVisible()) return .{ .x = t.x + m, .y = t.y + m, .w = @max(0, t.w - 2 * m), .h = @max(0, t.h - 2 * m) };
     return .{ .x = t.x + m, .y = t.y, .w = @max(0, t.w - 2 * m), .h = @max(0, t.h - m) };
 }
 
@@ -268,6 +272,12 @@ pub fn toggleSidebar(self: *Ui) void {
 /// Whether the sidebar is drawn: shown, and the window not fullscreen.
 pub fn sidebarVisible(self: *const Ui) bool {
     return self.sidebar_shown and !self.fullscreen;
+}
+
+/// Whether the title bar is drawn: always in a window; fullscreen, only
+/// for its strip of tabs, where `fullscreen.tabs` keeps it.
+pub fn barVisible(self: *const Ui) bool {
+    return !self.fullscreen or (self.fullscreen_tabs and self.tabs == .top);
 }
 
 pub fn toggleFullscreen(self: *Ui) void {
@@ -921,6 +931,19 @@ test "the frame, with and without the sidebar" {
     try std.testing.expectEqual(@as(f32, 2), ui.paneGap());
     try std.testing.expectEqual(@as(f32, 0), f.corner);
     try std.testing.expectEqual(@as(f32, 3), f.inset);
+    // `fullscreen.tabs` keeps the title bar, with the tabs on top alone:
+    // the panes start under it, as in a window, with no sidebar still.
+    ui.fullscreen_tabs = true;
+    try std.testing.expectEqual(@as(f32, 0), ui.frame(1000, 600).titlebar.h);
+    ui.tabs = .top;
+    ui.fullscreen_margin = 6;
+    f = ui.frame(1000, 600);
+    try std.testing.expectEqual(@as(f32, titlebar_height), f.titlebar.h);
+    try std.testing.expectEqual(@as(f32, 0), f.sidebar.w);
+    try std.testing.expectEqual(Rect{ .x = 6, .y = f.titlebar.h, .w = 988, .h = 600 - f.titlebar.h - 6 }, ui.paneArea(&f));
+    ui.fullscreen_tabs = false;
+    ui.tabs = .sidebar;
+    ui.fullscreen_margin = 0;
     // The window's own are as they were; the sidebar comes back too.
     ui.toggleFullscreen();
     f = ui.frame(1000, 600);

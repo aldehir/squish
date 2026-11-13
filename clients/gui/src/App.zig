@@ -7623,6 +7623,29 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     try std.testing.expect(!TabStrip.pastTabs(strip_now, b_rect.right() + 1));
     try std.testing.expect(TabStrip.pastTabs(strip_now, add_rect.right()));
 
+    // Fullscreen, the strip goes with the bar, unless `fullscreen.tabs`
+    // keeps it: then the bar has the strip alone, in line with the
+    // panes, which start under it.
+    app.ui.toggleFullscreen();
+    t.frame = t.ui.frame(1000, 600);
+    t.relayout();
+    try std.testing.expect(Ui.find(app.view(), .window(.tab_strip)) == null);
+    app.ui.fullscreen_tabs = true;
+    t.frame = t.ui.frame(1000, 600);
+    t.relayout();
+    built = app.view();
+    try std.testing.expectEqual(app.geometry.pane_area.x, Ui.find(built, .window(.tab_strip)).?.rect.x);
+    try std.testing.expectEqual(t.frame.titlebar.bottom(), app.geometry.pane_area.y);
+    try std.testing.expect(Ui.find(built, a_id) != null);
+    try std.testing.expect(Ui.find(built, .window(.toggle_sidebar)) == null);
+    try std.testing.expect(Ui.find(built, .window(.close)) == null);
+    try std.testing.expect(Ui.find(built, .window(.sidebar)) == null);
+    app.ui.fullscreen_tabs = false;
+    app.ui.toggleFullscreen();
+    t.frame = t.ui.frame(1000, 600);
+    t.relayout();
+    built = app.view();
+
     // Resting on hidden B previews it under its tab.
     Move.to(app, b_rect);
     try std.testing.expect(app.ui.hover.eql(b_id));
