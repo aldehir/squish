@@ -118,6 +118,9 @@ app: App,
 web: Web,
 /// `syncKeyFocus` is moving the focus, which comes back here.
 syncing_focus: bool = false,
+/// The browser pane whose WebView took the keys from its page for a
+/// window of its own (the find bar's). Only compared.
+web_popup: ?*const Session = null,
 
 /// Scratch for `render`: what the renderer draws for the tab shown
 /// and its floats, and for the hidden tab previewed, built each frame.
@@ -777,21 +780,43 @@ fn syncKeyFocus(self: *Window) void {
     const focus = win32.GetFocus() orelse return;
     self.syncing_focus = true;
     defer self.syncing_focus = false;
+    const in_popup = self.popup(focus);
+    if (!in_popup) self.web_popup = null;
     switch (self.app.keyboard()) {
-        .browser => |s| self.web.focus(s, focus == hwnd),
+        .browser => |s| {
+            // Its find bar keeps the keys, until a press in the page.
+            if (in_popup and self.web_popup == s) return;
+            self.web.focus(s, focus == hwnd);
+        },
         else => {
             self.web.dropFocusAsks();
-            if (focus != hwnd and win32.IsChild(hwnd, focus) != 0) _ = win32.SetFocus(hwnd);
+            if (focus != hwnd and self.ours(focus)) _ = win32.SetFocus(hwnd);
         },
     }
 }
 
-/// Whether `other` is the window or one of its children: a browser's,
-/// which takes the keys for a page.
+/// Whether `other` is the window, one of its children (a browser's,
+/// which takes the keys for a page), or a window it owns (a browser's,
+/// which takes them for its find bar).
 fn ours(self: *const Window, other: ?win32.HWND) bool {
     const hwnd = self.hwnd orelse return false;
     const w = other orelse return false;
-    return w == hwnd or win32.IsChild(hwnd, w) != 0;
+    return win32.GetAncestor(w, win32.GA_ROOTOWNER) == hwnd;
+}
+
+/// Whether `other` is a window the window owns, and shown: one hidden
+/// with the focus is a find bar that closed.
+fn popup(self: *const Window, other: ?win32.HWND) bool {
+    const hwnd = self.hwnd orelse return false;
+    const w = other orelse return false;
+    return w != hwnd and win32.IsChild(hwnd, w) == 0 and self.ours(w) and win32.IsWindowVisible(w) != 0;
+}
+
+/// A message went to another window of the thread, a browser's: the
+/// one way to hear that its find bar closed, which leaves the focus
+/// behind.
+pub fn otherMessage(self: *Window) void {
+    if (self.renderer != null) self.syncKeyFocus();
 }
 
 /// What browsers tell the window.
@@ -840,6 +865,8 @@ fn webFocus(ctx: *anyopaque, s: *Session, got: bool) void {
     const self = fromCtx(ctx);
     if (got) {
         _ = self.app.update(.{ .focus = true });
+    } else if (self.popup(win32.GetFocus())) {
+        self.web_popup = s;
     } else if (!self.ours(win32.GetFocus())) {
         // To another program's window, not back to ours.
         _ = self.app.update(.{ .focus = false });
@@ -1132,7 +1159,13 @@ fn shellToggleStats(ctx: *anyopaque) void {
 }
 
 fn shellWebMouse(ctx: *anyopaque, s: *Session, msg: u32, wparam: win32.WPARAM, pos: win32.POINT) void {
-    fromCtx(ctx).web.mouse(s, msg, wparam, pos);
+    const self = fromCtx(ctx);
+    self.web.mouse(s, msg, wparam, pos);
+    // A press in the page takes the keys back from its find bar.
+    switch (msg) {
+        win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN, win32.WM_MBUTTONDOWN => self.web_popup = null,
+        else => {},
+    }
 }
 
 fn shellWebGo(ctx: *anyopaque, s: *Session, nav: App.Nav) void {

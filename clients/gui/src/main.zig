@@ -118,6 +118,7 @@ pub fn main(init: std.process.Init) !void {
             if (msg.message == win32.WM_QUIT) return;
             _ = win32.TranslateMessage(&msg);
             _ = win32.DispatchMessageW(&msg);
+            if (msg.hwnd != window.hwnd) window.otherMessage();
         }
         // woke == count means a message, which was handled above.
         if (woke == win32.WAIT_OBJECT_0) {
