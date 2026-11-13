@@ -218,6 +218,12 @@ pub fn create(alloc: Allocator, io: std.Io, config: *Config, source: Config.Sour
     errdefer self.ui.deinit();
     self.ui.pane_gap = config.@"pane-gap";
     self.ui.pane_radius = config.@"pane-radius";
+    self.ui.fullscreen_gap = config.@"fullscreen-gap";
+    self.ui.fullscreen_radius = config.@"fullscreen-radius";
+    self.ui.fullscreen_margin = config.@"fullscreen-margin";
+    self.ui.fullscreen_padding = config.@"fullscreen-padding";
+    self.ui.pane_margin = config.@"pane-margin";
+    self.ui.pane_padding = config.@"pane-padding";
     self.ui.tabs = config.@"chrome-tabs";
 
     const size = self.clientSize();
@@ -359,6 +365,12 @@ fn applyConfig(self: *Window, new: Config) void {
     }
     self.ui.pane_gap = config.@"pane-gap";
     self.ui.pane_radius = config.@"pane-radius";
+    self.ui.fullscreen_gap = config.@"fullscreen-gap";
+    self.ui.fullscreen_radius = config.@"fullscreen-radius";
+    self.ui.fullscreen_margin = config.@"fullscreen-margin";
+    self.ui.fullscreen_padding = config.@"fullscreen-padding";
+    self.ui.pane_margin = config.@"pane-margin";
+    self.ui.pane_padding = config.@"pane-padding";
     self.ui.setTabs(config.@"chrome-tabs");
     if (zoom_changed) self.ui.setZoom(self.dpi, config.@"chrome-scale") catch |err| log.err("chrome scale change failed: {}", .{err});
     if (fonts_changed) {

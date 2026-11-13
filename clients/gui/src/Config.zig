@@ -70,6 +70,20 @@ pub const Tabs = enum { sidebar, top };
 @"pane-gap": f32 = 10,
 /// The radius of each pane's corners, in DIPs. From 0 (square) to 32.
 @"pane-radius": f32 = 10,
+/// Around the panes, between them and the chrome or the window's edges,
+/// in DIPs. From 0 to 64; null is the gap between them.
+@"pane-margin": ?f32 = null,
+/// Inside each pane, between its edges and its grid (none at the top,
+/// where its title strip is), in DIPs, under `window-padding`. From 0
+/// to 64.
+@"pane-padding": f32 = 10,
+/// Fullscreen's own of the four above, in the same units and ranges.
+/// Null takes the window's; for the margins, with none there either,
+/// fullscreen's gap.
+@"fullscreen-gap": ?f32 = null,
+@"fullscreen-radius": ?f32 = null,
+@"fullscreen-margin": ?f32 = null,
+@"fullscreen-padding": ?f32 = null,
 
 /// Ghostty's default colors. Programs can override these with OSC 10/11.
 background: RGB = .{ .r = 0x28, .g = 0x2c, .b = 0x34 },
@@ -345,7 +359,7 @@ pub fn load(gpa: Allocator, io: std.Io, settings: std.json.Value, opts: LoadOpti
         const key = kv.key_ptr.*;
         const value = kv.value_ptr.*;
         if (std.mem.eql(u8, key, "theme") or std.mem.eql(u8, key, "shell") or std.mem.eql(u8, key, "host")) continue; // handled above; the daemon's
-        const Section = enum { font, colors, window, chrome, pane, selection, clipboard, ssh, browser };
+        const Section = enum { font, colors, window, chrome, pane, fullscreen, selection, clipboard, ssh, browser };
         const section = std.meta.stringToEnum(Section, key) orelse {
             try self.warn("unknown setting \"{s}\"", .{key});
             continue;
@@ -454,6 +468,21 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
             const radius = try floatOf(value);
             if (radius < 0 or radius > 32) return error.InvalidValue;
             self.@"pane-radius" = radius;
+        } else if (eql(u8, name, "margin")) {
+            self.@"pane-margin" = try gapOf(value);
+        } else if (eql(u8, name, "padding")) {
+            self.@"pane-padding" = try gapOf(value);
+        } else return error.UnknownKey,
+        .fullscreen => if (eql(u8, name, "gap")) {
+            self.@"fullscreen-gap" = try gapOf(value);
+        } else if (eql(u8, name, "radius")) {
+            const radius = try floatOf(value);
+            if (radius < 0 or radius > 32) return error.InvalidValue;
+            self.@"fullscreen-radius" = radius;
+        } else if (eql(u8, name, "margin")) {
+            self.@"fullscreen-margin" = try gapOf(value);
+        } else if (eql(u8, name, "padding")) {
+            self.@"fullscreen-padding" = try gapOf(value);
         } else return error.UnknownKey,
         .selection => if (eql(u8, name, "word_chars")) {
             try self.@"selection-word-chars".parse(alloc, try stringOf(value));
@@ -492,6 +521,13 @@ fn setPalette(self: *Config, value: std.json.Value) !void {
         },
         else => return error.InvalidValue,
     }
+}
+
+/// A gap, margin, or padding: DIPs from 0 to 64.
+fn gapOf(value: std.json.Value) !f32 {
+    const gap = try floatOf(value);
+    if (gap < 0 or gap > 64) return error.InvalidValue;
+    return gap;
 }
 
 fn stringOf(value: std.json.Value) ![]const u8 {
@@ -692,7 +728,29 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     defer pane.deinit();
     try std.testing.expectEqual(0, pane.@"pane-gap");
     try std.testing.expectEqual(4.5, pane.@"pane-radius");
+    try std.testing.expectEqual(null, pane.@"pane-margin");
+    try std.testing.expectEqual(10, pane.@"pane-padding");
     try std.testing.expectEqual(0, pane.errors.items.len);
+    // Fullscreen takes the window's until it's given its own.
+    try std.testing.expectEqual(null, pane.@"fullscreen-gap");
+    try std.testing.expectEqual(null, pane.@"fullscreen-radius");
+    try std.testing.expectEqual(null, pane.@"fullscreen-margin");
+    try std.testing.expectEqual(null, pane.@"fullscreen-padding");
+
+    var full = try testConfig(
+        \\{"pane": {"margin": 4, "padding": 6, "outer_gap": 1},
+        \\ "fullscreen": {"gap": 2, "radius": 0, "margin": 0, "padding": 65}}
+    );
+    defer full.deinit();
+    try std.testing.expectEqual(4, full.@"pane-margin".?);
+    try std.testing.expectEqual(6, full.@"pane-padding");
+    try std.testing.expectEqual(2, full.@"fullscreen-gap".?);
+    try std.testing.expectEqual(0, full.@"fullscreen-radius".?);
+    try std.testing.expectEqual(0, full.@"fullscreen-margin".?);
+    try std.testing.expectEqual(null, full.@"fullscreen-padding");
+    try std.testing.expectEqual(2, full.errors.items.len);
+    try std.testing.expectEqualStrings("unknown setting pane.outer_gap", full.errors.items[0]);
+    try std.testing.expectEqualStrings("fullscreen.padding: invalid value: InvalidValue", full.errors.items[1]);
 
     var bad = try testConfig(
         \\{"pane": {"gap": -1,"radius": 40, "border": 1}}

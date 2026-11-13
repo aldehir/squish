@@ -296,7 +296,10 @@ one without applying it.
     window = { padding = { x = 3, y = 3 } },
     chrome = { scale = 1, preview_delay = 100, -- ms resting on a hidden tab's row before its preview shows (0: at once)
                tabs = "sidebar" },   -- "top": the active workspace's tabs in the title bar, the sidebar lists workspaces
-    pane = { gap = 10, radius = 10 }, -- DIPs between panes and of their corners; 0 tiles them square
+    pane = { gap = 10, radius = 10,  -- DIPs between panes and of their corners; 0 tiles them square
+             margin = 10,           -- around the panes, to the chrome and the window's edges (unset: gap)
+             padding = 10 },         -- inside each pane, around its grid, under window.padding
+    fullscreen = { gap = 10, radius = 10, margin = 10, padding = 10 }, -- pane's four, fullscreen (F11); each unset takes pane's
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     shell = { command = "pwsh -NoLogo" },
     host = { proxy = true },         -- a SOCKS proxy per connected host (squish host ls)

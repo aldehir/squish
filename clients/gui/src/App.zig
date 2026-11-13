@@ -6733,7 +6733,8 @@ test "F11 shows the panes alone over the whole window, and again brings the chro
     try std.testing.expect(shell.fullscreen);
     t.frame = t.ui.frame(1000, 600);
     t.relayout();
-    try std.testing.expectEqual(t.frame.window, app.geometry.pane_area);
+    try std.testing.expectEqual(t.frame.window, t.frame.terminal);
+    try std.testing.expectEqual(t.ui.paneArea(&t.frame), app.geometry.pane_area);
     try std.testing.expect(Ui.find(app.view(), .window(.caption)) == null);
     try std.testing.expect(Ui.find(app.view(), .window(.sidebar)) == null);
     // The sidebar is as it was left.

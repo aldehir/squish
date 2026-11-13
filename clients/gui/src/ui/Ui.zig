@@ -86,6 +86,7 @@ pub const notice_pad = 7;
 /// what's left to drag at `pane.gap = 0`.
 pub const min_grip = 6;
 pub const default_pane_radius = 10;
+pub const default_pane_padding = 10;
 
 /// Pixels per DIP: the monitor's scale times `zoom`.
 scale: f32,
@@ -95,6 +96,16 @@ zoom: f32 = 1,
 /// `paneGap` scale them.
 pane_gap: f32 = widgets.PaneStrip.gap,
 pane_radius: f32 = default_pane_radius,
+/// The configured `pane.margin`, around the panes (null: the gap
+/// between them), and `pane.padding`, inside each.
+pane_margin: ?f32 = null,
+pane_padding: f32 = default_pane_padding,
+/// The configured `fullscreen` table, which takes over fullscreen:
+/// null keeps the four above.
+fullscreen_gap: ?f32 = null,
+fullscreen_radius: ?f32 = null,
+fullscreen_margin: ?f32 = null,
+fullscreen_padding: ?f32 = null,
 fonts: Fonts,
 theme: Theme,
 /// The tabs are listed in a sidebar; hidden, the terminal area takes
@@ -194,25 +205,31 @@ pub fn frame(self: *const Ui, width: f32, height: f32) Frame {
         .notice = .{ .y = bar_h, .w = width, .h = notice_h },
         .sidebar = .{ .y = top, .w = side_w, .h = h },
         .terminal = .{ .x = side_w, .y = top, .w = width - side_w, .h = h },
-        // Fullscreen, the panes meet the screen's edges, square.
-        .corner = if (self.fullscreen) 0 else self.px(self.pane_radius),
-        .inset = self.px(10),
+        .corner = self.px(if (self.fullscreen) self.fullscreen_radius orelse self.pane_radius else self.pane_radius),
+        .inset = self.px(if (self.fullscreen) self.fullscreen_padding orelse self.pane_padding else self.pane_padding),
     };
 }
 
 /// The part of the terminal area a tab's panes tile, leaving the chrome's
-/// ground around them but at the top, under the title bar. All of it
-/// fullscreen.
+/// ground around them (`paneMargin`) but at the top, under the title
+/// bar. Fullscreen, there's none: at the top too.
 pub fn paneArea(self: *const Ui, f: *const Frame) Rect {
-    const m = self.paneGap();
+    const m = self.paneMargin();
     const t = f.terminal;
-    if (self.fullscreen) return t;
+    if (self.fullscreen) return .{ .x = t.x + m, .y = t.y + m, .w = @max(0, t.w - 2 * m), .h = @max(0, t.h - 2 * m) };
     return .{ .x = t.x + m, .y = t.y, .w = @max(0, t.w - 2 * m), .h = @max(0, t.h - m) };
 }
 
-/// Between panes, and around them in the terminal area.
+/// Around the panes in the terminal area: the configured margins, or
+/// the gap between the panes.
+pub fn paneMargin(self: *const Ui) f32 {
+    const own = if (self.fullscreen) self.fullscreen_margin orelse self.pane_margin else self.pane_margin;
+    return if (own) |m| self.px(m) else self.paneGap();
+}
+
+/// Between panes.
 pub fn paneGap(self: *const Ui) f32 {
-    return self.px(self.pane_gap);
+    return self.px(if (self.fullscreen) self.fullscreen_gap orelse self.pane_gap else self.pane_gap);
 }
 
 /// A divider's grab width: the gap, or `min_grip` where that's narrower.
@@ -878,17 +895,45 @@ test "the frame, with and without the sidebar" {
     f = ui.frame(1000, 600);
     try std.testing.expectEqual(@as(f32, 0), f.notice.h);
     try std.testing.expectEqual(f.titlebar.h, f.terminal.y);
-    // Fullscreen, the terminal area is the window, and the panes' all of
-    // it; the sidebar comes back as it was.
+    // Fullscreen, the terminal area is the window, and the panes keep
+    // their gap, on every side, and their corners.
     ui.toggleFullscreen();
     f = ui.frame(1000, 600);
     try std.testing.expectEqual(@as(f32, 0), f.titlebar.h);
     try std.testing.expectEqual(@as(f32, 0), f.sidebar.w);
     try std.testing.expectEqual(f.window, f.terminal);
+    const gap = ui.px(ui.pane_gap);
+    try std.testing.expectEqual(Rect{ .x = gap, .y = gap, .w = 1000 - 2 * gap, .h = 600 - 2 * gap }, ui.paneArea(&f));
+    try std.testing.expectEqual(ui.px(ui.pane_radius), f.corner);
+    try std.testing.expectEqual(ui.px(default_pane_padding), f.inset);
+    // Until fullscreen is given its own, each alone: the margins follow
+    // the gap, then the window's margins, then fullscreen's.
+    ui.fullscreen_gap = 2;
+    try std.testing.expectEqual(@as(f32, 2), ui.paneGap());
+    try std.testing.expectEqual(Rect{ .x = 2, .y = 2, .w = 996, .h = 596 }, ui.paneArea(&f));
+    ui.pane_margin = 6;
+    try std.testing.expectEqual(Rect{ .x = 6, .y = 6, .w = 988, .h = 588 }, ui.paneArea(&f));
+    ui.fullscreen_margin = 0;
+    ui.fullscreen_radius = 0;
+    ui.fullscreen_padding = 3;
+    f = ui.frame(1000, 600);
     try std.testing.expectEqual(f.window, ui.paneArea(&f));
+    try std.testing.expectEqual(@as(f32, 2), ui.paneGap());
     try std.testing.expectEqual(@as(f32, 0), f.corner);
+    try std.testing.expectEqual(@as(f32, 3), f.inset);
+    // The window's own are as they were; the sidebar comes back too.
     ui.toggleFullscreen();
     f = ui.frame(1000, 600);
+    try std.testing.expectEqual(gap, ui.paneGap());
+    try std.testing.expectEqual(ui.px(ui.pane_radius), f.corner);
+    try std.testing.expectEqual(ui.px(default_pane_padding), f.inset);
+    // The window's margins leave the top, under the title bar, alone.
+    const a = ui.paneArea(&f);
+    try std.testing.expectEqual(f.terminal.x + 6, a.x);
+    try std.testing.expectEqual(f.terminal.y, a.y);
+    try std.testing.expectEqual(f.terminal.bottom() - 6, a.bottom());
+    ui.pane_padding = 0;
+    try std.testing.expectEqual(@as(f32, 0), ui.frame(1000, 600).inset);
     try std.testing.expectEqual(@as(f32, 300), f.sidebar.w);
     try std.testing.expectEqual(@as(f32, titlebar_height), f.titlebar.h);
 }
