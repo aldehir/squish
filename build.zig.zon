@@ -1,6 +1,6 @@
 .{
     .name = .squish,
-    .version = "0.6.1",
+    .version = "0.6.2",
     .fingerprint = 0xa45a74ed9b40efb7,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
