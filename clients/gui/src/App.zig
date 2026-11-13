@@ -7570,6 +7570,8 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     try std.testing.expectEqual(@as(?usize, 0), s.active);
     try std.testing.expect(Ui.find(built, c_id) == null);
     try std.testing.expect(t.frame.titlebar.contains(s.items[1].rect.x + 1, s.items[1].rect.y + 1));
+    // It starts in line with the panes.
+    try std.testing.expectEqual(app.geometry.pane_area.x, strip.rect.x);
     try std.testing.expect(Row.lit(app, 0));
     try std.testing.expect(!Row.lit(app, 1));
     // The sidebar lists the workspaces, with no tab or pane rows: the
@@ -7662,6 +7664,13 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     const down: win32.WPARAM = @as(u32, @bitCast(@as(i32, -120))) << 16;
     _ = app.update(.{ .wheel = .{ .msg = win32.WM_MOUSEWHEEL, .wparam = down, .pos = wheel_at } });
     try std.testing.expectEqual(@min(most, app.ui.px(TabStrip.min_tab_w)), app.ui.tab_strip_scroll);
+    // Too narrow to start in line with the panes, the strip keeps a
+    // tab's width.
+    t.frame = t.ui.frame(400, 600);
+    t.relayout();
+    const squeezed = Ui.find(app.view(), .window(.tab_strip)).?;
+    try std.testing.expect(squeezed.rect.x < app.geometry.pane_area.x);
+    try std.testing.expectEqual(app.ui.px(TabStrip.min_tab_w), squeezed.kind.tab_strip.view_w);
     app.ui.toggleSidebar();
     t.frame = t.ui.frame(300, 600);
     try std.testing.expect(Ui.find(app.view(), .window(.tab_strip)) != null);

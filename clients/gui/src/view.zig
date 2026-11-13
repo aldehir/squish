@@ -23,6 +23,7 @@ const Painter = @import("renderer/Painter.zig");
 const Ui = @import("ui/Ui.zig");
 const tree = @import("ui/Tree.zig");
 const TreeList = @import("ui/widgets/TreeList.zig");
+const TabStrip = @import("ui/widgets/TabStrip.zig");
 const PaneStrip = @import("ui/widgets/PaneStrip.zig");
 const Popup = @import("ui/widgets/Popup.zig");
 const PaletteView = @import("ui/widgets/PaletteView.zig");
@@ -169,10 +170,27 @@ const Builder = struct {
             .{ .kind = .{ .spacer = 6 } },
             self.sidebarToggle(),
         });
+        const captions = [_]Node{
+            self.captionButton(.minimize, maximized),
+            self.captionButton(.maximize, maximized),
+            self.captionButton(.close, maximized),
+        };
         if (self.ui.tabs == .top and app.hasTabs()) {
+            // The strip starts in line with the panes' left edge, or just
+            // past the toggle where that's further right (no sidebar); in
+            // a window too narrow for that, as far right as leaves it a
+            // tab's width and the button's.
+            const strip = try self.tabStrip();
+            const items = strip.kind.tab_strip.items;
+            var lead: f32 = 0;
+            for (children.items) |*c| lead += self.ui.measure(c).w.?;
+            var rest = self.frame.titlebar.w - lead - self.ui.px(12);
+            for (&captions) |*c| rest -= self.ui.measure(c).w.?;
+            rest -= self.ui.px(TabStrip.min_tab_w) + self.ui.px(TabStrip.item_gap) + self.ui.measure(&items[items.len - 1]).w.?;
+            const gap = @max(self.ui.px(4), @min(self.ui.paneArea(&self.frame).x - lead, rest));
             try children.appendSlice(self.arena, &.{
-                .{ .kind = .{ .spacer = 4 } },
-                try self.tabStrip(),
+                .{ .kind = .{ .spacer = gap / self.ui.scale } },
+                strip,
                 // A sliver of caption past the strip, however full.
                 .{ .kind = .{ .spacer = 12 } },
             });
@@ -180,11 +198,7 @@ const Builder = struct {
             const title: []const u16 = if (app.hasTabs()) app.activeTab().focus.title() else &.{};
             try children.append(self.arena, .{ .kind = .{ .label = .{ .text = title, .font = .title, .color = if (app.focused) t.text_muted else t.text_inactive, .pad_x = 8 } } });
         }
-        try children.appendSlice(self.arena, &.{
-            self.captionButton(.minimize, maximized),
-            self.captionButton(.maximize, maximized),
-            self.captionButton(.close, maximized),
-        });
+        try children.appendSlice(self.arena, &captions);
         return .{ .id = .window(.caption), .kind = .{ .row = .{ .children = children.items, .bg = t.ground } }, .rect = self.frame.titlebar };
     }
 
