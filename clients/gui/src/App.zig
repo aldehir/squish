@@ -3511,6 +3511,23 @@ fn cycle(self: *App, forward: bool) void {
     }
 }
 
+/// Show the tab at place `index`, from 1, among those of the shown tab's
+/// group that don't float, as the title bar's strip lists them; the last
+/// of them if there are fewer, or for null.
+fn gotoTab(self: *App, index: ?u16) void {
+    if (self.tabs.items.len == 0) return;
+    const group = self.groupOf(self.shownHost());
+    var found: ?usize = null;
+    var n: u16 = 0;
+    for (self.tabs.items, 0..) |t, i| {
+        if (t.float != null or self.groupOf(t) != group) continue;
+        found = i;
+        n += 1;
+        if (n == index) break;
+    }
+    if (found) |i| self.activate(i);
+}
+
 /// A session's reader handed it a frame or a status: the active tab's
 /// panes draw (and the previewed tab's), and the others' rows show
 /// activity.
@@ -3694,6 +3711,8 @@ fn runAction(self: *App, action: binding.Action) bool {
         .close_surface => self.closePane(self.active, s),
         .next_tab => self.cycle(true),
         .previous_tab => self.cycle(false),
+        .goto_tab => |index| self.gotoTab(index),
+        .last_tab => self.gotoTab(null),
         .increase_font_size => |pt| self.shell.setFontSize(self.shell.fontSize() + pt),
         .decrease_font_size => |pt| self.shell.setFontSize(self.shell.fontSize() - pt),
         .reset_font_size => self.shell.setFontSize(self.config.@"font-size"),
@@ -7255,6 +7274,18 @@ test "next tab goes through the tabs that don't float, and a float's palette ent
     // From a float, from the tab under it.
     app.activate(app.tabIndex(tabs.f).?);
     app.cycle(false);
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    // By number, the floats aren't counted, and a number past the last
+    // tab is the last.
+    app.gotoTab(1);
+    try std.testing.expectEqual(tabs.a, app.activeTab());
+    app.gotoTab(2);
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    app.gotoTab(1);
+    app.gotoTab(9);
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    app.gotoTab(1);
+    app.gotoTab(null);
     try std.testing.expectEqual(tabs.b, app.activeTab());
 
     // The palette lists G among the tabs, saying what it floats over;

@@ -48,8 +48,10 @@ is attached.
 - **A session whose child exits** closes its row at once, whatever the
   exit status. The mockups keep a failed one open with its status.
 - **Keyboard access** to the chrome (focusing the list, UI Automation)
-  and jumping to a session by number. The command palette
-  (Ctrl+Shift+P) toggles the sidebar and switches tabs by name.
+  and default keys for jumping to a tab by number: `goto_tab {index}`
+  and `last_tab` are there to bind (`examples/config/tmux.lua` does),
+  but Ghostty's alt+1..9 are the shell's and programs' here. The command
+  palette (Ctrl+Shift+P) toggles the sidebar and switches tabs by name.
 - **The command palette** lists every tab, hidden workspace, window
   command, init.lua action, and host; it doesn't yet put recently used
   entries first, list the Host blocks of `~/.ssh/config` (the daemon

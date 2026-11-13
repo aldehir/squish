@@ -20,6 +20,11 @@ pub const Action = union(enum) {
     close_surface,
     next_tab,
     previous_tab,
+    /// The tab at this place, from 1, among the shown one's group (its
+    /// workspace's, as the title bar's strip lists them); the last one if
+    /// there are fewer. Ghostty's.
+    goto_tab: u16,
+    last_tab,
     /// In points. The window's size, for every pane.
     increase_font_size: f32,
     decrease_font_size: f32,
@@ -413,6 +418,8 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .close_surface => .close_surface,
         .next_tab => .next_tab,
         .previous_tab => .previous_tab,
+        .goto_tab => .{ .goto_tab = @intFromFloat(@max(1, @min(1000, argNumber(args, "index", 1)))) },
+        .last_tab => .last_tab,
         .reset_font_size => .reset_font_size,
         .reset_pane_font_size => .reset_pane_font_size,
         .copy_mode => .copy_mode,
@@ -838,6 +845,23 @@ test "a sequence runs on its last key, and a key acts or starts one, never both"
     try std.testing.expectEqual(null, km.find('T', .{ .ctrl = true, .shift = true }));
     try std.testing.expectEqual(Press.pending, km.press('T', .{ .ctrl = true, .shift = true }));
     try std.testing.expectEqual(Action.next_tab, km.press('N', .{}).binding.action);
+    // tmux's ctrl+b 0-9: an action with its index, from 1 if none is given.
+    try km.apply(&.{
+        .{ .key = "ctrl+b>2", .action = "goto_tab", .args = "{\"index\":3}" },
+        .{ .key = "ctrl+b>1", .action = "goto_tab" },
+        .{ .key = "ctrl+b>9", .action = "last_tab" },
+    });
+    try std.testing.expectEqual(Press.pending, km.press('B', ctrl_mods));
+    try std.testing.expectEqual(Action{ .goto_tab = 3 }, km.press('2', .{}).binding.action);
+    try std.testing.expectEqual(Press.pending, km.press('B', ctrl_mods));
+    try std.testing.expectEqual(Action{ .goto_tab = 1 }, km.press('1', .{}).binding.action);
+    try std.testing.expectEqual(Press.pending, km.press('B', ctrl_mods));
+    try std.testing.expectEqual(Action.last_tab, km.press('9', .{}).binding.action);
+    try km.apply(&.{
+        .{ .key = "ctrl+b>c", .action = "new_tab" },
+        .{ .key = "ctrl+b>ctrl+b>z", .action = "toggle_split_zoom" },
+        .{ .key = "ctrl+shift+t>n", .action = "next_tab" },
+    });
     try std.testing.expectEqual(Action.close_surface, km.press('W', .{ .ctrl = true, .shift = true }).binding.action);
     try std.testing.expectEqualSlices(u16, L("Ctrl+B, C"), km.label(.new_tab).slice());
     try std.testing.expectEqualSlices(u16, L("Ctrl+B, Ctrl+B, Z"), km.label(.toggle_split_zoom).slice());

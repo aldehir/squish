@@ -170,8 +170,10 @@ which are for the top level only:
                              another, joined by >: "ctrl+b>c") runs a window
                              action by name with
                              args (squish-gui's: new_tab, new_split {direction},
-                             close_surface, next_tab, previous_tab, goto_split
-                             {direction}, resize_split {direction, amount},
+                             close_surface, next_tab, previous_tab, goto_tab
+                             {index} (the tab at that place, from 1, among
+                             the shown workspace's; the last if there are
+                             fewer), last_tab, goto_split {direction}, resize_split {direction, amount},
                              equalize_splits, toggle_split_zoom,
                              toggle_fullscreen (F11: the panes alone over the
                              whole monitor, no title bar or sidebar), the floating

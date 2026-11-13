@@ -19,13 +19,10 @@ squish.bind(chord("n"), "next_tab")
 squish.bind(chord("p"), "previous_tab")
 squish.bind(chord("shift+7"), function() assert(squish.tab.close{}) end) -- & kill-window
 
--- 0-9 select the window by number, from 0 as tmux's base-index does.
+-- 0-9 select the window by number, from 0 as tmux's base-index does. A
+-- number past the last tab goes to the last, where tmux would refuse.
 for n = 0, 9 do
-  squish.bind(chord(tostring(n)), function()
-    local ws = assert(squish.workspace.info{})
-    local tab = ws.tabs[n + 1]
-    if tab then assert(squish.workspace.focus{ tab = tab.id }) end
-  end)
+  squish.bind(chord(tostring(n)), "goto_tab", { index = n + 1 })
 end
 
 -- l goes to the last window: a hook remembers each workspace's previous
