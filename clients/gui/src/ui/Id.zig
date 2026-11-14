@@ -130,6 +130,8 @@ pub const Part = enum {
     /// A minimized float's row at the sidebar's bottom, which shows it
     /// again; its menu entry that does.
     chip,
+    /// A pane's row in the sidebar's Agents section, which shows it.
+    agent,
     /// A pane's search card: its field (or the pill), and its previous,
     /// next, and close buttons.
     search,

@@ -3347,6 +3347,15 @@ fn showPane(self: *App, target: Id.Target) void {
     self.focusPane(found.s);
 }
 
+/// An agent's row was pressed: show its pane, a minimized float's once
+/// the float is back.
+fn showAgent(self: *App, target: Id.Target) void {
+    const found = self.sessionOf(target) orelse return;
+    const t = self.tabs.items[found.tab];
+    if (t.float) |f| if (f.minimized) self.restoreFloat(t);
+    self.showPane(target);
+}
+
 /// Give pane `s` the keys: the active tab's, or one of a tab on screen
 /// with it (a float, or the tab under it), which becomes the active tab.
 fn focusPane(self: *App, s: *Session) void {
@@ -5257,7 +5266,7 @@ pub fn placed(self: *App) *const Placement {
 pub fn previewTab(self: *App) ?*Tab {
     if (self.pane_drag != null) return null;
     // A button on the row (its close) shows its own tooltip instead.
-    if (self.ui.tip.part != .body) return null;
+    if (self.ui.tip.part != .body and self.ui.tip.part != .agent) return null;
     const i = switch (self.ui.tip.target) {
         .tab => |key| self.tabIndexOf(.{ .tab = key }) orelse return null,
         .pane => |id| (self.findSession(id) orelse return null).tab,
@@ -5558,6 +5567,7 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
                 .pane => self.showPane(hit.target),
                 else => {},
             };
+            if (hit.part == .agent) self.showAgent(hit.target);
         },
         win32.WM_LBUTTONUP => {
             const pressed = self.ui.pressed;
@@ -7445,6 +7455,55 @@ test "a pane drags between a float and the tab under it: along an edge, or besid
     try std.testing.expect(app.pane_drag.?.drop == null);
     _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = .{ .x = @intFromFloat(box.x + 2), .y = @intFromFloat(fp.y + fp.h / 2) } } });
     try std.testing.expect(app.pane_drag == null);
+}
+
+test "panes that report a status are listed under Agents, and a press on one shows its pane" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const tabs = try testFloats(&t);
+    var it = tabs.a.iterator();
+    const a1 = it.next().?;
+    const a2 = it.next().?;
+    const b = tabs.b.focus;
+    const a1_row: Id = .{ .target = .{ .pane = a1.id }, .part = .agent };
+    const b_row: Id = .{ .target = .{ .pane = b.id }, .part = .agent };
+
+    // None reports anything: no section.
+    try std.testing.expect(Ui.find(app.view(), b_row) == null);
+
+    // Two do: each has a row with its status, in the tabs' order, under
+    // the rows of its own tab; a pane that reports nothing has none.
+    b.program_status.restore("", .working, 40);
+    a1.program_status.restore("", .blocked, null);
+    const built = app.view();
+    const a1_rect = Ui.find(built, a1_row).?.rect;
+    const b_rect = Ui.find(built, b_row).?.rect;
+    try std.testing.expect(Ui.find(built, .{ .target = .{ .pane = a2.id }, .part = .agent }) == null);
+    try std.testing.expect(a1_rect.y > Ui.find(built, .{ .target = .{ .pane = a1.id } }).?.rect.y);
+    try std.testing.expect(b_rect.y > a1_rect.y);
+    try std.testing.expectEqual(b_row, app.ui.hitTest(built, b_rect.x + b_rect.w / 2, b_rect.y + b_rect.h / 2));
+
+    // A press shows the pane's tab, and gives the pane the keys.
+    const Press = struct {
+        fn on(a: *App, r: Rect) void {
+            const at: win32.POINT = .{ .x = @intFromFloat(r.x + r.w / 2), .y = @intFromFloat(r.y + r.h / 2) };
+            _ = a.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = at } });
+            _ = a.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = at } });
+        }
+    };
+    Press.on(app, b_rect);
+    try std.testing.expectEqual(tabs.b, app.activeTab());
+    tabs.a.focus = a2;
+    Press.on(app, Ui.find(app.view(), a1_row).?.rect);
+    try std.testing.expectEqual(tabs.a, app.activeTab());
+    try std.testing.expectEqual(a1, tabs.a.focus);
+
+    // Its record cleared, its row goes.
+    a1.program_status = .{};
+    try std.testing.expect(Ui.find(app.view(), a1_row) == null);
 }
 
 test "resting on a hidden tab's row previews it beside the row, until the mouse leaves, a key, or a drag" {

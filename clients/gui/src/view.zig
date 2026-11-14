@@ -443,7 +443,35 @@ const Builder = struct {
             const kind: HostKind = if (app.hostLive(h)) .connected else .disconnected;
             try rows.append(self.arena, .{ .node = try self.header(.{ .host = @intCast(h) }, Hosts.label(dest), kind), .children = children, .section = true });
         }
+        if (try self.agents()) |a| try rows.append(self.arena, a);
         return rows.items;
+    }
+
+    /// The panes whose programs report what they're doing (OSC 7501),
+    /// under a header of their own after the hosts: each a row like its
+    /// own under its tab, flush with the header, which shows the pane.
+    /// Null for none.
+    fn agents(self: *const Builder) Allocator.Error!?TreeRow {
+        const app = self.app;
+        const t = &self.ui.theme;
+        var rows: std.ArrayList(TreeRow) = .empty;
+        for (app.tabs.items) |tab| {
+            const keys = app.activeTab() == tab;
+            var it = tab.iterator();
+            while (it.next()) |s| {
+                if (s.statusSummary() == null) continue;
+                try rows.append(self.arena, try self.paneRow(tab, s, keys, .agent));
+            }
+        }
+        if (rows.items.len == 0) return null;
+        const head: Node = .{ .kind = .{ .row = .{
+            .children = try self.nodes(&.{
+                .{ .kind = .{ .spacer = 2 } },
+                .{ .kind = .{ .label = .{ .text = L("Agents"), .font = .section, .color = t.text_muted, .upper = true } } },
+            }),
+            .h = header_height,
+        } } };
+        return .{ .node = head, .children = rows.items, .section = true };
     }
 
     /// Section `s`'s rows: its workspaces, then its tabs in none.
@@ -650,7 +678,7 @@ const Builder = struct {
         var panes: std.ArrayList(TreeRow) = .empty;
         var it = tab.iterator();
         const keys = app.hasTabs() and app.activeTab() == tab;
-        while (it.next()) |s| try panes.append(self.arena, try self.paneRow(tab, s, keys));
+        while (it.next()) |s| try panes.append(self.arena, try self.paneRow(tab, s, keys, .body));
         return .{
             .node = .{
                 .id = id,
@@ -674,13 +702,16 @@ const Builder = struct {
         };
     }
 
-    /// A pane's row under its tab: its icon and title, and what its
-    /// programs report at its right.
-    fn paneRow(self: *const Builder, tab: *const Tab, s: *Session, tab_active: bool) Allocator.Error!TreeRow {
+    /// A pane's row under its tab (`.body`), or among the agents
+    /// (`.agent`): its icon and title, and what its programs report at
+    /// its right.
+    fn paneRow(self: *const Builder, tab: *const Tab, s: *Session, tab_active: bool, part: Id.Part) Allocator.Error!TreeRow {
         const t = &self.ui.theme;
-        const id: Id = .{ .target = .{ .pane = s.id } };
+        const id: Id = .{ .target = .{ .pane = s.id }, .part = part };
         const focused = tab_active and s == tab.focus;
-        const icon: Painter.Lucide = switch (s.content) {
+        // Lucide's bot spans 20 of its 24 units: about 12 DIPs in the
+        // icon's box.
+        const icon: Painter.Lucide = if (part == .agent) .bot else switch (s.content) {
             .terminal => .terminal,
             .browser => .globe,
         };

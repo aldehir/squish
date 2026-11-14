@@ -15,7 +15,8 @@ the title bar's toggle hides the sidebar in either. The sidebar is a
 tree: each tab's row folds open to a row per pane, with what its
 programs report doing (OSC 7501,
 `clients/gui/src/ProgramStatus.zig`), which squish keeps while no window
-is attached.
+is attached. Under the hosts, an Agents section lists the panes that
+report one, each with its title and status; a press shows the pane.
 
 - **The title bar's tab strip** (`chrome.tabs = "top"`) can't reorder
   tabs by drag or take a pane dragged onto a tab, and the layout isn't
@@ -89,6 +90,11 @@ is attached.
   a tooltip; nor are records other than the most pressing, and `done`
   stays until the program replaces or clears it, with no notion of the
   user having seen it.
+- **The Agents section** lists only the panes this window has: those of
+  a hidden workspace aren't there, nor counted. Its rows keep the tabs'
+  order (the most pressing doesn't come first), a pane at rest (`idle`)
+  stays listed with no icon, and the section can't be folded or turned
+  off.
 - **Floating tabs** (a tab with `float {over, rect}`: `tab.float`,
   `tab.dock`, `pane.move` with `float`) stop at what the window's
   placement can do in one tab area. A pane dragged into another tab
