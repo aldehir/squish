@@ -56,7 +56,8 @@ pub fn build(b: *std.Build) void {
     installConpty(b);
     installWebView2(b);
     const remote = b.option(bool, "remote", "Build squish and its builds for SSH hosts (need Go; default: if Go is found)");
-    if (remote orelse true) installGoHelpers(b, remote != null);
+    const prebuilt_vt = b.option(bool, "prebuilt-vt", "Link squish with the libghostty-vt already in internal/vt/lib rather than building it (default: false)") orelse false;
+    if (remote orelse true) installGoHelpers(b, remote != null, prebuilt_vt);
 
     const run_cmd = b.addRunArtifact(gui_exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -106,7 +107,7 @@ fn terminfoSteps(b: *std.Build, test_step: *std.Build.Step) void {
 /// to install on them. Go caches its own builds, so this runs `go build`
 /// every time rather than tracking the sources. Without Go it warns and
 /// leaves them out, unless `-Dremote=true` asked for them.
-fn installGoHelpers(b: *std.Build, required: bool) void {
+fn installGoHelpers(b: *std.Build, required: bool, prebuilt_vt: bool) void {
     const go = b.findProgram(.{ .names = &.{"go"} }) orelse {
         if (required) {
             b.getInstallStep().dependOn(&b.addFail("go not found; -Dremote=true needs it to build squish").step);
@@ -118,7 +119,14 @@ fn installGoHelpers(b: *std.Build, required: bool) void {
     // squish links libghostty-vt with cgo (internal/vt), as a static
     // library for each target from a nested build of the submodule, which
     // tracks its own sources. internal/vt/squish.zig is compiled in for
-    // squish's own exports. scripts/build-vt-lib.ps1 does the same.
+    // squish's own exports. scripts/build-vt-lib.ps1 does the same, and
+    // `-Dprebuilt-vt` links what it left in internal/vt/lib: the release
+    // workflow caches those, the nested builds taking most of its time.
+    if (prebuilt_vt) {
+        _ = goBuild(b, go, "squish");
+        installRemote(b, go, null);
+        return;
+    }
     const copy = b.addUpdateSourceFiles();
     // go build hashes cgo's flags, not the library's bytes: a Go file
     // with the libraries' hash goes beside them (build/libstamp.zig),
@@ -166,7 +174,7 @@ const remote_targets = [_]struct { os: []const u8, arch: []const u8, zig: []cons
 /// gzips them and writes the manifest. Linked fully static against musl,
 /// so it runs whatever the host's libc, and stripped by the C linker
 /// too: -s alone leaves the Zig library's debug info.
-fn installRemote(b: *std.Build, go: []const u8, libs: *std.Build.Step) void {
+fn installRemote(b: *std.Build, go: []const u8, libs: ?*std.Build.Step) void {
     const tool = b.addExecutable(.{
         .name = "pack",
         .root_module = b.createModule(.{
@@ -187,7 +195,7 @@ fn installRemote(b: *std.Build, go: []const u8, libs: *std.Build.Step) void {
         run.setEnvironmentVariable("CGO_ENABLED", "1");
         run.setEnvironmentVariable("CC", b.fmt("\"{s}\" cc -target {s}", .{ b.graph.zig_exe, t.zig }));
         run.has_side_effects = true;
-        run.step.dependOn(libs);
+        if (libs) |step| run.step.dependOn(step);
         pack.addArgs(&.{ t.os, t.arch });
         pack.addFileArg(exe);
     }

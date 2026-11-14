@@ -1,32 +1,90 @@
 name: release
 
-# Pushing a v* tag builds, tests, and publishes a prerelease. A manual run
-# builds and tests only, and keeps the zip as a workflow artifact.
+# Pushing a v* tag builds, tests, and publishes a prerelease. A push to
+# main or a manual run builds and tests only, and keeps the zip as a
+# workflow artifact. A run reads the caches of its own ref and of main,
+# never another tag's, so it's the runs on main that fill the tags'.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   ZIG_VERSION: 0.17.0
   ZIG_SHA256: b5663f69581dcf391293fbf16c06cb80d81d806545ce618b4d0bab7f0eb8c428
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
-  windows:
+  # The window's tests, a Debug build of their own, beside the release
+  # build rather than ahead of it.
+  test:
     runs-on: windows-2025
-    defaults:
-      run:
-        shell: pwsh
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
+      - uses: actions/cache@v4
+        id: zig
+        with:
+          path: tools/zig-x86_64-windows-${{ env.ZIG_VERSION }}
+          key: zig-${{ env.ZIG_VERSION }}
+
       # Into tools\, where scripts/setup-msvc.ps1 expects it.
       - name: Install Zig
+        if: steps.zig.outputs.cache-hit != 'true'
+        run: |
+          $name = "zig-x86_64-windows-$env:ZIG_VERSION"
+          $zip = "$env:RUNNER_TEMP\$name.zip"
+          Invoke-WebRequest "https://ziglang.org/download/$env:ZIG_VERSION/$name.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:ZIG_SHA256) { throw "zig sha256 mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath tools
+
+      - name: Find the ghostty commit
+        id: ghostty
+        run: |
+          "sha=$(git rev-parse HEAD:ghostty)" >> $env:GITHUB_OUTPUT
+
+      # The packages Zig fetches, and no more: its build caches miss on
+      # a runner with another CPU than the one that saved them, the tools
+      # a build runs being compiled for the host's. Keyed by the ghostty
+      # commit, not the manifests, which hold the version.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            zig-pkg
+            clients/gui/zig-pkg
+            ghostty/zig-pkg
+          key: pkg-test-${{ steps.ghostty.outputs.sha }}
+
+      - name: Test
+        run: |
+          . .\scripts\setup-msvc.ps1
+          zig build test
+
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/cache@v4
+        id: zig
+        with:
+          path: tools/zig-x86_64-windows-${{ env.ZIG_VERSION }}
+          key: zig-${{ env.ZIG_VERSION }}
+
+      - name: Install Zig
+        if: steps.zig.outputs.cache-hit != 'true'
         run: |
           $name = "zig-x86_64-windows-$env:ZIG_VERSION"
           $zip = "$env:RUNNER_TEMP\$name.zip"
@@ -41,13 +99,38 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Find the ghostty commit
+        id: ghostty
+        run: |
+          "sha=$(git rev-parse HEAD:ghostty)" >> $env:GITHUB_OUTPUT
+
+      # As the test job's, with the packages build.zig fetches into
+      # tools\.
       - uses: actions/cache@v4
         with:
           path: |
             zig-pkg
+            clients/gui/zig-pkg
+            ghostty/zig-pkg
             tools/conpty-*
             tools/webview2-*
-          key: deps-${{ hashFiles('build.zig', 'build.zig.zon', 'clients/gui/build.zig.zon', 'ghostty/build.zig.zon') }}
+          key: pkg-build-${{ steps.ghostty.outputs.sha }}-${{ hashFiles('build.zig') }}
+
+      # libghostty-vt for the daemon, most of a build's time and the same
+      # until ghostty or the Zig compiled into it (internal/vt) changes.
+      - uses: actions/cache@v4
+        id: vt
+        with:
+          path: |
+            internal/vt/lib
+            internal/vt/zz_libstamp.go
+          key: vt-${{ env.ZIG_VERSION }}-${{ steps.ghostty.outputs.sha }}-${{ hashFiles('internal/vt/*.zig', 'scripts/build-vt-lib.ps1', 'build/libstamp.zig') }}
+
+      - name: Build libghostty-vt
+        if: steps.vt.outputs.cache-hit != 'true'
+        run: |
+          . .\scripts\setup-msvc.ps1
+          .\scripts\build-vt-lib.ps1
 
       - name: Check tag matches build.zig.zon
         if: startsWith(github.ref, 'refs/tags/')
@@ -58,26 +141,19 @@ jobs:
             throw "tag $env:GITHUB_REF_NAME does not match build.zig.zon version $version"
           }
 
-      - name: Test
-        run: |
-          . .\scripts\setup-msvc.ps1
-          zig build test
-
-      # go test alone needs libghostty-vt in internal\vt\lib, which only
-      # the install step of zig build produces. A failing native command
-      # does not stop pwsh, so check vet's exit code by hand.
-      - name: Test the daemon
-        run: |
-          . .\scripts\setup-msvc.ps1
-          .\scripts\build-vt-lib.ps1
-          go vet ./...
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          go test ./...
-
       - name: Build
         run: |
           . .\scripts\setup-msvc.ps1
-          zig build -Doptimize=ReleaseFast -Dremote=true
+          zig build -Doptimize=ReleaseFast -Dremote=true -Dprebuilt-vt=true --summary all
+
+      # A failing native command does not stop pwsh, so check vet's exit
+      # code by hand.
+      - name: Test the daemon
+        run: |
+          . .\scripts\setup-msvc.ps1
+          go vet ./...
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          go test ./...
 
       - name: Package
         id: package
@@ -97,8 +173,21 @@ jobs:
           name: ${{ steps.package.outputs.name }}
           path: dist/*
 
+  # Only once both jobs pass.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME dist/* --prerelease --generate-notes --title "squish $env:GITHUB_REF_NAME"
+          GH_REPO: ${{ github.repository }}
+        run: gh release create $env:GITHUB_REF_NAME (Get-ChildItem dist -File) --prerelease --generate-notes --title "squish $env:GITHUB_REF_NAME"
