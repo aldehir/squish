@@ -48,6 +48,35 @@ func TestInputAndResize(t *testing.T) {
 	}
 }
 
+// TestCtrlC interrupts a child that would run for a minute, though the
+// process starting it ignores ctrl+c, as the daemon does: one made with
+// CREATE_NEW_PROCESS_GROUP has it off, and its children inherit that.
+func TestCtrlC(t *testing.T) {
+	if err := ignoreCtrlC(true); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Start(Options{Command: `ping -n 60 127.0.0.1`, Cols: 80, Rows: 24})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	go io.Copy(io.Discard, p)
+	time.Sleep(time.Second)
+	if _, err := p.Write([]byte{0x03}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		p.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ctrl+c didn't end the child")
+	}
+}
+
 // TestClose kills a child that would run for a minute.
 func TestClose(t *testing.T) {
 	p, err := Start(Options{Command: `ping -n 60 127.0.0.1`, Cols: 80, Rows: 24})

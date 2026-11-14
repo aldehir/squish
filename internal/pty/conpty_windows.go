@@ -99,6 +99,20 @@ type conpty struct {
 	freeOnce  sync.Once
 }
 
+// ignoreCtrlC sets whether this process ignores ctrl+c, which the
+// processes it starts from then on inherit.
+func ignoreCtrlC(ignore bool) error {
+	var add uintptr
+	if ignore {
+		add = 1
+	}
+	set := windows.NewLazySystemDLL("kernel32.dll").NewProc("SetConsoleCtrlHandler")
+	if r, _, err := set.Call(0, add); r == 0 {
+		return fmt.Errorf("pty: SetConsoleCtrlHandler: %w", err)
+	}
+	return nil
+}
+
 // Start runs opts.Command in a new pseudoconsole. The child runs in a job
 // object that kills it, and everything it starts, when the pty closes.
 func Start(opts Options) (Pty, error) {
@@ -142,6 +156,14 @@ func Start(opts Options) (Pty, error) {
 		return nil, fmt.Errorf("pty: CreatePseudoConsole: 0x%08x", uint32(hr))
 	}
 
+	// The daemon is started with CREATE_NEW_PROCESS_GROUP, which has it
+	// ignore ctrl+c; a child that inherited that would never be
+	// interrupted while its console turns the key into the signal.
+	if err := ignoreCtrlC(false); err != nil {
+		c.closePseudoconsole()
+		c.free()
+		return nil, err
+	}
 	if err := c.spawn(command, opts.Dir, opts.Env); err != nil {
 		c.closePseudoconsole()
 		c.free()
