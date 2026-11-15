@@ -144,6 +144,24 @@ func removeNode(root *Node, pane PaneID) *Node {
 	return root
 }
 
+// nearPane is the pane nearest to where pane is, to focus once it's
+// gone: the first of the child before it in its split, or of the one
+// after. The window's Tab.remove picks the same, so both agree whichever
+// hears of the pane's end first. Zero if pane is alone or not in the tree.
+func nearPane(root *Node, pane PaneID) PaneID {
+	if root == nil || root.IsLeaf() {
+		return PaneID{}
+	}
+	parent, i := find(root, nil, pane)
+	if i < 0 {
+		return PaneID{}
+	}
+	if i == 0 {
+		return firstPane(parent.Children[1].Node)
+	}
+	return firstPane(parent.Children[i-1].Node)
+}
+
 // heirOf picks the sibling that takes child i's space when its pane
 // closes: the nearest split from it (the one before on a tie), else the
 // one holding the pane it was split from. -1 if neither, when the

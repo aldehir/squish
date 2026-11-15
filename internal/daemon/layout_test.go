@@ -229,6 +229,24 @@ func TestSplitCloseRestores(t *testing.T) {
 	}
 }
 
+// TestNearPane: the focus a closing pane leaves stays in its split,
+// as the window's Tab.remove has it.
+func TestNearPane(t *testing.T) {
+	// 1 on the left, 2 over 3 on the right.
+	root := &Node{Axis: Row, Children: []Child{
+		{Share: 5000, Node: leaf(pid(1))},
+		{Share: 5000, Node: &Node{Axis: Column, Children: []Child{{Share: 5000, Node: leaf(pid(2))}, {Share: 5000, Node: leaf(pid(3))}}}},
+	}}
+	for _, c := range []struct{ gone, want uint32 }{{1, 2}, {2, 3}, {3, 2}} {
+		if got := nearPane(root, pid(c.gone)); got != pid(c.want) {
+			t.Errorf("near %d: %d, want %d", c.gone, got.N, c.want)
+		}
+	}
+	if got := nearPane(leaf(pid(1)), pid(1)); !got.IsZero() {
+		t.Errorf("near a lone pane: %d, want none", got.N)
+	}
+}
+
 // checkFrom fails unless every From in n names a pane in a sibling's
 // subtree.
 func checkFrom(t *testing.T, n *Node, step string) {

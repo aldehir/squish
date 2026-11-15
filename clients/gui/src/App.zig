@@ -2088,6 +2088,9 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
     const was_active: ?*Tab = if (self.tabs.items.len > 0) self.activeTab() else null;
     const was_focus: ?*Session = if (was_active) |t| t.focus else null;
     const shown_ws = if (was_active) |t| t.conn == conn and t.ws == st.id else false;
+    // Its focus is squish's unless a focus call of ours was out when it
+    // was read, or went out since: squish doesn't tell us our own.
+    const focus_known = st.focus_known and st.focus_seq == conn.focus_sent;
 
     const Lookup = struct {
         app: *App,
@@ -2137,7 +2140,7 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
         } else try Tab.create(alloc, self.nextTabKey(), conn, st.id, lt.id, node, Tab.first(node));
         root.* = null;
         ordered.appendAssumeCapacity(t);
-        if (st.focus_known) {
+        if (focus_known) {
             if (t.findPane(lt.focus)) |s| t.focus = s;
             t.zoom = if (!lt.zoomed.isNone()) t.findPane(lt.zoomed) else null;
             t.sent_focus = focusOf(t);
@@ -2194,7 +2197,7 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
     _ = self.ui.setHover(.none);
     self.middle_pressed = null;
     for (self.tabs.items) |t| self.layoutTab(t);
-    if (st.focus_known) self.setActiveTabIn(conn, st.id, st.active_tab);
+    if (focus_known) self.setActiveTabIn(conn, st.id, st.active_tab);
     if (self.tabs.items.len == 0) {
         self.active = 0;
         self.showTitle();
@@ -2207,7 +2210,7 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
     // are what's shown: a tab of another workspace or daemon stays.
     const still: ?usize = if (was_active) |t| self.tabIndex(t) else null;
     var active = still orelse @min(self.active, self.tabs.items.len - 1);
-    if (st.focus_known) {
+    if (focus_known) {
         if (still == null or shown_ws) for (self.tabs.items, 0..) |t, k| {
             if (t.conn == conn and t.ws == st.id and t.id.eql(st.active_tab)) active = k;
         };

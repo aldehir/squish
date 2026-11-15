@@ -152,6 +152,10 @@ client_actions: std.ArrayList(ClientAction) = .empty,
 /// Ids of our `focus` calls not yet replied to. A structure that comes
 /// meanwhile may predate them, so its focus isn't taken.
 focus_calls: std.ArrayList(u32) = .empty,
+/// How many `focus` calls we've made. A structure read before the last
+/// of them (`Structure.focus_seq`) predates it too, though none was out
+/// then. Written by the UI thread alone.
+focus_sent: u32 = 0,
 /// Our `attach` and `newWorkspace` calls not yet replied to: each reply
 /// is the workspace's structure, or why it failed.
 attach_calls: std.ArrayList(AttachCall) = .empty,
@@ -859,6 +863,9 @@ pub const Structure = struct {
     /// Whether the focus here is current: false while a `focus` call of
     /// ours is unanswered, which the structure may predate.
     focus_known: bool,
+    /// `focus_sent` when it was read: a call made since, before the UI
+    /// thread took it, makes its focus old as well.
+    focus_seq: u32 = 0,
 
     pub const TabLayout = struct {
         id: TabRef,
@@ -1965,6 +1972,7 @@ pub fn focus(self: *Daemon, f: Focus) !void {
     defer win32.ReleaseSRWLockExclusive(&self.lock);
     // The reply can't have come yet: it's read under this lock.
     self.focus_calls.appendAssumeCapacity(id);
+    self.focus_sent +%= 1;
 }
 
 /// Send a Call of `method` with `params` (any value std.json writes as
@@ -2568,6 +2576,7 @@ fn applyWorkspace(self: *Daemon, value: std.json.Value) !u32 {
     defer win32.ReleaseSRWLockExclusive(&self.lock);
     try self.attached.put(self.alloc, ws.id, {});
     st.focus_known = self.focus_calls.items.len == 0;
+    st.focus_seq = self.focus_sent;
     for (tabs) |t| try self.arriveLocked(t.root);
     for (self.structures.items) |*old| {
         if (old.*.id != ws.id) continue;

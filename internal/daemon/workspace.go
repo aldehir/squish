@@ -1049,10 +1049,10 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 }
 
 // takePaneLocked removes pane from t's tree, moving the tab's focus
-// and zoom off it: to the pane before it in layout order, or the one
-// after. The tree is nil once its last pane goes.
+// and zoom off it: to the pane beside it in its split (nearPane), the
+// one a window picks too. The tree is nil once its last pane goes.
 func (s *Server) takePaneLocked(t *tab, pane PaneID) {
-	panes := t.root.Panes()
+	near := nearPane(t.root, pane)
 	t.root = removeNode(t.root, pane)
 	if t.zoom == pane {
 		t.zoom = PaneID{}
@@ -1060,17 +1060,7 @@ func (s *Server) takePaneLocked(t *tab, pane PaneID) {
 	if t.focus != pane || t.root == nil {
 		return
 	}
-	for i, id := range panes {
-		if id != pane {
-			continue
-		}
-		if i > 0 {
-			t.focus = panes[i-1]
-		} else {
-			t.focus = panes[i+1]
-		}
-		return
-	}
+	t.focus = near
 }
 
 // tabLayout replaces a tab's proportions: a divider was dragged.
