@@ -552,7 +552,7 @@ test "the box is centered under the title bar, its rows are hit, and the rest is
     var pal: Palette = .init(std.testing.allocator);
     defer pal.deinit();
     pal.beginRebuild();
-    try pal.add(.{ .label = L("cmd"), .section = .tab, .action = .{ .tab = 1 } });
+    try pal.add(.{ .label = L("cmd"), .section = .workspace, .action = .{ .workspace = 1 } });
     try pal.add(.{ .label = L("New tab"), .section = .command, .action = .{ .binding = .new_tab } });
     try pal.add(.{ .label = L("New workspace"), .section = .command, .action = .{ .part = Id.window(.new_tab) } });
     try pal.endRebuild();

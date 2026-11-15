@@ -4428,9 +4428,10 @@ fn choosePalette(self: *App, i: usize) void {
     const action = e.action;
     self.closePalette();
     switch (action) {
-        .tab => |key| if (self.tabIndexOf(.{ .tab = key })) |t| self.activate(t),
         .float_tab => |key| if (self.tabIndexOf(.{ .tab = key })) |t| self.floatTabOver(self.tabs.items[t]),
-        .show_workspace => |key| self.showWorkspace(key),
+        .workspace => |key| if (self.workspaceEntry(key)) |w| {
+            if (w.shown) self.activateWorkspace(w) else self.showWorkspace(key);
+        },
         .upgrade => |h| self.askUpgrade(if (h == std.math.maxInt(u32)) null else h),
         .open_workspace => |def| if (self.daemon) |conn| if (!conn.isLost() and def < self.workspace_defs.len) {
             conn.openDefined(self.workspace_defs[def]) catch |err| log.err("opening workspace {f} failed: {}", .{ std.unicode.fmtUtf16Le(self.workspace_defs[def]), err });
@@ -4446,7 +4447,7 @@ fn choosePalette(self: *App, i: usize) void {
 }
 
 /// Fill the palette with what it's over now: in the commands step every
-/// tab, every hidden workspace, the window's commands, and init.lua's
+/// workspace, the window's commands, and init.lua's
 /// actions; in the host step the hosts. As the tree is built, so the
 /// list follows what's there.
 fn rebuildPalette(self: *App) Allocator.Error!void {
@@ -4651,25 +4652,19 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     // The labels' UTF-16, made at compile time.
     @setEvalBranchQuota(2000);
     var buf: [Palette.max_text]u16 = undefined;
-    for (self.tabs.items, 0..) |t, i| {
-        try p.add(.{
-            .label = t.focus.title(),
-            .detail = self.paletteTabDetail(&buf, t),
-            .right = if (i == self.active) L("shown") else if (t.float) |f| (if (f.minimized) L("minimized") else &.{}) else &.{},
-            .icon = .panels_top_left,
-            .section = .tab,
-            .action = .{ .tab = t.key },
-        });
-    }
-    for (self.workspaces.items) |w| {
-        if (w.shown) continue;
+    // The workspace of the tab shown, if it's in one.
+    const current: ?*const Workspace = if (self.hasTabs()) cur: {
+        const t = self.shownHost();
+        break :cur if (t.conn) |conn| self.workspaceIn(conn, t.ws) else null;
+    } else null;
+    for (self.workspaces.items) |*w| {
         try p.add(.{
             .label = w.name,
             .detail = if (w.conn.hostDest()) |d| Hosts.label(d) else L("local"),
-            .right = L("show"),
+            .right = if (!w.shown) L("hidden") else if (w == current) L("current") else &.{},
             .icon = .layers,
             .section = .workspace,
-            .action = .{ .show_workspace = w.key },
+            .action = .{ .workspace = w.key },
         });
     }
 
@@ -4789,15 +4784,9 @@ fn paletteHosts(self: *App, p: *Palette) Allocator.Error!void {
     }
 }
 
-/// Tab `t`'s workspace and host, for its palette entry: "name · host",
-/// and for a float, what it floats over.
+/// Tab `t`'s workspace and host, for its palette entry: "name · host".
 fn paletteTabDetail(self: *App, buf: []u16, t: *const Tab) []const u16 {
     var n: usize = 0;
-    if (t.float) |f| {
-        n = appendUnits(buf, n, L("floating over "));
-        n = appendUnits(buf, n, f.host.focus.title());
-        n = appendUnits(buf, n, L(" · "));
-    }
     if (t.conn) |conn| if (self.workspaceIn(conn, t.ws)) |w| {
         n = appendUnits(buf, n, w.name);
     };
@@ -7287,7 +7276,7 @@ test "a float is placed over the tab shown, under its header, and a minimized on
     try std.testing.expect(Ui.find(app.view(), gid.with(.chip)) == null);
 }
 
-test "next tab goes through the tabs that don't float, and a float's palette entry shows it over its tab" {
+test "next tab goes through the tabs that don't float, and the palette lists workspaces, not tabs" {
     var shell: TestShell = .{};
     var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
     try t.init(&shell);
@@ -7316,19 +7305,23 @@ test "next tab goes through the tabs that don't float, and a float's palette ent
     app.gotoTab(null);
     try std.testing.expectEqual(tabs.b, app.activeTab());
 
-    // The palette lists G among the tabs, saying what it floats over;
-    // choosing it shows A with G restored over it.
+    // The palette lists the workspaces, shown or hidden, and no tabs:
+    // the one the tab shown is in says so, a hidden one that it is.
+    const w_key = app.workspaces.items[0].key;
+    app.workspaces.items[0].active_tab = tabs.a.id;
+    const hidden_key = try t.workspace(2, L("v"), 1, 1, false);
     app.openPalette();
     _ = app.view();
     const p = &app.mode.palette;
-    const i = for (0..p.count()) |k| {
-        if (std.meta.eql(p.entryOf(k).?.action, Palette.Action{ .tab = tabs.g.key })) break k;
-    } else return error.TestUnexpectedResult;
-    try std.testing.expect(std.mem.startsWith(u16, p.entryOf(i).?.detail, L("floating over a")));
-    app.choosePalette(i);
-    try std.testing.expectEqual(tabs.g, app.activeTab());
-    try std.testing.expectEqual(tabs.a, app.shownHost());
-    try std.testing.expect(!tabs.g.float.?.minimized);
+    try std.testing.expectEqual(Palette.Action{ .workspace = w_key }, p.entryOf(0).?.action);
+    try std.testing.expectEqualSlices(u16, L("current"), p.entryOf(0).?.right);
+    try std.testing.expectEqual(Palette.Action{ .workspace = hidden_key }, p.entryOf(1).?.action);
+    try std.testing.expectEqualSlices(u16, L("hidden"), p.entryOf(1).?.right);
+    try std.testing.expectEqual(Palette.Section.command, p.entryOf(2).?.section);
+    // Choosing a shown one shows the tab squish has active in it.
+    app.choosePalette(0);
+    try std.testing.expect(app.mode == .terminal);
+    try std.testing.expectEqual(tabs.a, app.activeTab());
 }
 
 test "the palette's float commands have no keys, and Float tab… lists the tabs that can float over the one shown" {

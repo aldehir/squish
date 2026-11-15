@@ -1,5 +1,5 @@
-//! The command palette: a query, the entries it's over (every tab,
-//! every hidden workspace, the window's commands, and init.lua's
+//! The command palette: a query, the entries it's over (every
+//! workspace, the window's commands, and init.lua's
 //! actions; or, in the host step, the hosts to connect to; or, in the
 //! file step, the paths the daemon found), and the results, the entries
 //! the query matches, best first, with the units it matched marked for
@@ -28,7 +28,7 @@ pub const max_query = 64;
 const max_starts = 8;
 
 pub const Step = enum {
-    /// Everything: tabs, workspaces, commands.
+    /// Everything: workspaces, commands.
     commands,
     /// "Connect to host…": the hosts, and what's typed.
     host,
@@ -85,10 +85,9 @@ pub const FileStatus = struct {
 
 /// What choosing an entry does.
 pub const Action = union(enum) {
-    /// Show the tab, by `Tab.key`.
-    tab: u32,
-    /// Show a hidden workspace, by `App.Workspace.key`.
-    show_workspace: u32,
+    /// Go to a workspace, by `App.Workspace.key`: its active tab, or
+    /// for a hidden one, show it.
+    workspace: u32,
     /// Open a workspace init.lua defines, by its place in the
     /// definitions (`App.workspace_defs`).
     open_workspace: u32,
@@ -420,14 +419,14 @@ test "results follow the query, best first, and the focus moves around them" {
     var p: Palette = .init(std.testing.allocator);
     defer p.deinit();
     p.beginRebuild();
-    try p.add(.{ .label = L("cmd"), .detail = L("default"), .section = .tab, .action = .{ .tab = 1 } });
-    try p.add(.{ .label = L("zsh"), .detail = L("default · dev1"), .section = .tab, .action = .{ .tab = 2 } });
+    try p.add(.{ .label = L("cmd"), .detail = L("default"), .section = .workspace, .action = .{ .workspace = 1 } });
+    try p.add(.{ .label = L("zsh"), .detail = L("default · dev1"), .section = .workspace, .action = .{ .workspace = 2 } });
     try p.add(.{ .label = L("New tab"), .section = .command, .action = .{ .binding = .new_tab } });
     try p.add(.{ .label = L("Dev layout"), .detail = L("init.lua"), .section = .command, .action = .{ .invoke = "dev" } });
     try p.endRebuild();
     // No query: everything, in order.
     try std.testing.expectEqual(@as(usize, 4), p.count());
-    try std.testing.expectEqual(Action{ .tab = 1 }, p.focused().?.action);
+    try std.testing.expectEqual(Action{ .workspace = 1 }, p.focused().?.action);
     p.move(-1);
     try std.testing.expectEqual(@as(usize, 3), p.focus);
     p.move(1);
@@ -437,12 +436,12 @@ test "results follow the query, best first, and the focus moves around them" {
     p.focusEnd(true);
     try std.testing.expectEqual(@as(usize, 0), p.focus);
 
-    // "dev": the Lua action by its label, then the tab by its host.
+    // "dev": the Lua action by its label, then the workspace by its host.
     p.move(2);
     p.query.insert(L("dev"));
     p.beginRebuild();
-    try p.add(.{ .label = L("cmd"), .detail = L("default"), .section = .tab, .action = .{ .tab = 1 } });
-    try p.add(.{ .label = L("zsh"), .detail = L("default · dev1"), .section = .tab, .action = .{ .tab = 2 } });
+    try p.add(.{ .label = L("cmd"), .detail = L("default"), .section = .workspace, .action = .{ .workspace = 1 } });
+    try p.add(.{ .label = L("zsh"), .detail = L("default · dev1"), .section = .workspace, .action = .{ .workspace = 2 } });
     try p.add(.{ .label = L("New tab"), .section = .command, .action = .{ .binding = .new_tab } });
     try p.add(.{ .label = L("Dev layout"), .detail = L("init.lua"), .section = .command, .action = .{ .invoke = "dev" } });
     try p.endRebuild();
@@ -451,14 +450,14 @@ test "results follow the query, best first, and the focus moves around them" {
     try std.testing.expectEqual(@as(usize, 0), p.focus);
     try std.testing.expectEqualStrings("dev", p.focused().?.action.invoke);
     try std.testing.expect(p.results.items[0].label_hits.isSet(0));
-    try std.testing.expectEqual(Action{ .tab = 2 }, p.entryOf(1).?.action);
+    try std.testing.expectEqual(Action{ .workspace = 2 }, p.entryOf(1).?.action);
     try std.testing.expect(p.entryOf(1).?.label.len == 3);
     try std.testing.expect(p.results.items[1].detail_hits.isSet(10));
     // The same query again leaves the focus where it is.
     p.move(1);
     p.beginRebuild();
     try p.add(.{ .label = L("Dev layout"), .section = .command, .action = .{ .invoke = "dev" } });
-    try p.add(.{ .label = L("zsh"), .detail = L("dev1"), .section = .tab, .action = .{ .tab = 2 } });
+    try p.add(.{ .label = L("zsh"), .detail = L("dev1"), .section = .workspace, .action = .{ .workspace = 2 } });
     try p.endRebuild();
     try std.testing.expectEqual(@as(usize, 1), p.focus);
     // Nothing matches: no focus.

@@ -21,8 +21,8 @@ report one, each with its title and status; a press shows the pane.
 - **The title bar's tab strip** (`chrome.tabs = "top"`) can't reorder
   tabs by drag or take a pane dragged onto a tab, and the layout isn't
   kept per window or flipped from the palette. Tabs in no workspace (a
-  section's) have no row to switch to; they're reached by the keyboard,
-  the palette, or when one becomes active.
+  section's) have no row to switch to; they're reached by the keyboard
+  or when one becomes active.
 - **Fullscreen** (F11, `toggle_fullscreen`) shows the panes alone, with
   the window's gap, corners, margins, and padding or its own (the
   `fullscreen` table), and
@@ -55,9 +55,12 @@ report one, each with its title and status; a press shows the pane.
   and default keys for jumping to a tab by number: `goto_tab {index}`
   and `last_tab` are there to bind (`examples/config/tmux.lua` does),
   but Ghostty's alt+1..9 are the shell's and programs' here. The command
-  palette (Ctrl+Shift+P) toggles the sidebar and switches tabs by name.
-- **The command palette** lists every tab, hidden workspace, window
-  command, init.lua action, and host; it doesn't yet put recently used
+  palette (Ctrl+Shift+P) toggles the sidebar and switches workspaces by
+  name.
+- **The command palette** lists every workspace, window
+  command, init.lua action, and host, but no tabs: a tab is reached by
+  name only through its workspace, and a minimized float by "Restore
+  floats". It doesn't yet put recently used
   entries first, list the Host blocks of `~/.ssh/config` (the daemon
   reads them, but nothing lists them), or take a Lua action's args.
   Its own commands (show the stats, reload the
@@ -406,8 +409,8 @@ so; the host's button reconnects, reattaches, and replaces them.
 - **A tab can't move to another workspace**; `pane.move` stays within
   one, and there is no `tab.move`.
 - **Hiding, renaming, and killing a workspace have no keys**: they're
-  the sidebar's menu only. The command palette shows a hidden one and
-  makes one.
+  the sidebar's menu only. The command palette goes to one, showing it
+  if it's hidden, and makes one.
 - **An empty shown workspace goes when the window hides it** or closes:
   the daemon drops a workspace with no tabs once no window views it, so
   one emptied by closing its tabs lives only while shown.

@@ -1157,7 +1157,7 @@ test "the command palette is over everything, and the window under it is scrim" 
     // The hidden workspace is listed, with the commands after it.
     const pal = &app.mode.palette;
     try std.testing.expect(pal.count() > 1);
-    try std.testing.expectEqual(Ui.Palette.Action{ .show_workspace = key }, pal.entryOf(0).?.action);
+    try std.testing.expectEqual(Ui.Palette.Action{ .workspace = key }, pal.entryOf(0).?.action);
     try std.testing.expectEqual(Id{ .target = .{ .palette = 0 } }, app.ui.hitTest(built, box.rect.x + 40, box.rect.y + 44 + 6 + 24 + 10));
     // The row it's about, and the title bar, are under the scrim.
     const row = Ui.find(built, .{ .target = .{ .workspace = key } }).?;
