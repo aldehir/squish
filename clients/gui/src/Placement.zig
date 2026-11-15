@@ -188,8 +188,10 @@ pub fn floatAt(self: *const Placement, x: f32, y: f32) ?*const Float {
     return null;
 }
 
-/// The pane next to `from` on `side`: of those past that edge and level
-/// with it, the nearest, then the one most in line with it.
+/// The pane next to `from` on `side`, as tmux picks it and squish does
+/// (neighborPane, internal/daemon/layout.go): of those past that edge
+/// and level with it, the nearest, then the one that had the focus last,
+/// then the one most in line with it.
 pub fn neighbor(self: *const Placement, from: *const Session, side: Daemon.Direction) ?*Session {
     const fp = self.find(from) orelse return null;
     const f = fp.frame;
@@ -197,6 +199,7 @@ pub fn neighbor(self: *const Placement, from: *const Session, side: Daemon.Direc
     var best: ?*Session = null;
     var best_gap: f32 = 0;
     var best_off: f32 = 0;
+    var best_focused: u64 = 0;
     for (self.panes.items) |p| {
         if (p.session == from or p.tab != fp.tab) continue;
         const r = p.frame;
@@ -213,10 +216,20 @@ pub fn neighbor(self: *const Placement, from: *const Session, side: Daemon.Direc
             @min(f.right(), r.right()) - @max(f.x, r.x);
         if (level <= 0) continue;
         const off = if (along) @abs((r.y + r.h / 2) - (f.y + f.h / 2)) else @abs((r.x + r.w / 2) - (f.x + f.w / 2));
-        if (best == null or gap < best_gap or (gap == best_gap and off < best_off)) {
+        const focused = p.session.focused;
+        const better = if (best == null)
+            true
+        else if (!near(gap, best_gap))
+            gap < best_gap
+        else if (focused != best_focused)
+            focused > best_focused
+        else
+            off < best_off;
+        if (better) {
             best = p.session;
             best_gap = gap;
             best_off = off;
+            best_focused = focused;
         }
     }
     return best;

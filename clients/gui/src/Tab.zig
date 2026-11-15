@@ -798,6 +798,7 @@ test "navigating, resizing, and equalizing panes" {
     var b: Session = undefined;
     var c: Session = undefined;
     var d: Session = undefined;
+    for ([_]*Session{ &a, &b, &c, &d }) |s| s.focused = 0;
     // a | (b over (c | d)).
     const pair = try alloc.alloc(Child, 2);
     pair[0] = .{ .share = 5000, .node = .{ .pane = &c } };
@@ -822,6 +823,13 @@ test "navigating, resizing, and equalizing panes" {
     try std.testing.expectEqual(&a, p.neighbor(&c, .left).?);
     try std.testing.expectEqual(&c, p.neighbor(&b, .down).?);
     try std.testing.expectEqual(&d, p.neighbor(&c, .right).?);
+    // Once c has had the focus, and later than b, right of a is c; d,
+    // later still, isn't beside a.
+    b.focused = 1;
+    c.focused = 2;
+    d.focused = 3;
+    try std.testing.expectEqual(&c, p.neighbor(&a, .right).?);
+    try std.testing.expectEqual(&d, p.neighbor(&b, .down).?);
 
     try std.testing.expectEqual(&b, tab.following(&a, true));
     try std.testing.expectEqual(&a, tab.following(&d, true));

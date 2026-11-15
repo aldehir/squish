@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +60,8 @@ type tab struct {
 	// none).
 	focus PaneID
 	zoom  PaneID
+	// The panes that have had the focus, the latest first (setFocus).
+	recent []PaneID
 	// Set while the tab floats over another (float.go); nil for an
 	// ordinary tab.
 	float *rpc.Float
@@ -92,8 +95,21 @@ func (t *tab) newPaneID() PaneID {
 	return PaneID{WS: t.id.WS, Tab: t.id.N, N: t.nextPane}
 }
 
+// setFocus gives pane the tab's input, and puts it first of the panes
+// that have had it.
+func (t *tab) setFocus(pane PaneID) {
+	t.focus = pane
+	t.forget(pane)
+	t.recent = slices.Insert(t.recent, 0, pane)
+}
+
+// forget takes pane out of the panes that have had the focus.
+func (t *tab) forget(pane PaneID) {
+	t.recent = slices.DeleteFunc(t.recent, func(id PaneID) bool { return id == pane })
+}
+
 func (t *tab) info() rpc.Tab {
-	info := rpc.Tab{ID: t.id, Name: t.name, Tree: t.root.Clone(), Focus: t.focus, Zoomed: t.zoom}
+	info := rpc.Tab{ID: t.id, Name: t.name, Tree: t.root.Clone(), Focus: t.focus, Zoomed: t.zoom, Recent: slices.Clone(t.recent)}
 	if t.float != nil {
 		f := *t.float
 		info.Float = &f
@@ -453,30 +469,50 @@ func (s *Server) workspaceResize(cl *callCtx, p rpc.WorkspaceResizeParams) (rpc.
 
 // workspaceFocus moves a workspace's focus for every viewer: the
 // active tab, a tab's focused pane, and what's zoomed in it. The tab
-// and pane name the workspace.
-func (s *Server) workspaceFocus(cl *callCtx, p rpc.WorkspaceFocusParams) (rpc.Empty, error) {
+// and pane name the workspace. With a direction, the pane is where to
+// move from, and the reply names the pane moved to.
+func (s *Server) workspaceFocus(cl *callCtx, p rpc.WorkspaceFocusParams) (rpc.WorkspaceFocused, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var none rpc.WorkspaceFocused
 	var t *tab
 	if !p.Tab.IsZero() {
 		if t = s.tabs[p.Tab]; t == nil {
-			return rpc.Empty{}, errNoTab
+			return none, errNoTab
 		}
 	}
-	var pn pane
+	var focus PaneID
 	if !p.Pane.IsZero() {
-		pn = s.paneLocked(p.Pane)
+		pn := s.paneLocked(p.Pane)
 		if pn == nil || pn.tabOf() == nil {
-			return rpc.Empty{}, errNoPane
+			return none, errNoPane
 		}
 		if t == nil {
 			t = pn.tabOf()
 		} else if pn.tabOf() != t {
-			return rpc.Empty{}, rpc.Errorf(rpc.CodeInvalidParams, "pane %s isn't in tab %s", pn.paneID(), p.Tab)
+			return none, rpc.Errorf(rpc.CodeInvalidParams, "pane %s isn't in tab %s", pn.paneID(), p.Tab)
 		}
+		focus = pn.paneID()
 	}
 	if t == nil {
-		return rpc.Empty{}, rpc.Errorf(rpc.CodeInvalidParams, "workspace.focus needs a tab or a pane")
+		return none, rpc.Errorf(rpc.CodeInvalidParams, "workspace.focus needs a tab or a pane")
+	}
+	var moved rpc.WorkspaceFocused
+	unzoom := false
+	if p.Direction != 0 {
+		if p.Direction < Right || p.Direction > Up {
+			return none, rpc.Errorf(rpc.CodeInvalidParams, "direction is right, down, left, or up")
+		}
+		if focus.IsZero() {
+			focus = t.focus
+		}
+		focus = neighborPane(t.root, focus, p.Direction, t.recent)
+		if focus.IsZero() {
+			return none, nil
+		}
+		moved.Pane = focus
+		// The panes' places, moved between, are the unzoomed ones.
+		unzoom = p.Zoomed == nil
 	}
 	ws := t.ws
 	changed := s.selectTabLocked(ws, t)
@@ -491,8 +527,12 @@ func (s *Server) workspaceFocus(cl *callCtx, p rpc.WorkspaceFocusParams) (rpc.Em
 			changed = true
 		}
 	}
-	if pn != nil && t.focus != pn.paneID() {
-		t.focus = pn.paneID()
+	if !focus.IsZero() && t.focus != focus {
+		t.setFocus(focus)
+		changed = true
+	}
+	if unzoom && !t.zoom.IsZero() {
+		t.zoom = PaneID{}
 		changed = true
 	}
 	if p.Zoomed != nil {
@@ -500,7 +540,7 @@ func (s *Server) workspaceFocus(cl *callCtx, p rpc.WorkspaceFocusParams) (rpc.Em
 		if !p.Zoomed.IsZero() {
 			zp := s.paneLocked(*p.Zoomed)
 			if zp == nil || zp.tabOf() != t {
-				return rpc.Empty{}, rpc.Errorf(rpc.CodeInvalidParams, "pane %s isn't in tab %s", *p.Zoomed, t.id)
+				return none, rpc.Errorf(rpc.CodeInvalidParams, "pane %s isn't in tab %s", *p.Zoomed, t.id)
 			}
 			zoom = zp.paneID()
 		}
@@ -512,7 +552,7 @@ func (s *Server) workspaceFocus(cl *callCtx, p rpc.WorkspaceFocusParams) (rpc.Em
 	if changed {
 		s.changedLocked(ws, cl.c)
 	}
-	return rpc.Empty{}, nil
+	return moved, nil
 }
 
 // selectTabLocked makes t the workspace's active tab, reporting whether
@@ -536,7 +576,7 @@ func (s *Server) focusNewLocked(cl *callCtx, t *tab, pane PaneID) {
 		return
 	}
 	s.selectTabLocked(t.ws, t)
-	t.focus = pane
+	t.setFocus(pane)
 	t.zoom = PaneID{}
 }
 
@@ -654,7 +694,7 @@ func (s *Server) addTab(cl *callCtx, ws *workspace, name string, l *rpc.Layout, 
 		}
 	}
 	t.root = root
-	t.focus = root.Panes()[0]
+	t.setFocus(root.Panes()[0])
 	s.tabs[t.id] = t
 	ws.tabs = append(ws.tabs, t)
 	if ws.active == nil {
@@ -1022,7 +1062,7 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 	}
 	pn.setTab(dst)
 	if dst.focus.IsZero() {
-		dst.focus = id
+		dst.setFocus(id)
 	}
 	s.log.Info("pane moved", "pane", id, "from", old)
 	if dst != src {
@@ -1054,13 +1094,14 @@ func (s *Server) paneMove(cl *callCtx, m rpc.PaneMoveParams) (*rpc.Created, erro
 func (s *Server) takePaneLocked(t *tab, pane PaneID) {
 	near := nearPane(t.root, pane)
 	t.root = removeNode(t.root, pane)
+	t.forget(pane)
 	if t.zoom == pane {
 		t.zoom = PaneID{}
 	}
 	if t.focus != pane || t.root == nil {
 		return
 	}
-	t.focus = near
+	t.setFocus(near)
 }
 
 // tabLayout replaces a tab's proportions: a divider was dragged.

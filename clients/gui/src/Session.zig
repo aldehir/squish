@@ -102,6 +102,10 @@ login: ?*Login = null,
 unseen: std.atomic.Value(bool) = .init(false),
 /// A frame arrived while another session was shown. UI thread only.
 activity: bool = false,
+/// When it last had its tab's focus, on the app's count of focus moves
+/// (0 for never): moving by direction picks the latest of the panes on
+/// that side (`Placement.neighbor`). UI thread only.
+focused: u64 = 0,
 
 /// What programs in the session report doing (OSC 7501), as squish
 /// keeps it. Guarded by `lock`.

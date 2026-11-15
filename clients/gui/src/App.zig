@@ -122,6 +122,8 @@ views: u32 = 0,
 /// tabs has to place them after.
 placement: Placement = .{},
 placement_stale: bool = true,
+/// Counts the focus's moves, for `Session.focused`.
+focus_moves: u64 = 0,
 /// The hovered hidden tab's panes, placed in its area, while
 /// `previewTab` is one (`preview_placed_for`). Read through
 /// `previewPlaced`; cleared with `placement`.
@@ -2144,6 +2146,12 @@ fn applyStructure(self: *App, conn: *Daemon, st: *const Daemon.Structure, arrive
             if (t.findPane(lt.focus)) |s| t.focus = s;
             t.zoom = if (!lt.zoomed.isNone()) t.findPane(lt.zoomed) else null;
             t.sent_focus = focusOf(t);
+            // The panes that had the focus, the latest marked last.
+            var k = lt.recent.len;
+            while (k > 0) {
+                k -= 1;
+                if (t.findPane(lt.recent[k])) |s| s.focused = self.focusMoved();
+            }
         }
     }
     // They go where the workspace's tabs were, else at the end of their
@@ -3503,12 +3511,19 @@ fn activated(self: *App) void {
         p.activity = false;
         p.unseen.store(false, .release);
     }
+    s.focused = self.focusMoved();
     if (self.focused) s.reportFocus(true);
     self.resetBlink();
     self.updateSpinner();
     self.showTitle();
     self.syncFocus();
     self.markDirty();
+}
+
+/// The next mark for a pane taking the focus (`Session.focused`).
+fn focusMoved(self: *App) u64 {
+    self.focus_moves += 1;
+    return self.focus_moves;
 }
 
 /// Show the next or previous tab, wrapping around: from the tab shown

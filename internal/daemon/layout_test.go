@@ -247,6 +247,41 @@ func TestNearPane(t *testing.T) {
 	}
 }
 
+// TestNeighborPane: moving by direction takes the pane across that
+// edge that had the focus last, else the one most in line.
+func TestNeighborPane(t *testing.T) {
+	// 1 on the left; on the right 2 over 3 over 4, in thirds that don't
+	// divide evenly.
+	root := &Node{Axis: Row, Children: []Child{
+		{Share: 5000, Node: leaf(pid(1))},
+		{Share: 5000, Node: &Node{Axis: Column, Children: []Child{
+			{Share: 3333, Node: leaf(pid(2))}, {Share: 3333, Node: leaf(pid(3))}, {Share: 3334, Node: leaf(pid(4))},
+		}}},
+	}}
+	for _, c := range []struct {
+		from   uint32
+		dir    Direction
+		recent []PaneID
+		want   uint32
+	}{
+		{1, Right, nil, 3},           // the one level with its middle
+		{1, Right, pids(1, 4, 2), 4}, // the one focused last
+		{1, Right, pids(2, 1, 4), 2},
+		{1, Left, pids(2), 0},
+		{2, Left, nil, 1},
+		{4, Left, nil, 1},
+		{3, Up, pids(4), 2}, // 4 isn't above it
+		{3, Down, nil, 4},
+		{4, Down, nil, 0},
+		{2, Right, nil, 0},
+	} {
+		got := neighborPane(root, pid(c.from), c.dir, c.recent)
+		if (c.want == 0 && !got.IsZero()) || (c.want != 0 && got != pid(c.want)) {
+			t.Errorf("%s of %d, recent %v: %d, want %d", c.dir, c.from, c.recent, got.N, c.want)
+		}
+	}
+}
+
 // checkFrom fails unless every From in n names a pane in a sibling's
 // subtree.
 func checkFrom(t *testing.T, n *Node, step string) {

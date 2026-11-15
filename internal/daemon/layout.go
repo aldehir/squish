@@ -3,6 +3,8 @@ package daemon
 import (
 	"errors"
 	"fmt"
+	"math"
+	"slices"
 )
 
 // A tab's layout is a tree: panes at the leaves, and n-ary splits whose
@@ -160,6 +162,100 @@ func nearPane(root *Node, pane PaneID) PaneID {
 		return firstPane(parent.Children[1].Node)
 	}
 	return firstPane(parent.Children[i-1].Node)
+}
+
+// A span is a pane's place in its tab, in fractions of the tab.
+type span struct{ x0, y0, x1, y1 float64 }
+
+// paneSpans gives each pane of n its place in r, by the splits' shares.
+// A split's last child ends where the split does, to the bit, so panes
+// across a divider from each other have the same edge.
+func paneSpans(n *Node, r span, out map[PaneID]span) {
+	if n.IsLeaf() {
+		out[n.Pane] = r
+		return
+	}
+	var total float64
+	for _, c := range n.Children {
+		total += float64(c.Share)
+	}
+	row := n.Axis == Row
+	start, end := r.y0, r.y1
+	if row {
+		start, end = r.x0, r.x1
+	}
+	pos, sum := start, 0.0
+	for i, c := range n.Children {
+		sum += float64(c.Share)
+		next := end
+		if i < len(n.Children)-1 && total > 0 {
+			next = start + (end-start)*sum/total
+		}
+		cr := r
+		if row {
+			cr.x0, cr.x1 = pos, next
+		} else {
+			cr.y0, cr.y1 = pos, next
+		}
+		paneSpans(c.Node, cr, out)
+		pos = next
+	}
+}
+
+// neighborPane is the pane next to from on side dir, as tmux picks it:
+// of the panes across that edge of from and level with it, the one
+// latest in recent (the panes that have had the focus, the latest
+// first), then the one most in line with from, then the first in layout
+// order. Zero if no pane is there.
+func neighborPane(root *Node, from PaneID, dir Direction, recent []PaneID) PaneID {
+	if root == nil {
+		return PaneID{}
+	}
+	spans := map[PaneID]span{}
+	paneSpans(root, span{0, 0, 1, 1}, spans)
+	me, ok := spans[from]
+	if !ok {
+		return PaneID{}
+	}
+	const eps = 1e-9
+	var best PaneID
+	var bestRank int
+	var bestOff float64
+	for _, id := range root.Panes() {
+		if id == from {
+			continue
+		}
+		r := spans[id]
+		var gap, level, off float64
+		switch dir {
+		case Right:
+			gap = r.x0 - me.x1
+		case Left:
+			gap = me.x0 - r.x1
+		case Down:
+			gap = r.y0 - me.y1
+		case Up:
+			gap = me.y0 - r.y1
+		}
+		if dir.Axis() == Row {
+			level = min(me.y1, r.y1) - max(me.y0, r.y0)
+			off = math.Abs((r.y0 + r.y1) - (me.y0 + me.y1))
+		} else {
+			level = min(me.x1, r.x1) - max(me.x0, r.x0)
+			off = math.Abs((r.x0 + r.x1) - (me.x0 + me.x1))
+		}
+		if math.Abs(gap) > eps || level <= eps {
+			continue
+		}
+		rank := slices.Index(recent, id)
+		if rank < 0 {
+			rank = len(recent)
+		}
+		if best.IsZero() || rank < bestRank || (rank == bestRank && off < bestOff-eps) {
+			best, bestRank, bestOff = id, rank, off
+		}
+	}
+	return best
 }
 
 // heirOf picks the sibling that takes child i's space when its pane

@@ -399,6 +399,9 @@ type Tab struct {
 	// tab, or none.
 	Focus  PaneID `json:"focus,omitzero"`
 	Zoomed PaneID `json:"zoomed,omitzero"`
+	// Recent is the panes that have had the focus, the latest first:
+	// moving by direction picks among the panes on that side by it.
+	Recent []PaneID `json:"recent,omitempty"`
 	// Float is set while the tab floats over another: shown over it,
 	// not in a slot of its own. Nil for an ordinary tab.
 	Float *Float `json:"float,omitempty"`
@@ -702,10 +705,24 @@ type WorkspaceAttachParams struct {
 // if that's given, else the pane's own), and Zoomed, if given, the
 // pane zoomed in that tab ("" for none). The other viewers get
 // workspace.changed; the caller doesn't, having made the change.
+//
+// With Direction, the focus goes instead to the pane on that side of
+// Pane (of the tab's focused pane, with none given): of the panes
+// across that edge, the one focused last, as tmux picks, then the one
+// most in line. The tab unzooms unless Zoomed says otherwise. With no
+// pane that way nothing changes, the active tab included.
 type WorkspaceFocusParams struct {
-	Tab    TabID   `json:"tab,omitzero"`
-	Pane   PaneID  `json:"pane,omitzero"`
-	Zoomed *PaneID `json:"zoomed,omitempty"`
+	Tab       TabID     `json:"tab,omitzero"`
+	Pane      PaneID    `json:"pane,omitzero"`
+	Zoomed    *PaneID   `json:"zoomed,omitempty"`
+	Direction Direction `json:"direction,omitzero"`
+}
+
+// WorkspaceFocused is workspace.focus's reply: for a call with a
+// direction, the pane that took the focus, or none if there's no pane
+// that way.
+type WorkspaceFocused struct {
+	Pane PaneID `json:"pane,omitzero"`
 }
 
 // WorkspaceParams names a workspace: detach, kill, info.
@@ -1079,7 +1096,7 @@ var DaemonActions = map[string]string{
 	"previous_tab":      WorkspaceFocus,
 	"goto_tab":          WorkspaceFocus,
 	"last_tab":          WorkspaceFocus,
-	"goto_split":       WorkspaceFocus,
+	"goto_split":        WorkspaceFocus,
 	"toggle_split_zoom": WorkspaceFocus,
 	"resize_split":      TabLayout,
 	"equalize_splits":   TabLayout,

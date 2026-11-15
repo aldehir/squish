@@ -39,6 +39,12 @@ THE SQUISH TABLE
                              new one (attach = false leaves it detached; another
                              id names another workspace's windows); focus with
                              neither tab nor pane gets pane from pane_id
+  squish.workspace.focus{direction = "left"}
+                             the focus goes to the pane on that side (right,
+                             down, left, up) of this one, or of pane: the one
+                             focused last of those there, as tmux picks.
+                             Returns {pane = id} of where it went, or {} with
+                             no pane that way and nothing changed
   squish.tab.<m>{...}        tab.<m>; tab.new gets workspace, the rest id
                              from tab_id
   squish.pane.<m>{...}       pane.<m>; split, move, navigate, and visited get
@@ -377,6 +383,16 @@ From inside a pane (ids default to this pane):
   local below = assert(squish.pane.split{ direction = "down", share = 3000 })  -- starts there too
   assert(squish.pane.write{ id = below.pane, text = "git status\r" })
   assert(squish.workspace.focus{ pane = below.pane })   -- its tab comes with it
+
+Move between panes with ctrl+h/j/k/l, the key going to the pane where
+there's none that way (init.lua):
+
+  for dir, key in pairs{ left = "h", down = "j", up = "k", right = "l" } do
+    squish.bind("ctrl+" .. key, function()
+      local to = assert(squish.workspace.focus{ direction = dir })
+      if not to.pane then squish.pane.write{ text = string.char(key:byte() - 96) } end
+    end)
+  end
 
 Walk a tab's tree:
 

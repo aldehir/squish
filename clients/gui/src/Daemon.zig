@@ -873,6 +873,8 @@ pub const Structure = struct {
         /// The pane that gets input, and the one zoomed (none for none).
         focus: PaneRef,
         zoomed: PaneRef,
+        /// The panes that have had the focus, the latest first.
+        recent: []const PaneRef = &.{},
         /// Set while the tab floats over another of the workspace's.
         float: ?Float = null,
     };
@@ -920,7 +922,7 @@ pub const Json = struct {
     };
     const RpcError = struct { code: i64 = 0, message: []const u8 = "" };
     const Workspace = struct { id: u32, name: []const u8 = "", active_tab: TabRef = .none, tabs: []const Tab = &.{} };
-    const Tab = struct { id: TabRef, name: []const u8 = "", tree: Node, focus: PaneRef = .none, zoomed: PaneRef = .none, float: ?Float = null };
+    const Tab = struct { id: TabRef, name: []const u8 = "", tree: Node, focus: PaneRef = .none, zoomed: PaneRef = .none, recent: []const PaneRef = &.{}, float: ?Float = null };
     const Created = struct { pane: PaneRef = .none };
     /// `moved_from` is the id the pane had, if it just moved tabs.
     const PaneAttached = struct {
@@ -2566,7 +2568,7 @@ fn applyWorkspace(self: *Daemon, value: std.json.Value) !u32 {
     const a = st.arena.allocator();
     const ws = try std.json.parseFromValueLeaky(Json.Workspace, a, value, json_opts);
     const tabs = try a.alloc(Structure.TabLayout, ws.tabs.len);
-    for (tabs, ws.tabs) |*out, t| out.* = .{ .id = t.id, .root = t.tree, .focus = t.focus, .zoomed = t.zoomed, .float = t.float };
+    for (tabs, ws.tabs) |*out, t| out.* = .{ .id = t.id, .root = t.tree, .focus = t.focus, .zoomed = t.zoomed, .recent = t.recent, .float = t.float };
     st.id = ws.id;
     st.name = try toUtf16(a, ws.name);
     st.tabs = tabs;

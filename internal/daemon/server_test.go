@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -846,6 +847,71 @@ func TestFocus(t *testing.T) {
 		if err := w2.c.Call(rpc.WorkspaceFocus, p, nil); !errors.As(err, &rerr) {
 			t.Errorf("%+v: %v", p, err)
 		}
+	}
+}
+
+// TestFocusDirection: workspace.focus with a direction moves to the
+// pane on that side that had the focus last, unzooms, and says which;
+// with none that way nothing changes.
+func TestFocusDirection(t *testing.T) {
+	h := newHarness(t)
+	w := h.window()
+	first := w.newWorkspace()
+	tab := w.ws.Tabs[0].ID
+	a, created := w.split(first, Right, 5000, "")
+	w.absorb(a)
+	second := created.Pane
+	a, created = w.split(second, Down, 5000, "")
+	w.absorb(a)
+	third := created.Pane
+	if got := w.ws.Tabs[0].Recent; !slices.Equal(got, []PaneID{third, second, first}) {
+		t.Fatalf("recent after the splits: %v", got)
+	}
+
+	// first | (second over third), asked by a script so the window hears.
+	script := h.connect()
+	move := func(p rpc.WorkspaceFocusParams) PaneID {
+		t.Helper()
+		var r rpc.WorkspaceFocused
+		if err := script.Call(rpc.WorkspaceFocus, p, &r); err != nil {
+			t.Fatal(err)
+		}
+		return r.Pane
+	}
+	focused := func(want PaneID) {
+		t.Helper()
+		ws := nextEvent[rpc.Workspace](w, rpc.EvWorkspaceChanged)
+		if ws.Tabs[0].Focus != want || !ws.Tabs[0].Zoomed.IsZero() {
+			t.Errorf("focus %s zoomed %s, want %s unzoomed", ws.Tabs[0].Focus, ws.Tabs[0].Zoomed, want)
+		}
+	}
+	if got := move(rpc.WorkspaceFocusParams{Pane: third, Direction: Left}); got != first {
+		t.Errorf("left of the third: %s, want %s", got, first)
+	}
+	focused(first)
+	// Back to the one it came from, though the second is as near.
+	if got := move(rpc.WorkspaceFocusParams{Tab: tab, Direction: Right}); got != third {
+		t.Errorf("right of the first: %s, want %s", got, third)
+	}
+	focused(third)
+	if got := move(rpc.WorkspaceFocusParams{Pane: third, Direction: Up}); got != second {
+		t.Errorf("up from the third: %s, want %s", got, second)
+	}
+	focused(second)
+	// Zoomed on the first, moving right unzooms, to the second now.
+	zoom := first
+	move(rpc.WorkspaceFocusParams{Pane: first, Zoomed: &zoom})
+	nextEvent[rpc.Workspace](w, rpc.EvWorkspaceChanged)
+	if got := move(rpc.WorkspaceFocusParams{Tab: tab, Direction: Right}); got != second {
+		t.Errorf("right of the first, zoomed: %s, want %s", got, second)
+	}
+	focused(second)
+	// Nothing is right of the second.
+	if got := move(rpc.WorkspaceFocusParams{Pane: second, Direction: Right}); !got.IsZero() {
+		t.Errorf("right of the second: %s, want none", got)
+	}
+	if len(w.c.backlog) != 0 {
+		t.Errorf("the window heard %d messages of no move", len(w.c.backlog))
 	}
 }
 
