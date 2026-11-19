@@ -51,6 +51,13 @@ const spinner_ms = 100;
 /// How long after a tooltip hides the next shows without waiting.
 const tip_warm_ms = 1000;
 
+/// A press just off a divider still takes hold of it (`gripNear`): the
+/// mouse rested on its grip this long, left it no longer ago than the
+/// grace, and is within the slop of where it was.
+const grip_dwell_ms = 100;
+const grip_grace_ms = 150;
+const grip_slop = 24;
+
 /// How long after a resize output from a background session isn't
 /// activity: ConPTY redraws on every resize.
 const resize_quiet_ms = 500;
@@ -205,6 +212,11 @@ web_hover: ?u32 = null,
 /// A divider or corner being dragged, which has the mouse until the
 /// button's up.
 drag: ?Drag = null,
+/// The divider's or corner's grip the mouse was last on (`gripNear`).
+grip_last: ?GripLast = null,
+/// A drag was dropped with the button still down (`cancelDrag`): what's
+/// left of the press goes nowhere.
+press_dropped: bool = false,
 /// A pane pressed on its title strip, which drags it once the mouse moves
 /// far enough, until the button's up.
 pane_drag: ?PaneDrag = null,
@@ -427,6 +439,15 @@ const Drag = struct {
         if (self.parts[1] != null) return .size_all;
         return dividerCursor(self.parts[0].?.divider);
     }
+};
+
+const GripLast = struct {
+    hit: Id,
+    /// Where the mouse was last seen on it, since when, and when it was
+    /// first seen off it.
+    pos: win32.POINT,
+    since: u64,
+    left: ?u64 = null,
 };
 
 const PaneDrag = struct {
@@ -3208,7 +3229,39 @@ fn cancelDrag(self: *App) void {
         self.shell.webCapture(d.source, false);
     }
     self.pane_drag = null;
+    self.press_dropped = true;
     self.shell.releaseMouse();
+}
+
+/// Note whether the mouse, at `pos` over `hit`, is on a divider's or
+/// corner's grip, or has just left one.
+fn trackGrip(self: *App, hit: Id, pos: win32.POINT) void {
+    const now = self.shell.tickCount();
+    if (hit.target == .divider or hit.target == .corner) {
+        const since = if (self.grip_last) |g| (if (g.left == null and g.hit.eql(hit)) g.since else now) else now;
+        self.grip_last = .{ .hit = hit, .pos = pos, .since = since };
+        return;
+    }
+    const g = if (self.grip_last) |*g| g else return;
+    const left = g.left orelse {
+        g.left = now;
+        return;
+    };
+    if (now -| left > grip_grace_ms) self.grip_last = null;
+}
+
+/// The divider or corner a press at `pos`, off its grip, still takes
+/// hold of: the one the mouse rested on a moment ago, a little way back.
+/// A press made with the mouse already moving lands past the grip.
+fn gripNear(self: *App, pos: win32.POINT) ?Id {
+    const g = self.grip_last orelse return null;
+    const left = g.left orelse return null;
+    self.grip_last = null;
+    if (left -| g.since < grip_dwell_ms) return null;
+    if (self.shell.tickCount() -| left > grip_grace_ms) return null;
+    const slop: i32 = @intFromFloat(self.ui.px(grip_slop));
+    if (@abs(pos.x - g.pos.x) > slop or @abs(pos.y - g.pos.y) > slop) return null;
+    return g.hit;
 }
 
 /// The button went down on pane `s`'s title strip: focus it, and drag it
@@ -5493,6 +5546,12 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
         if (held) self.fieldDragTo(d, pos) else self.endFieldDrag();
         return;
     }
+    // What's left of a press whose drag was dropped: its moves, and the
+    // release.
+    if (self.press_dropped) {
+        if (press or !held) self.press_dropped = false;
+        if (!press and (held or msg != win32.WM_MOUSEMOVE)) return;
+    }
 
     if (self.mouse_in_terminal) {
         if (self.focusedSession()) |s| self.paneMouse(s, msg, wparam, pos);
@@ -5511,6 +5570,10 @@ fn mouseInput(self: *App, m: Msg.Mouse) void {
     if (self.setHover(hit)) {
         hit = self.hitAt(pos);
         _ = self.setHover(hit);
+    }
+    self.trackGrip(hit, pos);
+    if (msg == win32.WM_LBUTTONDOWN and hit.target == .pane) {
+        if (self.gripNear(pos)) |grip| hit = grip;
     }
     if (press) self.hideTip();
     // A press outside an open menu closes it, and goes no further.
@@ -5993,6 +6056,7 @@ pub const TestShell = struct {
     /// What `setTimer` and `killTimer` were last told, per timer.
     timers: std.EnumArray(Timer, ?u32) = .initFill(null),
     captured: bool = false,
+    ticks: u64 = 1000,
     closed: bool = false,
     /// What `setFullscreen` was last told.
     fullscreen: bool = false,
@@ -6040,8 +6104,8 @@ pub const TestShell = struct {
     fn setFullscreen(ctx: *anyopaque, on: bool) void {
         self_(ctx).fullscreen = on;
     }
-    fn tickCount(_: *anyopaque) u64 {
-        return 1000;
+    fn tickCount(ctx: *anyopaque) u64 {
+        return self_(ctx).ticks;
     }
     /// The modifiers are `held`; no other key is ever down.
     fn keyDown(ctx: *anyopaque, vk: i32) bool {
@@ -6988,6 +7052,62 @@ test "the palette's scrollbar pages on a click off the thumb and drags the list 
     try std.testing.expect(app.palette_scroll != null);
     app.closePalette();
     try std.testing.expect(app.palette_scroll == null);
+}
+
+test "a press just off a divider the mouse rested on drags it, and a dropped drag's press goes nowhere" {
+    var shell: TestShell = .{};
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    _ = try t.twoPanes();
+    // Only a daemon's tab has dividers to drag.
+    app.tabs.items[0].conn = &t.daemon;
+    const grip = app.placed().dividers.items[0].grip;
+    const on: win32.POINT = .{ .x = @intFromFloat(grip.x + grip.w / 2), .y = @intFromFloat(grip.y + 5) };
+    const off: win32.POINT = .{ .x = @intFromFloat(grip.right() + 8), .y = on.y };
+    const divider: Id = .{ .target = .{ .divider = 0 } };
+
+    // Passing over the grip isn't resting on it.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = on } });
+    try std.testing.expectEqual(divider, app.hitAt(on));
+    try std.testing.expect(app.hitAt(off).target == .pane);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = off } });
+    try std.testing.expectEqual(@as(?Id, null), app.gripNear(off));
+    // Nor is a press long after leaving it the grip's.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = on } });
+    shell.ticks += grip_dwell_ms;
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = off } });
+    shell.ticks += grip_grace_ms + 1;
+    try std.testing.expectEqual(@as(?Id, null), app.gripNear(off));
+    // Nor one far from it.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = on } });
+    shell.ticks += grip_dwell_ms;
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = off } });
+    try std.testing.expectEqual(@as(?Id, null), app.gripNear(.{ .x = off.x + 100, .y = off.y }));
+
+    // Rested on, then pressed with the mouse already off it: a drag.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = on } });
+    shell.ticks += grip_dwell_ms;
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONDOWN, .wparam = win32.MK_LBUTTON, .pos = off } });
+    try std.testing.expect(app.drag != null);
+    try std.testing.expect(app.pane_drag == null);
+    try std.testing.expect(shell.captured);
+
+    // Dropped (squish's tree came), the rest of the press reaches nothing.
+    // (A pane's terminal takes the hover; its title strip, pressed on,
+    // doesn't.)
+    app.cancelDrag();
+    try std.testing.expect(!shell.captured);
+    const far: win32.POINT = .{ .x = off.x + 100, .y = @intFromFloat(grip.y + grip.h / 2) };
+    try std.testing.expect(app.hitAt(far).part == .terminal);
+    try std.testing.expectEqual(Id.none, app.ui.hover);
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = win32.MK_LBUTTON, .pos = far } });
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_LBUTTONUP, .wparam = 0, .pos = far } });
+    try std.testing.expectEqual(Id.none, app.ui.hover);
+    // The next move is the pane's again.
+    _ = app.update(.{ .mouse = .{ .msg = win32.WM_MOUSEMOVE, .wparam = 0, .pos = far } });
+    try std.testing.expectEqual(app.hitAt(far), app.ui.hover);
 }
 
 test "the sidebar's rows scroll with the wheel and their scrollbar, which pages on a click off the thumb" {
