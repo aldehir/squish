@@ -21,7 +21,7 @@
 //!   clipboard = { read = "ask", write = "allow" },
 //!   ssh = { terminfo = true },
 //!   browser = { idle = 600 },              -- seconds; 0 keeps hidden browsers open
-//!   record = { format = "gif", fps = 30,   -- toggle_recording's file, and its most frames a second (1 to 60)
+//!   record = { format = "gif", fps = 30,   -- toggle_recording's file ("gif" or "mp4"), and its most frames a second (1 to 60)
 //!              idle = 3, limit = 600,      -- seconds: a longer pause is cut to idle; it stops itself at limit (0: never)
 //!              dir = "D:\\clips",          -- where files go; unset, squish under the user's Videos
 //!              presets = { demo = { cols = 100, rows = 30, font_size = 14 } } },  -- stage_pane's sizes, by name
@@ -901,16 +901,21 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     defer wrong.deinit();
     try std.testing.expectEqual(0, wrong.@"record-presets".items.len);
     try std.testing.expectEqualStrings("record.presets: invalid value: InvalidValue", wrong.errors.items[0]);
-    // No encoder for it yet.
     var mp4 = try testConfig(
-        \\{"record": {"format": "mp4", "fps": 0}}
+        \\{"record": {"format": "mp4"}}
     );
     defer mp4.deinit();
-    try std.testing.expectEqual(.gif, mp4.@"record-format");
-    try std.testing.expectEqual(1, mp4.@"record-fps");
-    try std.testing.expectEqual(3, mp4.@"record-idle");
-    try std.testing.expectEqual(null, mp4.@"record-dir");
-    try std.testing.expectEqualStrings("record.format: invalid value: InvalidValue", mp4.errors.items[0]);
+    try std.testing.expectEqual(.mp4, mp4.@"record-format");
+    // Windows has no encoder for it.
+    var webm = try testConfig(
+        \\{"record": {"format": "webm", "fps": 0}}
+    );
+    defer webm.deinit();
+    try std.testing.expectEqual(.gif, webm.@"record-format");
+    try std.testing.expectEqual(1, webm.@"record-fps");
+    try std.testing.expectEqual(3, webm.@"record-idle");
+    try std.testing.expectEqual(null, webm.@"record-dir");
+    try std.testing.expectEqualStrings("record.format: invalid value: InvalidValue", webm.errors.items[0]);
 }
 
 test "theme under user colors" {

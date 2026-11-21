@@ -635,13 +635,16 @@ browser…" until the next one starts by itself.
 ## Recording
 
 `toggle_recording` (the palette's "Record pane", a pane's menu, or a key
-init.lua binds) records the focused terminal pane to an animated GIF, as
-the window draws it: on the frames the recording wants, the renderer
-draws the pane first and alone (square, no border or shadow, nothing of
-the window over it), reads its viewport back, and hands it to
+init.lua binds) records the focused terminal pane to an animated GIF or
+an MP4 (`record.format`, or the action's `format`), as the window draws
+it: on the frames the recording wants, the renderer draws the pane
+first and alone (square, no border or shadow, nothing of the window
+over it), reads its viewport back, and hands it to
 `clients/gui/src/record/Recorder.zig`, whose thread encodes it
 (`record/gif.zig`: the box of changed pixels a frame, a color table
-each, no dither). The strip says `REC`, then `SAVE` while the thread
+each, no dither; or `record/mp4.zig`: H.264 from Windows' encoder,
+through Media Foundation's sink writer, the GPU's where it takes the
+size). The strip says `REC`, then `SAVE` while the thread
 finishes; the file (`record.dir`, or `squish` under Videos) then goes on
 the clipboard as a file and as its path. An idle pane adds no frames,
 and a pause over `record.idle` is cut to it.
@@ -666,10 +669,16 @@ size have come. The palette lists both for each preset.
 - **Staging has no menu entry** and no key; the palette and `squish.bind`
   reach it. A recording waiting for its staged pane's frames shows
   nothing until it starts (toggling again cancels it).
-- **GIF only.** MP4 (H.264 through Media Foundation's sink writer, the
-  plan's second stage) isn't built: `record.format` and the action's
-  `format` take `"gif"` alone. WebM would need an encoder Windows
-  doesn't have.
+- **An MP4 that can't be made says so only in the log.** Its encoder
+  is made on the recording's thread, so a Windows without one (an N
+  edition without the Media Feature Pack) starts the recording, shows
+  `REC` for a moment, and stops; the action has already returned true.
+- **An MP4's frame rate comes out constant**, `record.fps`: the frames
+  go in with their own times, but the encoder fills between them, so
+  an idle stretch costs a little where a GIF's costs nothing. Its
+  bitrate is from the picture's size (1 to 12 Mbps), with no setting,
+  and its picture is cropped a pixel to even sizes.
+- **No WebM**: Windows has no encoder for it.
 - **Browser panes** aren't recorded: the window doesn't draw their
   pages. `Windows.Graphics.Capture` would.
 - **A hidden pane records nothing.** While its tab isn't shown, another

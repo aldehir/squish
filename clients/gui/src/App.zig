@@ -4993,7 +4993,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = if (fullscreen) L("Exit fullscreen") else L("Enter fullscreen"), .icon = if (fullscreen) .minimize_2 else .maximize_2, .action = .toggle_fullscreen },
         .{ .label = L("Search"), .icon = .search, .action = .start_search },
         .{ .label = L("Copy mode"), .icon = .copy, .action = .copy_mode },
-        .{ .label = if (recording) L("Stop recording") else L("Record pane"), .icon = if (recording) .square else .circle, .action = .{ .toggle_recording = .{} } },
+        .{ .label = if (recording) L("Stop recording") else L("Record pane (GIF)"), .icon = if (recording) .square else .circle, .action = .{ .toggle_recording = .{ .format = if (recording) null else .gif } } },
         .{ .label = L("Pick a file…"), .icon = .file, .action = .pick_file },
         .{ .label = L("Next tab"), .icon = .arrow_right, .action = .next_tab },
         .{ .label = L("Previous tab"), .icon = .arrow_left, .action = .previous_tab },
@@ -5012,6 +5012,10 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     for (commands) |c| {
         const key = self.keymap.label(c.action);
         try p.add(.{ .label = c.label, .right = key.slice(), .icon = c.icon, .section = .command, .action = .{ .binding = c.action } });
+    }
+    if (!recording) {
+        const mp4: binding.Action = .{ .toggle_recording = .{ .format = .mp4 } };
+        try p.add(.{ .label = L("Record pane (MP4)"), .right = self.keymap.label(mp4).slice(), .icon = .circle, .section = .command, .action = .{ .binding = mp4 } });
     }
     // A preset each to record at and to stage at, and the way back.
     if (self.stage != null) try p.add(.{ .label = L("Unstage pane"), .icon = .minimize_2, .section = .command, .action = .{ .binding = .{ .stage_pane = .{} } } });

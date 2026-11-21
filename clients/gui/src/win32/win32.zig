@@ -13,6 +13,7 @@ pub const dcomp = @import("dcomp.zig");
 pub const conpty = @import("conpty.zig");
 pub const webview2 = @import("webview2.zig");
 pub const wic = @import("wic.zig");
+pub const mf = @import("mf.zig");
 
 pub const BOOL = i32;
 pub const TRUE: BOOL = 1;

@@ -2,7 +2,8 @@
 //! The renderer hands it the pane's pixels on the frames it asks for
 //! (`due`, `push`), on the UI thread, which never waits for the file: a
 //! thread of the recording's own takes the frames from a short queue,
-//! encodes them (`gif.zig`), and writes them out. When the thread has
+//! encodes them (`gif.zig`, or `mp4.zig`, whose encoder writes the file
+//! itself), and writes them out. When the thread has
 //! closed the file, or given up, it posts WM_APP_RECORD_DONE, and the
 //! UI thread frees the recording (`deinit`).
 //!
@@ -16,6 +17,7 @@ const win32 = @import("../win32/win32.zig");
 const binding = @import("../binding.zig");
 const messages = @import("../messages.zig");
 const gif = @import("gif.zig");
+const mp4 = @import("mp4.zig");
 
 const log = std.log.scoped(.record);
 
@@ -28,7 +30,8 @@ path: [:0]const u16,
 /// The session recorded: its pane closing stops the recording.
 session: u32,
 /// The picture's size, fixed at the start: a pane resized later is
-/// cropped, or padded with `background` at the right and bottom.
+/// cropped, or padded with `background` at the right and bottom. Even
+/// for an MP4, by a pixel less: H.264 halves both for color.
 width: u32,
 height: u32,
 /// BGRA.
@@ -122,36 +125,47 @@ pub const Queue = struct {
 /// What a format's writer does. A frame's time on screen is known only
 /// when the next one comes, so each `frame` says how long it's shown.
 const Encoder = union(enum) {
+    /// An MP4's, before the thread has made it and once it has let it
+    /// go: Media Foundation's objects are the thread's alone.
+    none,
     gif: gif.Writer,
+    mp4: mp4.Writer,
     stub: *Stub,
 
     fn frame(self: *Encoder, pixels: []const u8, duration_ms: u32) !void {
         switch (self.*) {
+            .none => return error.NoEncoder,
             .gif => |*w| try w.frame(pixels, duration_ms),
+            .mp4 => |*w| try w.frame(pixels, duration_ms),
             .stub => |s| try s.frame(pixels, duration_ms),
         }
     }
 
     fn finish(self: *Encoder) !void {
         switch (self.*) {
+            .none => return error.NoEncoder,
             .gif => |*w| try w.finish(),
+            .mp4 => |*w| try w.finish(),
             .stub => |s| s.finished = true,
         }
     }
 
-    /// The file's bytes since the last call.
+    /// The file's bytes since the last call, from an encoder that
+    /// leaves the writing to us.
     fn take(self: *Encoder) []const u8 {
         return switch (self.*) {
             .gif => |*w| w.take(),
-            .stub => &.{},
+            .none, .mp4, .stub => &.{},
         };
     }
 
     fn deinit(self: *Encoder) void {
         switch (self.*) {
             .gif => |*w| w.deinit(),
-            .stub => {},
+            .mp4 => |*w| w.deinit(),
+            .none, .stub => {},
         }
+        self.* = .none;
     }
 };
 
@@ -182,7 +196,9 @@ pub const Init = struct {
     alloc: Allocator,
     format: binding.RecordFormat = .gif,
     /// The file, open for writing, and its path (copied). The recording
-    /// closes it; if `create` fails it's still the caller's.
+    /// closes it, and deletes it if it fails; if `create` fails it's
+    /// still the caller's. An MP4 has the path alone: its encoder makes
+    /// the file there, over what there is.
     file: ?win32.HANDLE = null,
     path: []const u16 = &.{},
     session: u32,
@@ -205,19 +221,24 @@ pub const Error = Allocator.Error || std.Thread.SpawnError || error{ TooLarge, W
 /// Start a recording. The first frame is the first `push`.
 pub fn create(init: Init) Error!*Recorder {
     const alloc = init.alloc;
-    if (init.width == 0 or init.height == 0) return error.TooLarge;
-    if (init.format == .gif and (init.width > gif.max_size or init.height > gif.max_size)) return error.TooLarge;
+    const even: u32 = if (init.format == .mp4) 1 else 0;
+    const width = init.width & ~even;
+    const height = init.height & ~even;
+    if (width == 0 or height == 0) return error.TooLarge;
+    if (init.format == .gif and (width > gif.max_size or height > gif.max_size)) return error.TooLarge;
     const self = try alloc.create(Recorder);
     errdefer alloc.destroy(self);
     const path = try alloc.dupeSentinel(u16, init.path, 0);
     errdefer alloc.free(path);
-    const size = @as(usize, init.width) * init.height * 4;
+    const size = @as(usize, width) * height * 4;
     const prev = try alloc.alloc(u8, size);
     errdefer alloc.free(prev);
     const scratch = try alloc.alloc(u8, size);
     errdefer alloc.free(scratch);
     var encoder: Encoder = if (init.stub) |s| .{ .stub = s } else switch (init.format) {
-        .gif => .{ .gif = try .init(alloc, @intCast(init.width), @intCast(init.height)) },
+        .gif => .{ .gif = try .init(alloc, @intCast(width), @intCast(height)) },
+        // The thread's to make (`run`).
+        .mp4 => .none,
     };
     errdefer encoder.deinit();
     const wake = win32.CreateEventW(null, win32.FALSE, win32.FALSE, null) orelse return win32.lastError("CreateEventW");
@@ -231,8 +252,8 @@ pub fn create(init: Init) Error!*Recorder {
         .format = init.format,
         .path = path,
         .session = init.session,
-        .width = init.width,
-        .height = init.height,
+        .width = width,
+        .height = height,
         .background = init.background,
         .opts = init.opts,
         .freq = init.freq,
@@ -389,6 +410,20 @@ pub fn run(self: *Recorder) void {
     var held: ?FrameBuf = null;
     var failed = false;
     var end_ms: u64 = 0;
+    // An MP4's encoder is Media Foundation's, made and let go here.
+    const media = self.encoder == .none and mp4.startup();
+    defer if (media) mp4.shutdown();
+    if (self.encoder == .none) {
+        if (!media) {
+            log.warn("Windows has no Media Foundation here (an N edition needs the Media Feature Pack): no MP4", .{});
+            failed = true;
+        } else if (mp4.Writer.init(self.path, self.width, self.height, std.math.clamp(self.opts.fps, 1, 60))) |w| {
+            self.encoder = .{ .mp4 = w };
+        } else |err| {
+            log.warn("no H.264 encoder took {d} x {d}: {}", .{ self.width, self.height, err });
+            failed = true;
+        }
+    }
     while (!failed) {
         win32.AcquireSRWLockExclusive(&self.lock);
         const next = self.queue.pop();
@@ -420,8 +455,12 @@ pub fn run(self: *Recorder) void {
     }
     if (self.file) |h| _ = win32.CloseHandle(h);
     self.file = null;
+    // Its encoder wrote the file: what's there is what it came to.
+    const wrote: u64 = if (self.encoder == .mp4 and !failed) fileSize(self.path) else 0;
+    if (self.encoder == .mp4) self.encoder.deinit();
 
     win32.AcquireSRWLockExclusive(&self.lock);
+    self.stats.bytes += wrote;
     // Nothing was drawn while it ran: there's no picture to keep.
     const empty = self.stats.frames == 0;
     self.state = if (failed or empty) .failed else .done;
@@ -446,6 +485,12 @@ fn encode(self: *Recorder, f: FrameBuf, until_ms: u64) bool {
         return false;
     };
     return self.write(self.encoder.take());
+}
+
+fn fileSize(path: [:0]const u16) u64 {
+    var info: win32.WIN32_FILE_ATTRIBUTE_DATA = undefined;
+    if (win32.GetFileAttributesExW(path, win32.GetFileExInfoStandard, &info) == 0) return 0;
+    return @as(u64, info.nFileSizeHigh) << 32 | info.nFileSizeLow;
 }
 
 fn write(self: *Recorder, bytes: []const u8) bool {
@@ -678,6 +723,34 @@ test "an encoder that fails ends the recording, and nothing recorded is no file"
     try std.testing.expectEqual(State.failed, k.result().?);
 
     try std.testing.expectError(error.TooLarge, testRecorder(&none, 70_000, 1, .{}));
+}
+
+test "an MP4's picture is even each way, a pixel cropped" {
+    var stub: Stub = .{ .alloc = std.testing.allocator };
+    defer stub.deinit();
+    const r = try create(.{
+        .alloc = std.testing.allocator,
+        .format = .mp4,
+        .session = 1,
+        .width = 5,
+        .height = 3,
+        .background = .{ 0, 0, 0, 255 },
+        .now = 0,
+        .freq = 1000,
+        .stub = &stub,
+        .thread = false,
+    });
+    defer r.deinit();
+    try std.testing.expectEqual([2]u32{ 4, 2 }, [2]u32{ r.width, r.height });
+    var px: [60]u8 = undefined;
+    fill(&px, .{ 1, 2, 3, 255 });
+    r.push(&px, 20, 5, 3, 0);
+    r.stop(100);
+    r.run();
+    try std.testing.expectEqual(State.done, r.result().?);
+    try std.testing.expectEqual(4 * 2 * 4, stub.calls.items[0].pixels.len);
+    // One pixel of a picture is none.
+    try std.testing.expectError(error.TooLarge, create(.{ .alloc = std.testing.allocator, .format = .mp4, .session = 1, .width = 1, .height = 8, .background = .{ 0, 0, 0, 255 }, .now = 0, .freq = 1000, .stub = &stub, .thread = false }));
 }
 
 test "a recording on its thread writes a GIF and deletes nothing it finished" {

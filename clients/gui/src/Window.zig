@@ -805,11 +805,14 @@ fn startRecording(self: *Window, s: *Session, format: binding.RecordFormat) ?*Re
     } else return null;
     const file = Recorder.openFile(self.alloc, config.@"record-dir", format) catch return null;
     defer self.alloc.free(file.path);
+    // An MP4's encoder writes the file itself, over the one that took
+    // the name.
+    if (format == .mp4) _ = win32.CloseHandle(file.handle);
     const bg = s.background();
     const rec = Recorder.create(.{
         .alloc = self.alloc,
         .format = format,
-        .file = file.handle,
+        .file = if (format == .mp4) null else file.handle,
         .path = file.path,
         .session = s.id,
         .width = box.right - box.left,
@@ -825,7 +828,7 @@ fn startRecording(self: *Window, s: *Session, format: binding.RecordFormat) ?*Re
         .freq = Recorder.frequency(),
     }) catch |err| {
         log.warn("recording failed to start: {}", .{err});
-        _ = win32.CloseHandle(file.handle);
+        if (format != .mp4) _ = win32.CloseHandle(file.handle);
         _ = win32.DeleteFileW(file.path);
         return null;
     };

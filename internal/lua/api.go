@@ -192,7 +192,8 @@ which are for the top level only:
                              navigate_search {direction = "next"|"previous"},
                              end_search, copy_mode, toggle_recording {format}
                              (records the focused terminal pane, as the
-                             window draws it, to a GIF, until it runs again;
+                             window draws it, to a GIF or, with format =
+                             "mp4", an H.264 MP4, until it runs again;
                              the file then goes on the clipboard, as a file
                              and as its path; no key by default, the palette
                              and the pane's menu have it; see record below;
@@ -326,11 +327,11 @@ one without applying it.
     fullscreen = { gap = 10, radius = 10, margin = 10, padding = 10, -- pane's four, fullscreen (F11); each unset takes pane's
                    tabs = false },   -- true: fullscreen keeps the title bar's tabs (chrome.tabs = "top")
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
-    record = { format = "gif",       -- what toggle_recording makes when it names no format ("gif" is the one there is)
+    record = { format = "gif",       -- what toggle_recording makes when it names no format: "gif", or "mp4" (H.264, Windows' encoder)
                fps = 30,             -- the most frames a second, 1 to 60; an idle pane adds none
                idle = 3,             -- seconds: a pause longer than this is cut to it (0: real time)
                limit = 600,          -- seconds: a recording stops by itself (0: never)
-               dir = "D:\\clips",    -- where squish-<date>-<time>.gif goes, made if missing (unset: Videos\squish)
+               dir = "D:\\clips",    -- where squish-<date>-<time>.gif or .mp4 goes, made if missing (unset: Videos\squish)
                presets = {           -- sizes for stage_pane and toggle_recording {preset}, by name:
                  demo = { cols = 100, rows = 30, font_size = 14 } } },  -- a grid, and its font in points (unset: the window's)
     shell ={ command = "pwsh -NoLogo" },

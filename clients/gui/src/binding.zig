@@ -91,8 +91,9 @@ pub const SplitDirection = enum { right, down, left, up };
 
 pub const GotoSplit = enum { previous, next, up, left, down, right };
 
-/// What a recording's file is.
-pub const RecordFormat = enum { gif };
+/// What a recording's file is: an animated GIF, from an encoder of our
+/// own, or H.264 in an MP4, from Windows' (`record/mp4.zig`).
+pub const RecordFormat = enum { gif, mp4 };
 
 pub const Recording = struct {
     /// Null takes `record.format`.
@@ -1017,7 +1018,9 @@ test Keymap {
         .{ .key = "ctrl+alt+d", .action = "toggle_recording", .args = "{\"preset\":\"demo\"}" },
         .{ .key = "ctrl+alt+s", .action = "stage_pane", .args = "{\"preset\":\"demo\"}" },
         .{ .key = "ctrl+alt+u", .action = "stage_pane" },
+        .{ .key = "ctrl+alt+m", .action = "toggle_recording", .args = "{\"format\":\"mp4\"}" },
     });
+    try std.testing.expectEqual(Action{ .toggle_recording = .{ .format = .mp4 } }, km.find('M', .{ .ctrl = true, .alt = true }).?.action);
     try std.testing.expectEqual(Action{ .toggle_recording = .{} }, km.find('R', .{ .ctrl = true, .alt = true }).?.action);
     try std.testing.expectEqual(Action{ .toggle_recording = .{ .format = .gif } }, km.find('G', .{ .ctrl = true, .alt = true }).?.action);
     try std.testing.expectEqual(Action{ .toggle_recording = .{} }, km.find('V', .{ .ctrl = true, .alt = true }).?.action);
