@@ -21,6 +21,10 @@
 //!   clipboard = { read = "ask", write = "allow" },
 //!   ssh = { terminfo = true },
 //!   browser = { idle = 600 },              -- seconds; 0 keeps hidden browsers open
+//!   record = { format = "gif", fps = 30,   -- toggle_recording's file, and its most frames a second (1 to 60)
+//!              idle = 3, limit = 600,      -- seconds: a longer pause is cut to idle; it stops itself at limit (0: never)
+//!              dir = "D:\\clips",          -- where files go; unset, squish under the user's Videos
+//!              presets = { demo = { cols = 100, rows = 30, font_size = 14 } } },  -- stage_pane's sizes, by name
 //! }
 //! ```
 //!
@@ -35,6 +39,7 @@ const themes = @import("themes");
 const Allocator = std.mem.Allocator;
 const ghostty_vt = @import("ghostty-vt");
 const font = @import("font/font.zig");
+const binding = @import("binding.zig");
 const win32 = @import("win32/win32.zig");
 
 const RGB = ghostty_vt.color.RGB;
@@ -128,6 +133,22 @@ palette: Palette = .{},
 /// to open its url again when it's shown. 0 keeps them open.
 @"browser-idle": u32 = 600,
 
+/// What `toggle_recording` makes when it names no format.
+@"record-format": binding.RecordFormat = .gif,
+/// The most frames a second a recording takes. From 1 to 60.
+@"record-fps": u32 = 30,
+/// Seconds: a pause in a recording longer than this is cut to it. 0
+/// keeps real time.
+@"record-idle": u32 = 3,
+/// Seconds after which a recording stops by itself. 0 never.
+@"record-limit": u32 = 600,
+/// Where recordings go, an absolute path, made if it isn't there. Null
+/// is `squish` under the user's Videos.
+@"record-dir": ?[]const u8 = null,
+/// Sizes to stage a pane at before recording it (`stage_pane`), by
+/// name, in the order given.
+@"record-presets": std.ArrayList(RecordPreset) = .empty,
+
 /// A theme name or absolute path, or a light/dark pair to follow the
 /// Windows app mode. Names are looked up in `themes` next to init.lua,
 /// then among the bundled themes.
@@ -149,6 +170,46 @@ pub const Palette = struct {
         self.colors[entry.index] = entry.color;
     }
 };
+
+/// A grid, and the font size to draw it at (null: the window's), which
+/// together fix a recording's size in pixels at a given DPI.
+pub const RecordPreset = struct {
+    name: []const u8,
+    cols: u16,
+    rows: u16,
+    font_size: ?f32 = null,
+
+    fn fromJson(name: []const u8, value: std.json.Value) !RecordPreset {
+        const fields = switch (value) {
+            .object => |o| o,
+            else => return error.InvalidValue,
+        };
+        var self: RecordPreset = .{ .name = name, .cols = 0, .rows = 0 };
+        var it = fields.iterator();
+        while (it.next()) |f| {
+            const key = f.key_ptr.*;
+            if (std.mem.eql(u8, key, "cols")) {
+                self.cols = std.math.cast(u16, try unsignedOf(f.value_ptr.*)) orelse return error.InvalidValue;
+            } else if (std.mem.eql(u8, key, "rows")) {
+                self.rows = std.math.cast(u16, try unsignedOf(f.value_ptr.*)) orelse return error.InvalidValue;
+            } else if (std.mem.eql(u8, key, "font_size")) {
+                const size = try floatOf(f.value_ptr.*);
+                if (size <= 0 or size > 200) return error.InvalidValue;
+                self.font_size = size;
+            } else return error.InvalidValue;
+        }
+        if (self.cols == 0 or self.rows == 0 or self.cols > 1000 or self.rows > 500) return error.InvalidValue;
+        return self;
+    }
+};
+
+/// The preset called `name`, if there is one.
+pub fn recordPreset(self: *const Config, name: []const u8) ?RecordPreset {
+    for (self.@"record-presets".items) |p| {
+        if (std.mem.eql(u8, p.name, name)) return p;
+    }
+    return null;
+}
 
 /// A color, or one of the colors of the cell it applies to.
 pub const TerminalColor = union(enum) {
@@ -362,7 +423,7 @@ pub fn load(gpa: Allocator, io: std.Io, settings: std.json.Value, opts: LoadOpti
         const key = kv.key_ptr.*;
         const value = kv.value_ptr.*;
         if (std.mem.eql(u8, key, "theme") or std.mem.eql(u8, key, "shell") or std.mem.eql(u8, key, "host")) continue; // handled above; the daemon's
-        const Section = enum { font, colors, window, chrome, pane, fullscreen, selection, clipboard, ssh, browser };
+        const Section = enum { font, colors, window, chrome, pane, fullscreen, selection, clipboard, ssh, browser, record };
         const section = std.meta.stringToEnum(Section, key) orelse {
             try self.warn("unknown setting \"{s}\"", .{key});
             continue;
@@ -508,6 +569,27 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
         } else return error.UnknownKey,
         .browser => if (eql(u8, name, "idle")) {
             self.@"browser-idle" = try unsignedOf(value);
+        } else return error.UnknownKey,
+        .record => if (eql(u8, name, "format")) {
+            self.@"record-format" = try enumOf(binding.RecordFormat, value);
+        } else if (eql(u8, name, "fps")) {
+            self.@"record-fps" = std.math.clamp(try unsignedOf(value), 1, 60);
+        } else if (eql(u8, name, "idle")) {
+            self.@"record-idle" = try unsignedOf(value);
+        } else if (eql(u8, name, "limit")) {
+            self.@"record-limit" = try unsignedOf(value);
+        } else if (eql(u8, name, "dir")) {
+            self.@"record-dir" = try alloc.dupe(u8, try stringOf(value));
+        } else if (eql(u8, name, "presets")) {
+            const presets = switch (value) {
+                .object => |o| o,
+                else => return error.InvalidValue,
+            };
+            // All of them or none: a typo in one isn't a preset short.
+            var list: std.ArrayList(RecordPreset) = .empty;
+            var it = presets.iterator();
+            while (it.next()) |p| try list.append(alloc, try .fromJson(try alloc.dupe(u8, p.key_ptr.*), p.value_ptr.*));
+            self.@"record-presets" = list;
         } else return error.UnknownKey,
     }
 }
@@ -791,6 +873,44 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     defer side.deinit();
     try std.testing.expectEqual(.sidebar, side.@"chrome-tabs");
     try std.testing.expectEqualStrings("chrome.tabs: invalid value: InvalidValue", side.errors.items[0]);
+
+    var rec = try testConfig(
+        \\{"record": {"format": "gif", "fps": 240, "idle": 0, "limit": 30, "dir": "D:\\clips"}}
+    );
+    defer rec.deinit();
+    try std.testing.expectEqual(.gif, rec.@"record-format");
+    try std.testing.expectEqual(60, rec.@"record-fps");
+    try std.testing.expectEqual(0, rec.@"record-idle");
+    try std.testing.expectEqual(30, rec.@"record-limit");
+    try std.testing.expectEqualStrings("D:\\clips", rec.@"record-dir".?);
+    try std.testing.expectEqual(0, rec.errors.items.len);
+    try std.testing.expectEqual(null, rec.recordPreset("demo"));
+    var presets = try testConfig(
+        \\{"record": {"presets": {"demo": {"cols": 100, "rows": 30, "font_size": 14}, "wide": {"cols": 140, "rows": 40}}}}
+    );
+    defer presets.deinit();
+    try std.testing.expectEqual(2, presets.@"record-presets".items.len);
+    const demo = presets.recordPreset("demo").?;
+    try std.testing.expectEqual([2]u16{ 100, 30 }, [2]u16{ demo.cols, demo.rows });
+    try std.testing.expectEqual(14, demo.font_size.?);
+    try std.testing.expectEqual(null, presets.recordPreset("wide").?.font_size);
+    // One that's wrong, and none is taken.
+    var wrong = try testConfig(
+        \\{"record": {"presets": {"demo": {"cols": 100, "rows": 30}, "tall": {"cols": 80}}}}
+    );
+    defer wrong.deinit();
+    try std.testing.expectEqual(0, wrong.@"record-presets".items.len);
+    try std.testing.expectEqualStrings("record.presets: invalid value: InvalidValue", wrong.errors.items[0]);
+    // No encoder for it yet.
+    var mp4 = try testConfig(
+        \\{"record": {"format": "mp4", "fps": 0}}
+    );
+    defer mp4.deinit();
+    try std.testing.expectEqual(.gif, mp4.@"record-format");
+    try std.testing.expectEqual(1, mp4.@"record-fps");
+    try std.testing.expectEqual(3, mp4.@"record-idle");
+    try std.testing.expectEqual(null, mp4.@"record-dir");
+    try std.testing.expectEqualStrings("record.format: invalid value: InvalidValue", mp4.errors.items[0]);
 }
 
 test "theme under user colors" {

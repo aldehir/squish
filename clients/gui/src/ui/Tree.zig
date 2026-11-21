@@ -316,6 +316,9 @@ pub const Pane = struct {
     /// A word on a tag at the strip's right, after the title: the mode
     /// the pane is in (copy mode). Empty for none.
     badge: []const u16 = &.{},
+    /// The tag's color: the accent, or the danger color for a pane being
+    /// recorded.
+    badge_tone: enum { accent, danger } = .accent,
     /// It gets the keys: its title is strong, and a dot marks it while
     /// `dot`.
     focused: bool,

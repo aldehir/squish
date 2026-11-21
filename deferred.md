@@ -632,6 +632,74 @@ browser…" until the next one starts by itself.
   be under 140 DIPs the history buttons go (a half-width pane at 1300
   px wide loses them; zoom the pane to get them back).
 
+## Recording
+
+`toggle_recording` (the palette's "Record pane", a pane's menu, or a key
+init.lua binds) records the focused terminal pane to an animated GIF, as
+the window draws it: on the frames the recording wants, the renderer
+draws the pane first and alone (square, no border or shadow, nothing of
+the window over it), reads its viewport back, and hands it to
+`clients/gui/src/record/Recorder.zig`, whose thread encodes it
+(`record/gif.zig`: the box of changed pixels a frame, a color table
+each, no dither). The strip says `REC`, then `SAVE` while the thread
+finishes; the file (`record.dir`, or `squish` under Videos) then goes on
+the clipboard as a file and as its path. An idle pane adds no frames,
+and a pause over `record.idle` is cut to it.
+
+`stage_pane {preset}` shows the focused pane alone, centered in its
+tab's area, at one of `record.presets`' grid and font size (the window
+places it so; squish hears a resize), so a recording of it is the same
+size whatever the window's; `toggle_recording {preset}` stages its pane
+for as long as it records, starting once the daemon's frames at the new
+size have come. The palette lists both for each preset.
+
+- **A preset's pixels follow the display's scale**: its font size is in
+  points, so the same preset records larger at 150% than at 100%. A
+  cell size in pixels would fix the picture across machines.
+- **A preset that doesn't fit the window** is refused, with a line in
+  the log and nothing shown; the window isn't resized to make room.
+- **A stage is this window's alone**, and isn't kept: another window on
+  the workspace sees only the pane's new size, and the stage goes when
+  the keys move to a pane it hides (as a zoom does), or with the window;
+  a recording that staged its pane ends with the stage. The tab's other
+  panes keep their sizes unseen meanwhile.
+- **Staging has no menu entry** and no key; the palette and `squish.bind`
+  reach it. A recording waiting for its staged pane's frames shows
+  nothing until it starts (toggling again cancels it).
+- **GIF only.** MP4 (H.264 through Media Foundation's sink writer, the
+  plan's second stage) isn't built: `record.format` and the action's
+  `format` take `"gif"` alone. WebM would need an encoder Windows
+  doesn't have.
+- **Browser panes** aren't recorded: the window doesn't draw their
+  pages. `Windows.Graphics.Capture` would.
+- **A hidden pane records nothing.** While its tab isn't shown, another
+  pane is zoomed, or the window is minimized, the last frame holds (and
+  the idle cut shortens the gap). Drawing it anyway would need a
+  placement of its own, as the tab preview has.
+- **The picture is the pane's size at the start**, in device pixels: a
+  pane resized later is cropped, or padded with its background at the
+  right and bottom; nothing is scaled down, so a large pane makes a
+  large file. A font size change mid-recording is recorded as drawn.
+- **The cursor doesn't blink** in a pane being recorded, on screen or
+  in the file: each blink would be a frame. It does go hollow in the
+  file whenever the pane loses the keys (the palette opening, another
+  pane or window focused), since the file is the pane as drawn.
+- **ClearType fringes are recorded** as drawn, with
+  `font.antialias = "cleartype"`; grayscale records cleaner.
+- **More than 255 colors in a frame's changed box** are cut down to
+  fit (median cut, no dither), so a kitty image or a wide gradient
+  bands.
+- **No key by default**, and no notice of where the file went beyond the
+  clipboard and the log.
+- **One recording per window**, of the pane focused at the start; there
+  is no `squish pane record` to record a named pane, and as with every
+  `client.action`, `squish.client.queue("toggle_recording")` runs in
+  each window viewing the workspace.
+- **A recording still saving holds the next**: toggling while the strip
+  says `SAVE` does nothing.
+- **A window closed while recording** waits for the file to be written,
+  and leaves the clipboard alone.
+
 ## Scripting
 
 `squish do` runs Lua in the daemon (internal/lua, gopher-lua): the

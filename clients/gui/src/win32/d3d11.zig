@@ -29,10 +29,13 @@ pub const CREATE_DEVICE_BGRA_SUPPORT: u32 = 0x20;
 
 pub const USAGE_DEFAULT: u32 = 0;
 pub const USAGE_DYNAMIC: u32 = 2;
+pub const USAGE_STAGING: u32 = 3;
 pub const BIND_CONSTANT_BUFFER: u32 = 0x4;
 pub const BIND_SHADER_RESOURCE: u32 = 0x8;
 pub const CPU_ACCESS_WRITE: u32 = 0x10000;
+pub const CPU_ACCESS_READ: u32 = 0x20000;
 pub const RESOURCE_MISC_BUFFER_STRUCTURED: u32 = 0x40;
+pub const MAP_READ: u32 = 1;
 pub const MAP_WRITE_DISCARD: u32 = 4;
 
 pub const BLEND_ONE: u32 = 2;

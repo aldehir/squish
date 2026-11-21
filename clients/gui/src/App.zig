@@ -40,6 +40,7 @@ const PaneStrip = @import("ui/widgets/PaneStrip.zig");
 const Modal = @import("ui/widgets/Modal.zig");
 const TextFieldView = @import("ui/widgets/TextFieldView.zig");
 const Painter = @import("renderer/Painter.zig");
+const Recorder = @import("record/Recorder.zig");
 const Tree = Ui.Tree;
 
 const log = std.log.scoped(.app);
@@ -152,6 +153,21 @@ blink_visible: bool = true,
 
 /// What takes the keyboard from the terminal, if anything.
 mode: Mode = .terminal,
+
+/// The recording under way (`toggle_recording`), from its start until
+/// its thread has closed the file (`recordDone`): one at a time. The
+/// window's renderer feeds it.
+recording: ?*Recorder = null,
+/// The pane shown alone at a preset's size (`stage_pane`), if one is.
+stage: ?Stage = null,
+/// A recording asked for of a pane just staged, which starts once its
+/// screen has the stage's grid (`startWanted`): the daemon's frames at
+/// the new size are still to come, and the file's first frame shouldn't
+/// be the old screen in the new box.
+record_wanted: ?struct { session: u32, format: ?binding.RecordFormat } = null,
+/// A font size went out of use where its grid couldn't be let go
+/// (`unstage`): `update` sweeps them.
+fonts_stale: bool = false,
 
 /// What's wrong with the config, in the strip under the title bar until
 /// it's dismissed or a reload has nothing wrong: the first line of each
@@ -559,6 +575,20 @@ const HostEntry = struct {
     ours: bool = false,
 };
 
+/// A pane staged: shown alone in its tab's area, centered, at a grid and
+/// font size of its own, while its tab's other panes wait unseen. Only
+/// this window's: squish hears of it as a resize.
+pub const Stage = struct {
+    session: u32,
+    name: binding.Name,
+    cols: u16,
+    rows: u16,
+    /// Null is the window's.
+    font_size: ?f32,
+    /// `toggle_recording` staged it, and unstages it when it stops.
+    for_recording: bool = false,
+};
+
 /// What the window tells the app happened. Mouse and key messages carry
 /// their Win32 message and parameters as they came, since the sessions
 /// take them that way; positions are client coordinates.
@@ -596,6 +626,8 @@ pub const Msg = union(enum) {
     /// A right click came up at a client position: what's there may
     /// open its context menu.
     context_menu: win32.POINT,
+    /// The recording's thread is done with its file.
+    record_done,
 
     pub const Mouse = struct { msg: u32, wparam: win32.WPARAM, pos: win32.POINT };
     pub const Key = struct { msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM };
@@ -615,6 +647,8 @@ pub const Timer = enum {
     repeat,
     /// Asks the file picker's daemon again while its scan runs.
     find,
+    /// Stops a recording that has run for `record.limit`.
+    record_limit,
 };
 
 /// How long a repeatable binding's prefix stays pressed after it runs,
@@ -688,6 +722,16 @@ pub const Shell = struct {
         clipboardHasText: *const fn (*anyopaque) bool,
         clipboardGet: *const fn (*anyopaque, Allocator) anyerror!?[]u8,
         clipboardSet: *const fn (*anyopaque, []const u8) anyerror!void,
+        /// Put a file on the clipboard, by its path: as a file and as
+        /// the path's text.
+        clipboardSetFile: *const fn (*anyopaque, [:0]const u16) anyerror!void,
+        /// Start recording a terminal pane that's shown, to a new file:
+        /// the app knows neither the renderer nor the filesystem. Null
+        /// if it can't be.
+        startRecording: *const fn (*anyopaque, *Session, binding.RecordFormat) ?*Recorder,
+        /// Stop a recording (`Recorder.stop`), after a last frame of its
+        /// pane as it is now, if it's shown.
+        finishRecording: *const fn (*anyopaque, *Recorder) void,
         /// The least time between a pane's frames to ask squish for, in
         /// microseconds.
         frameInterval: *const fn (*anyopaque) u32,
@@ -792,6 +836,15 @@ pub const Shell = struct {
     }
     fn clipboardSet(self: Shell, text: []const u8) anyerror!void {
         return self.vt.clipboardSet(self.ctx, text);
+    }
+    fn clipboardSetFile(self: Shell, path: [:0]const u16) anyerror!void {
+        return self.vt.clipboardSetFile(self.ctx, path);
+    }
+    fn startRecording(self: Shell, s: *Session, format: binding.RecordFormat) ?*Recorder {
+        return self.vt.startRecording(self.ctx, s, format);
+    }
+    fn finishRecording(self: Shell, r: *Recorder) void {
+        self.vt.finishRecording(self.ctx, r);
     }
     fn frameInterval(self: Shell) u32 {
         return self.vt.frameInterval(self.ctx);
@@ -962,6 +1015,8 @@ pub fn start(self: *App, command_line: []const u16) !void {
 /// the window does while its renderer is still up.
 pub fn deinit(self: *App) void {
     self.destroyTabs();
+    // Waits for its thread to close the file: the one wait on it.
+    if (self.recording) |r| r.deinit();
     switch (self.mode) {
         .palette => |*p| p.deinit(),
         else => {},
@@ -1025,6 +1080,10 @@ pub fn markDirty(self: *App) void {
 
 /// Act on what the window said happened.
 pub fn update(self: *App, msg: Msg) Result {
+    if (self.fonts_stale) {
+        self.fonts_stale = false;
+        self.sweepFonts();
+    }
     switch (msg) {
         .mouse => |m| self.mouseInput(m),
         .wheel => |m| self.wheelInput(m),
@@ -1070,11 +1129,13 @@ pub fn update(self: *App, msg: Msg) Result {
                 self.shell.killTimer(.find);
                 self.pollFind();
             },
+            .record_limit => self.stopRecording(),
         },
         .output => self.outputArrived(),
         .daemon_posted => self.daemonPosted(),
         .session => |s| self.sessionEvent(s.id, s.what),
         .context_menu => |pos| self.contextMenu(pos),
+        .record_done => self.recordDone(),
     }
     return .handled;
 }
@@ -1939,6 +2000,10 @@ fn openMenu(self: *App, target: Id.Target, anchor: Menu.Anchor) void {
             }
             m.separator();
             m.add(.{ .label = L("Open browser"), .icon = .globe, .action = .{ .part = .open_browser }, .disabled = !in_squish });
+            if (self.recording != null)
+                m.add(.{ .label = L("Stop recording"), .icon = .square, .action = .{ .binding = .{ .toggle_recording = .{} } } })
+            else
+                m.add(.{ .label = L("Record"), .icon = .circle, .action = .{ .binding = .{ .toggle_recording = .{} } }, .disabled = s.content != .terminal });
             if (t.float != null) {
                 m.add(.{ .label = L("Dock tab"), .icon = .square_arrow_down_left, .action = .{ .part = .dock } });
             } else if (in_squish and self.canFloatPane(t)) {
@@ -3738,6 +3803,8 @@ fn runAction(self: *App, action: binding.Action) bool {
             self.shell.setFullscreen(self.ui.fullscreen);
             return true;
         },
+        .toggle_recording => |rec| return self.toggleRecording(rec),
+        .stage_pane => |name| return self.toggleStage(name.slice()),
         else => {},
     }
     const s = self.focusedSession() orelse switch (action) {
@@ -3811,9 +3878,194 @@ fn runAction(self: *App, action: binding.Action) bool {
         .dock_float => if (self.activeTab().float != null) self.dockFloat(self.activeTab()) else return false,
         .toggle_floats => self.toggleFloats(),
         .focus_float => self.focusFloat(),
-        .lua, .invoke, .toggle_command_palette, .pick_file, .toggle_fullscreen => unreachable,
+        .lua, .invoke, .toggle_command_palette, .pick_file, .toggle_fullscreen, .toggle_recording, .stage_pane => unreachable,
     }
     return true;
+}
+
+/// Start recording the focused pane, or stop the recording under way
+/// (or still to start), whichever pane it's of. With a preset the pane
+/// is staged at it first, and the recording starts when its screen has
+/// that size. False if there's nothing to do: no terminal pane has the
+/// focus, the preset can't be staged, or the file couldn't be made.
+fn toggleRecording(self: *App, rec: binding.Recording) bool {
+    if (self.recording != null) {
+        self.stopRecording();
+        return true;
+    }
+    if (self.record_wanted != null) {
+        self.record_wanted = null;
+        self.unstageRecorded();
+        return true;
+    }
+    const s = self.focusedSession() orelse return false;
+    const preset = rec.preset.slice();
+    if (preset.len > 0) {
+        const there = if (self.stage) |st| st.session == s.id and std.mem.eql(u8, st.name.slice(), preset) else false;
+        if (!there) {
+            if (!self.stagePane(s, preset)) return false;
+            self.stage.?.for_recording = true;
+        }
+        if (!s.settled()) {
+            self.record_wanted = .{ .session = s.id, .format = rec.format };
+            return true;
+        }
+    }
+    if (self.recordPane(s, rec.format)) return true;
+    self.unstageRecorded();
+    return false;
+}
+
+/// Start the recording that waited for its staged pane's screen
+/// (`record_wanted`), if it has come.
+fn startWanted(self: *App) void {
+    const w = self.record_wanted orelse return;
+    const found = self.findSession(w.session) orelse {
+        self.record_wanted = null;
+        return;
+    };
+    if (!found.s.settled()) return;
+    self.record_wanted = null;
+    if (!self.recordPane(found.s, w.format)) self.unstageRecorded();
+}
+
+/// Put back the pane `toggle_recording` staged; one staged before it
+/// stays.
+fn unstageRecorded(self: *App) void {
+    if (self.stage) |st| if (st.for_recording) self.unstage();
+}
+
+/// `stage_pane`: stage the focused pane at preset `name`, or with no
+/// name, or the one a pane is staged at, put that pane back.
+fn toggleStage(self: *App, name: []const u8) bool {
+    if (self.stage) |st| if (name.len == 0 or std.mem.eql(u8, st.name.slice(), name)) {
+        self.unstage();
+        return true;
+    };
+    if (name.len == 0) return false;
+    return self.stagePane(self.focusedSession() orelse return false, name);
+}
+
+/// Show terminal pane `s` alone in its tab's area at preset `name`'s
+/// size. False, and logged, if there's no such preset or it doesn't fit
+/// the area as the window is.
+fn stagePane(self: *App, s: *Session, name: []const u8) bool {
+    if (s.content != .terminal) return false;
+    const preset = self.config.recordPreset(name) orelse {
+        log.warn("no record preset \"{s}\"", .{name});
+        return false;
+    };
+    const t = self.tabs.items[(self.findSession(s.id) orelse return false).tab];
+    const stage: Stage = .{ .session = s.id, .name = .of(name), .cols = preset.cols, .rows = preset.rows, .font_size = preset.font_size };
+    const size = self.stageSize(stage);
+    const area = self.tabArea(t);
+    if (size[0] > area.w or size[1] > area.h) {
+        log.warn("record preset \"{s}\" needs {d} x {d} px, and the panes have {d} x {d}", .{ name, size[0], size[1], area.w, area.h });
+        return false;
+    }
+    self.unstage();
+    self.stage = stage;
+    self.layoutTab(t);
+    self.markDirty();
+    return true;
+}
+
+/// Put the staged pane back among its tab's. The view does this while
+/// a frame is being drawn, whose panes are built on the stage's font
+/// grid: the grid goes at the next update (`fonts_stale`), not here.
+fn unstage(self: *App) void {
+    const st = self.stage orelse return;
+    self.stage = null;
+    if (self.findSession(st.session)) |found| self.fitTab(self.tabs.items[found.tab]);
+    self.fonts_stale = true;
+    self.markDirty();
+}
+
+/// The pixels a pane staged as `st` takes, its title strip included:
+/// its grid at its font size, and the padding every pane has.
+fn stageSize(self: *const App, st: Stage) [2]f32 {
+    const g = &self.geometry;
+    const m = self.shell.cellFor(self.stageFont(st));
+    const w = @as(u32, st.cols) * m.width + g.padding.left + g.padding.right;
+    const h = @as(u32, st.rows) * m.height + (g.padding.top -| g.inset) + g.padding.bottom;
+    return .{ @floatFromInt(w), g.title_height + @as(f32, @floatFromInt(h)) };
+}
+
+fn stageFont(self: *const App, st: Stage) f32 {
+    return std.math.clamp(st.font_size orelse self.shell.fontSize(), 1, 255);
+}
+
+/// Where a pane staged as `st` goes in tab `t`'s area: in its middle,
+/// on whole pixels, and no larger than it (a window made smaller since
+/// cuts the grid short).
+fn stageFrame(self: *const App, t: *const Tab, st: Stage) Rect {
+    const a = self.tabArea(t);
+    const size = self.stageSize(st);
+    const w = @min(size[0], a.w);
+    const h = @min(size[1], a.h);
+    return .{ .x = a.x + @round((a.w - w) / 2), .y = a.y + @round((a.h - h) / 2), .w = w, .h = h };
+}
+
+/// The staged pane, if tab `t` holds it.
+fn stagedIn(self: *const App, t: *Tab) ?*Session {
+    const st = self.stage orelse return null;
+    var it = t.iterator();
+    while (it.next()) |s| if (s.id == st.session) return s;
+    return null;
+}
+
+/// Record pane `s`, with nothing being recorded. False for a browser,
+/// whose page the window doesn't draw.
+fn recordPane(self: *App, s: *Session, format: ?binding.RecordFormat) bool {
+    if (s.content != .terminal) return false;
+    const r = self.shell.startRecording(s, format orelse self.config.@"record-format") orelse return false;
+    self.recording = r;
+    // Longer than a timer can wait is never.
+    if (r.opts.limit_ms > 0 and r.opts.limit_ms <= std.math.maxInt(i32)) self.shell.setTimer(.record_limit, r.opts.limit_ms);
+    // Its cursor stops blinking, and its strip says so.
+    self.markDirty();
+    return true;
+}
+
+/// End the recording: no more frames go to it, and its thread closes
+/// the file (`recordDone` then). Nothing if none is running.
+pub fn stopRecording(self: *App) void {
+    const r = self.recording orelse return;
+    self.shell.killTimer(.record_limit);
+    // Its last frame is a draw, which builds the view, which comes here
+    // for a pane that's gone.
+    if (r.stopped or r.last) return;
+    self.shell.finishRecording(r);
+    // Its last frame is taken: the pane goes back among the others.
+    self.unstageRecorded();
+    self.markDirty();
+}
+
+/// The recording's thread is done: a file that was written goes on the
+/// clipboard, as a file and as its path, and the recording goes.
+fn recordDone(self: *App) void {
+    const r = self.recording orelse return;
+    const state = r.result() orelse return;
+    self.shell.killTimer(.record_limit);
+    if (state == .done) self.shell.clipboardSetFile(r.path) catch |err| log.warn("putting the recording on the clipboard failed: {}", .{err});
+    self.recording = null;
+    r.deinit();
+    // One that failed by itself was never stopped.
+    self.unstageRecorded();
+    self.markDirty();
+}
+
+/// What pane `s`'s strip says of the recording, if it's the one
+/// recorded: that it's being recorded, or its file written.
+pub fn recordingBadge(self: *const App, s: *const Session) ?[]const u16 {
+    const r = self.recording orelse return null;
+    if (r.session != s.id) return null;
+    return if (r.stopped) L("SAVE") else L("REC");
+}
+
+/// Whether pane `s` is the one staged.
+pub fn isStaged(self: *const App, s: *const Session) bool {
+    return if (self.stage) |st| st.session == s.id else false;
 }
 
 /// Whether pane menus offer to float a pane of tab `t`: a squish tab of
@@ -4017,7 +4269,8 @@ fn blinkTick(self: *App) void {
     // Only redraw if the last frame's cursor blinks. One that starts
     // blinking later picks up the phase from here.
     if (self.focusedSession()) |s| {
-        if (s.cursorBlinks()) self.markDirty();
+        // A recorded pane's cursor is drawn steady.
+        if (s.cursorBlinks() and self.recordingBadge(s) == null) self.markDirty();
     }
     switch (self.keyboard()) {
         .connect, .rename, .url, .search, .palette => self.markDirty(),
@@ -4707,7 +4960,7 @@ fn refreshFind(self: *App) void {
 
 fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     // The labels' UTF-16, made at compile time.
-    @setEvalBranchQuota(2000);
+    @setEvalBranchQuota(3000);
     var buf: [Palette.max_text]u16 = undefined;
     // The workspace of the tab shown, if it's in one.
     const current: ?*const Workspace = if (self.hasTabs()) cur: {
@@ -4729,6 +4982,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     const zoomed = self.hasTabs() and self.activeTab().zoom != null;
     const floats_shown = self.hasTabs() and self.placed().floats.items.len > 0;
     const fullscreen = self.ui.fullscreen;
+    const recording = self.recording != null or self.record_wanted != null;
     const commands = [_]Command{
         .{ .label = L("New tab"), .icon = .plus, .action = .new_tab },
         .{ .label = L("Close pane"), .icon = .x, .action = .close_surface },
@@ -4739,6 +4993,7 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
         .{ .label = if (fullscreen) L("Exit fullscreen") else L("Enter fullscreen"), .icon = if (fullscreen) .minimize_2 else .maximize_2, .action = .toggle_fullscreen },
         .{ .label = L("Search"), .icon = .search, .action = .start_search },
         .{ .label = L("Copy mode"), .icon = .copy, .action = .copy_mode },
+        .{ .label = if (recording) L("Stop recording") else L("Record pane"), .icon = if (recording) .square else .circle, .action = .{ .toggle_recording = .{} } },
         .{ .label = L("Pick a file…"), .icon = .file, .action = .pick_file },
         .{ .label = L("Next tab"), .icon = .arrow_right, .action = .next_tab },
         .{ .label = L("Previous tab"), .icon = .arrow_left, .action = .previous_tab },
@@ -4757,6 +5012,24 @@ fn paletteCommands(self: *App, p: *Palette) Allocator.Error!void {
     for (commands) |c| {
         const key = self.keymap.label(c.action);
         try p.add(.{ .label = c.label, .right = key.slice(), .icon = c.icon, .section = .command, .action = .{ .binding = c.action } });
+    }
+    // A preset each to record at and to stage at, and the way back.
+    if (self.stage != null) try p.add(.{ .label = L("Unstage pane"), .icon = .minimize_2, .section = .command, .action = .{ .binding = .{ .stage_pane = .{} } } });
+    for (self.config.@"record-presets".items) |preset| {
+        const name: binding.Name = .of(preset.name);
+        var size: [32]u8 = undefined;
+        const detail = std.fmt.bufPrint(&size, "{d} x {d}", .{ preset.cols, preset.rows }) catch "";
+        var detail16: [32]u16 = undefined;
+        const dn = std.unicode.utf8ToUtf16Le(&detail16, detail) catch 0;
+        for ([_]struct { []const u16, binding.Action, Painter.Lucide }{
+            .{ L("Record pane at "), .{ .toggle_recording = .{ .preset = name } }, .circle },
+            .{ L("Stage pane at "), .{ .stage_pane = name }, .maximize_2 },
+        }) |entry| {
+            if (recording and entry[1] == .toggle_recording) continue;
+            var n = appendUnits(&buf, 0, entry[0]);
+            n += std.unicode.utf8ToUtf16Le(buf[n..], name.slice()) catch 0;
+            try p.add(.{ .label = buf[0..n], .detail = detail16[0..dn], .right = self.keymap.label(entry[1]).slice(), .icon = entry[2], .section = .command, .action = .{ .binding = entry[1] } });
+        }
     }
     if (self.daemon) |conn| if (!conn.isLost()) {
         try p.add(.{ .label = L("New workspace"), .icon = .layers, .section = .command, .action = .{ .part = .{ .target = .local, .part = .new_tab } } });
@@ -5265,6 +5538,22 @@ pub fn view(self: *App) *const Tree {
     if (!self.menuTargetExists()) self.closeMenu();
     if (!self.urlShown()) self.cancelUrl();
     if (!self.searchShown()) self.cancelSearch(false);
+    // And a recording of a pane that's gone ends.
+    if (self.recording) |r| if (self.findSession(r.session) == null) self.stopRecording();
+    // A stage holds its pane while it has its tab's keys: gone, or the
+    // focus moved to a pane it hides, the tab is laid out again, and a
+    // recording that staged it ends there, at the size it began.
+    if (self.stage) |st| {
+        const held = if (self.findSession(st.session)) |found| self.tabs.items[found.tab].focus == found.s else false;
+        if (!held) {
+            if (st.for_recording) {
+                self.record_wanted = null;
+                self.stopRecording();
+            }
+            self.unstage();
+        }
+    }
+    self.startWanted();
     if (!self.confirmStillAsks()) {
         self.mode = .terminal;
         _ = self.ui.setHover(.none);
@@ -5983,7 +6272,12 @@ fn fitTab(self: *App, t: *Tab) void {
 fn placeTab(self: *App, t: *Tab, into: *Placement) void {
     const g = &self.geometry;
     const first = into.panes.items.len;
-    t.placeInto(self.alloc, into, self.tabArea(t), g.gap, g.grip) catch |err| {
+    // A staged pane is all of its tab that's placed, at its own size.
+    const placing = if (self.stagedIn(t)) |s|
+        into.panes.append(self.alloc, .{ .session = s, .tab = t, .frame = self.stageFrame(t, self.stage.?) })
+    else
+        t.placeInto(self.alloc, into, self.tabArea(t), g.gap, g.grip);
+    placing catch |err| {
         log.err("laying out panes failed: {}", .{err});
         into.panes.shrinkRetainingCapacity(first);
     };
@@ -6014,6 +6308,8 @@ fn placeTab(self: *App, t: *Tab, into: *Placement) void {
 /// a terminal. Clamped as the window's is, without writing back, so a
 /// pane at the floor grows back by the steps it shrank.
 fn paneFontSize(self: *const App, s: *const Session) f32 {
+    // Staged, its preset's.
+    if (self.stage) |st| if (st.session == s.id) return self.stageFont(st);
     const window = self.shell.fontSize();
     if (s.content != .terminal or s.font_delta == 0) return window;
     return std.math.clamp(window + s.font_delta, 1, 255);
@@ -6079,6 +6375,11 @@ pub const TestShell = struct {
     stats_shown: bool = false,
     /// What the sidebar shows for the frame stats.
     stats_text: []const u16 = &.{},
+    /// What `startRecording`'s recordings encode into; with none, it
+    /// fails. How many files `clipboardSetFile` was given.
+    record_stub: ?Recorder.Stub = null,
+    record_limit: u32 = 0,
+    files: u32 = 0,
 
     fn captureMouse(ctx: *anyopaque) void {
         self_(ctx).captured = true;
@@ -6144,6 +6445,30 @@ pub const TestShell = struct {
         return null;
     }
     fn clipboardSet(_: *anyopaque, _: []const u8) anyerror!void {}
+    fn clipboardSetFile(ctx: *anyopaque, _: [:0]const u16) anyerror!void {
+        self_(ctx).files += 1;
+    }
+    /// A recording with no file or thread, into `record_stub`: the test
+    /// runs it (`Recorder.run`) once it's stopped.
+    fn startRecording(ctx: *anyopaque, s: *Session, format: binding.RecordFormat) ?*Recorder {
+        const self = self_(ctx);
+        return Recorder.create(.{
+            .alloc = std.testing.allocator,
+            .format = format,
+            .session = s.id,
+            .width = 2,
+            .height = 2,
+            .background = .{ 0, 0, 0, 255 },
+            .opts = .{ .limit_ms = self.record_limit },
+            .now = 0,
+            .freq = 1000,
+            .stub = if (self.record_stub) |*stub| stub else return null,
+            .thread = false,
+        }) catch null;
+    }
+    fn finishRecording(_: *anyopaque, r: *Recorder) void {
+        r.stop(r.last_capture orelse 0);
+    }
     fn frameInterval(_: *anyopaque) u32 {
         return 0;
     }
@@ -6210,6 +6535,9 @@ pub const TestShell = struct {
         .clipboardHasText = clipboardHasText,
         .clipboardGet = clipboardGet,
         .clipboardSet = clipboardSet,
+        .clipboardSetFile = clipboardSetFile,
+        .startRecording = startRecording,
+        .finishRecording = finishRecording,
         .frameInterval = frameInterval,
         .fontSize = fontSize,
         .setFontSize = setFontSize,
@@ -7932,4 +8260,175 @@ test "with the tabs on top, the title bar lists the active workspace's tabs, its
     t.frame = t.ui.frame(1000, 600);
     built = app.view();
     try std.testing.expect(Ui.find(built, .{ .target = .{ .pane = tabs.a.focus.id } }) != null);
+}
+
+/// The word on pane `s`'s strip, as the view shows it.
+fn testBadge(app: *App, s: *const Session) []const u16 {
+    const id: Id = .{ .target = .{ .pane = s.id } };
+    return Ui.find(app.view(), id.with(.terminal)).?.kind.pane.badge;
+}
+
+test "toggle_recording records the focused pane until it's toggled again: its strip says REC, then SAVE, then nothing" {
+    var shell: TestShell = .{ .record_stub = .{ .alloc = std.testing.allocator }, .record_limit = 5000 };
+    defer shell.record_stub.?.deinit();
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+
+    // Nothing shown, nothing to record.
+    try std.testing.expect(!app.runAction(.{ .toggle_recording = .{} }));
+    const panes = try t.twoPanes();
+    try std.testing.expectEqual(0, testBadge(app, panes[1]).len);
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{ .format = .gif } }));
+    const rec = app.recording.?;
+    try std.testing.expectEqual(panes[1].id, rec.session);
+    try std.testing.expectEqual(5000, shell.timers.get(.record_limit).?);
+    try std.testing.expectEqualSlices(u16, L("REC"), testBadge(app, panes[1]));
+    try std.testing.expect(Ui.find(app.view(), (Id{ .target = .{ .pane = panes[1].id } }).with(.terminal)).?.kind.pane.badge_tone == .danger);
+    try std.testing.expectEqual(0, testBadge(app, panes[0]).len);
+    const px: [16]u8 = @splat(7);
+    rec.push(&px, 8, 2, 2, 0);
+
+    // Again stops it, whichever pane has the keys; its thread still has
+    // the file.
+    app.focusPane(panes[0]);
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{} }));
+    try std.testing.expect(rec.stopped);
+    try std.testing.expectEqual(null, shell.timers.get(.record_limit));
+    try std.testing.expectEqualSlices(u16, L("SAVE"), testBadge(app, panes[1]));
+    // Not done yet: a message that says so is early.
+    _ = app.update(.record_done);
+    try std.testing.expect(app.recording != null);
+    // And toggling while it saves starts no other.
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{} }));
+    try std.testing.expectEqual(rec, app.recording.?);
+
+    rec.run();
+    _ = app.update(.record_done);
+    try std.testing.expect(app.recording == null);
+    try std.testing.expectEqual(1, shell.files);
+    try std.testing.expectEqual(1, shell.record_stub.?.calls.items.len);
+    try std.testing.expectEqual(0, testBadge(app, panes[1]).len);
+
+    // A file that can't be made records nothing, and a browser has no
+    // picture here to record.
+    var browser = try Session.testBrowser(std.testing.allocator, &t.config, L("https://example.com/"));
+    defer browser.deinitContent();
+    try std.testing.expect(!app.recordPane(&browser, null));
+    var none: TestShell = .{};
+    app.shell = none.shell();
+    try std.testing.expect(!app.runAction(.{ .toggle_recording = .{} }));
+    try std.testing.expect(app.recording == null);
+}
+
+test "a recording stops when its pane closes, or its time runs out, and one with nothing in it leaves no file" {
+    var shell: TestShell = .{ .record_stub = .{ .alloc = std.testing.allocator } };
+    defer shell.record_stub.?.deinit();
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+
+    const panes = try t.twoPanes();
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{} }));
+    var rec = app.recording.?;
+    // No limit, no timer.
+    try std.testing.expectEqual(null, shell.timers.get(.record_limit));
+    app.closePane(app.active, panes[1]);
+    _ = app.view();
+    try std.testing.expect(rec.stopped);
+    rec.run();
+    _ = app.update(.record_done);
+    try std.testing.expect(app.recording == null);
+    try std.testing.expectEqual(0, shell.files);
+
+    shell.record_limit = 1000;
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{} }));
+    rec = app.recording.?;
+    try std.testing.expectEqual(panes[0].id, rec.session);
+    _ = app.update(.{ .tick = .record_limit });
+    try std.testing.expect(rec.stopped);
+    try std.testing.expectEqual(null, shell.timers.get(.record_limit));
+    // Left for the app to free with the window.
+}
+
+test "a pane staged at a preset is shown alone at its grid and font size, and a recording at one stages its pane while it runs" {
+    var shell: TestShell = .{ .record_stub = .{ .alloc = std.testing.allocator } };
+    defer shell.record_stub.?.deinit();
+    var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
+    try t.init(&shell);
+    defer t.deinit();
+    const app = &t.app;
+    const arena = t.config._arena.allocator();
+    try t.config.@"record-presets".append(arena, .{ .name = "demo", .cols = 40, .rows = 10, .font_size = 16 });
+    try t.config.@"record-presets".append(arena, .{ .name = "huge", .cols = 1000, .rows = 500 });
+
+    const panes = try t.twoPanes();
+    const before = app.placed().find(panes[1]).?;
+    try std.testing.expectEqual(2, app.placed().panes.items.len);
+
+    // No such preset, or one the window has no room for: as it was.
+    try std.testing.expect(!app.runAction(.{ .stage_pane = .of("nope") }));
+    try std.testing.expect(!app.runAction(.{ .stage_pane = .of("huge") }));
+    try std.testing.expect(app.stage == null);
+
+    // Staged: alone, in the middle of the area, 40 x 10 at 16 points.
+    try std.testing.expect(app.runAction(.{ .stage_pane = .of("demo") }));
+    try std.testing.expectEqual(1, app.placed().panes.items.len);
+    const staged = app.placed().find(panes[1]).?;
+    const cell = TestShell.cellFor(undefined, 16);
+    try std.testing.expectEqual([2]u16{ 40, 10 }, [2]u16{ staged.cols, staged.rows });
+    try std.testing.expectEqual(16, staged.size_pt);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(40 * cell.width)), staged.rect.w);
+    try std.testing.expectEqual(@as(f32, @floatFromInt(10 * cell.height)), staged.rect.h);
+    const area = app.tabArea(app.activeTab());
+    try std.testing.expectEqual(@round(area.x + (area.w - staged.frame.w) / 2), staged.frame.x);
+    try std.testing.expectEqualSlices(u16, L("STAGE"), testBadge(app, panes[1]));
+    // Its preset again puts it back.
+    try std.testing.expect(app.runAction(.{ .stage_pane = .of("demo") }));
+    try std.testing.expect(app.stage == null);
+    try std.testing.expectEqual(2, app.placed().panes.items.len);
+    try std.testing.expectEqual(before.frame, app.placed().find(panes[1]).?.frame);
+    try std.testing.expectEqual(before.size_pt, app.placed().find(panes[1]).?.size_pt);
+
+    // A recording at the preset stages its pane, and unstages it as it
+    // stops.
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{ .preset = .of("demo") } }));
+    try std.testing.expect(app.stage.?.for_recording);
+    const rec = app.recording.?;
+    try std.testing.expectEqual(panes[1].id, rec.session);
+    try std.testing.expectEqual(1, app.placed().panes.items.len);
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{} }));
+    try std.testing.expect(app.stage == null);
+    try std.testing.expectEqual(2, app.placed().panes.items.len);
+    rec.run();
+    _ = app.update(.record_done);
+
+    // One staged by hand stays staged when its recording stops, and
+    // goes when the keys go to a pane it hides.
+    try std.testing.expect(app.runAction(.{ .stage_pane = .of("demo") }));
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{ .preset = .of("demo") } }));
+    try std.testing.expect(!app.stage.?.for_recording);
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{} }));
+    try std.testing.expect(app.stage != null);
+    app.recording.?.run();
+    _ = app.update(.record_done);
+    app.focusPane(panes[0]);
+    _ = app.view();
+    try std.testing.expect(app.stage == null);
+    try std.testing.expectEqual(2, app.placed().panes.items.len);
+
+    // The keys leaving a pane staged for its recording end the recording
+    // with the stage.
+    app.focusPane(panes[1]);
+    try std.testing.expect(app.runAction(.{ .toggle_recording = .{ .preset = .of("demo") } }));
+    const staged_rec = app.recording.?;
+    app.focusPane(panes[0]);
+    _ = app.view();
+    try std.testing.expect(staged_rec.stopped);
+    try std.testing.expect(app.stage == null);
+    staged_rec.run();
+    _ = app.update(.record_done);
+    try std.testing.expect(app.recording == null);
 }

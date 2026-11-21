@@ -774,9 +774,12 @@ const Builder = struct {
             const id: Id = .{ .target = .{ .pane = s.id } };
             const focused = tab == keys and s == tab.focus;
             const buttons = try self.paneButtons(id, s, tab, p.frame.w, tab.count() > 1);
+            // Being recorded says more than the mode it's in.
+            const recording = app.recordingBadge(s);
             try items.append(self.arena, .{ .id = id.with(.terminal), .kind = .{ .pane = .{
                 .title = s.title(),
-                .badge = if (s.inCopyMode()) L("COPY") else &.{},
+                .badge = recording orelse if (s.inCopyMode()) L("COPY") else if (app.isStaged(s)) L("STAGE") else &.{},
+                .badge_tone = if (recording != null) .danger else .accent,
                 .focused = focused,
                 .dot = shown and focused,
                 .dimmed = shown and !focused,

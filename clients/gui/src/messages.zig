@@ -21,6 +21,9 @@ pub const WM_APP_DAEMON = win32.WM_APP + 4;
 /// attached again after the connection came back: a restarted daemon's
 /// terminal is new and takes the session's settings again.
 pub const WM_APP_RELINKED = win32.WM_APP + 7;
+/// Posted from a recording's thread once its file is closed, or it gave
+/// up (`record/Recorder.zig`). LPARAM is the recorder.
+pub const WM_APP_RECORD_DONE = win32.WM_APP + 8;
 
 /// Debug builds, for tests to post to their own window: act as if the
 /// GPU device were lost (`Renderer.loseDevice`), and recover.

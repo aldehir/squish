@@ -190,8 +190,19 @@ which are for the top level only:
                              toggle_command_palette, pick_file (a fuzzy path
                              picker at the cursor, ctrl+i), start_search,
                              navigate_search {direction = "next"|"previous"},
-                             end_search, copy_mode, copy_to_clipboard,
-                             paste_from_clipboard,
+                             end_search, copy_mode, toggle_recording {format}
+                             (records the focused terminal pane, as the
+                             window draws it, to a GIF, until it runs again;
+                             the file then goes on the clipboard, as a file
+                             and as its path; no key by default, the palette
+                             and the pane's menu have it; see record below;
+                             with {preset}, the pane is staged at it for as
+                             long as it's recorded), stage_pane {preset}
+                             (shows the focused terminal pane alone, centered,
+                             at one of record.presets' grid and font size, so
+                             its recordings are the same size whatever the
+                             window's; again, or with no preset, puts it back),
+                             copy_to_clipboard, paste_from_clipboard,
                              increase_font_size {amount}, decrease_font_size
                              {amount}, reset_font_size, the window's size and
                              ctrl+wheel's; increase_pane_font_size {amount},
@@ -315,7 +326,14 @@ one without applying it.
     fullscreen = { gap = 10, radius = 10, margin = 10, padding = 10, -- pane's four, fullscreen (F11); each unset takes pane's
                    tabs = false },   -- true: fullscreen keeps the title bar's tabs (chrome.tabs = "top")
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
-    shell = { command = "pwsh -NoLogo" },
+    record = { format = "gif",       -- what toggle_recording makes when it names no format ("gif" is the one there is)
+               fps = 30,             -- the most frames a second, 1 to 60; an idle pane adds none
+               idle = 3,             -- seconds: a pause longer than this is cut to it (0: real time)
+               limit = 600,          -- seconds: a recording stops by itself (0: never)
+               dir = "D:\\clips",    -- where squish-<date>-<time>.gif goes, made if missing (unset: Videos\squish)
+               presets = {           -- sizes for stage_pane and toggle_recording {preset}, by name:
+                 demo = { cols = 100, rows = 30, font_size = 14 } } },  -- a grid, and its font in points (unset: the window's)
+    shell ={ command = "pwsh -NoLogo" },
     host = { proxy = true },         -- a SOCKS proxy per connected host (squish host ls)
     daemon = { upgrade = "ask" },    -- "never": windows don't offer to replace an older daemon
   }

@@ -426,6 +426,7 @@ pub const ERROR_IO_PENDING = 997;
 // Files and pipes
 pub const GENERIC_READ = 0x80000000;
 pub const GENERIC_WRITE = 0x40000000;
+pub const CREATE_NEW = 1;
 pub const OPEN_EXISTING = 3;
 pub const FILE_FLAG_OVERLAPPED = 0x40000000;
 pub const ERROR_FILE_EXISTS = 80;
@@ -442,6 +443,13 @@ pub const WIN32_FILE_ATTRIBUTE_DATA = extern struct {
 pub extern "kernel32" fn GetFileAttributesExW(LPCWSTR, i32, *WIN32_FILE_ATTRIBUTE_DATA) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CopyFileW(LPCWSTR, LPCWSTR, BOOL) callconv(.winapi) BOOL;
 pub extern "kernel32" fn CreateDirectoryW(LPCWSTR, ?*anyopaque) callconv(.winapi) BOOL;
+pub extern "kernel32" fn DeleteFileW(LPCWSTR) callconv(.winapi) BOOL;
+/// Makes the directories above the one named too. Returns an error
+/// code, not a BOOL.
+pub extern "shell32" fn SHCreateDirectoryExW(?HWND, LPCWSTR, ?*anyopaque) callconv(.winapi) i32;
+pub const FOLDERID_Videos: GUID = .{ .data1 = 0x18989B1D, .data2 = 0x99B5, .data3 = 0x455B, .data4 = .{ 0x84, 0x1C, 0xAB, 0x7C, 0x74, 0xE4, 0xDD, 0xFC } };
+/// The path comes back in memory for CoTaskMemFree.
+pub extern "shell32" fn SHGetKnownFolderPath(*const GUID, u32, ?HANDLE, *?[*:0]u16) callconv(.winapi) HRESULT;
 pub const OPEN_ALWAYS = 4;
 pub const FILE_SHARE_READ = 0x1;
 pub const FILE_SHARE_WRITE = 0x2;
@@ -506,6 +514,15 @@ pub extern "kernel32" fn Sleep(u32) callconv(.winapi) void;
 
 // Clipboard
 pub const CF_UNICODETEXT = 13;
+pub const CF_HDROP = 15;
+/// What CF_HDROP holds: the paths follow, each ended by a NUL and the
+/// list by another.
+pub const DROPFILES = extern struct {
+    pFiles: u32 = @sizeOf(DROPFILES),
+    pt: POINT = .{ .x = 0, .y = 0 },
+    fNC: BOOL = FALSE,
+    fWide: BOOL = TRUE,
+};
 pub const GMEM_MOVEABLE = 0x0002;
 
 // Registry

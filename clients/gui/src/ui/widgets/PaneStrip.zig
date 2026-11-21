@@ -277,13 +277,16 @@ pub fn paint(ui: *const Ui, p: *Painter, node: *const Node) void {
         x += ui.px(14);
     }
     var right = if (pane.buttons.len > pane.nav) pane.buttons[pane.nav].rect.x - ui.px(6) else strip.right() - ui.px(title_pad);
-    // The badge, a tag in the accent, takes the title's right end.
+    // The badge, a tag in its tone, takes the title's right end.
     if (pane.badge.len > 0) {
         const bw = ui.px(badge_width);
         const bh = ui.px(badge_height);
         if (right - x > bw + ui.px(40)) {
             const tag: Rect = .{ .x = right - bw, .y = strip.y + @round((strip.h - bh) / 2), .w = bw, .h = bh };
-            const a = ui.theme.accent;
+            const a = switch (pane.badge_tone) {
+                .accent => ui.theme.accent,
+                .danger => ui.theme.danger,
+            };
             p.fillRounded(tag, ui.px(4), .{ a[0], a[1], a[2], 0.18 });
             p.text(pane.badge, ui.fonts.get(.hint), tag, a);
             right = tag.x - ui.px(8);

@@ -69,6 +69,16 @@ pub const Action = union(enum) {
     /// Put the focused pane in copy mode (tmux's, with vi keys, in the
     /// daemon: internal/vt/copymode.zig), or take it out.
     copy_mode,
+    /// Start recording the focused terminal pane to a file, as the
+    /// window draws it (`record/Recorder.zig`), or stop the recording
+    /// under way, whichever pane it's of. With a preset, the pane is
+    /// staged at it first (`stage_pane`) for as long as it's recorded.
+    toggle_recording: Recording,
+    /// Show the focused terminal pane alone, centered in its tab's
+    /// area, at a preset's grid and font size (`record.presets`), so a
+    /// recording of it is the same size whatever the window's; or, with
+    /// no preset or the one it's at, put it back.
+    stage_pane: Name,
     /// A function init.lua bound, which the daemon runs
     /// (action.invoke{lua}) for the focused pane.
     lua: u32,
@@ -81,6 +91,34 @@ pub const SplitDirection = enum { right, down, left, up };
 
 pub const GotoSplit = enum { previous, next, up, left, down, right };
 
+/// What a recording's file is.
+pub const RecordFormat = enum { gif };
+
+pub const Recording = struct {
+    /// Null takes `record.format`.
+    format: ?RecordFormat = null,
+    /// One of `record.presets`, or empty: the pane as it is.
+    preset: Name = .{},
+};
+
+/// A short name an action carries in itself, so it needs no memory of
+/// its own: a longer one is cut short, and names nothing.
+pub const Name = struct {
+    buf: [max]u8 = @splat(0),
+    len: u8 = 0,
+
+    pub const max = 32;
+
+    pub fn of(text: []const u8) Name {
+        var self: Name = .{ .len = @intCast(@min(text.len, max)) };
+        @memcpy(self.buf[0..self.len], text[0..self.len]);
+        return self;
+    }
+
+    pub fn slice(self: *const Name) []const u8 {
+        return self.buf[0..self.len];
+    }
+};
 
 pub const NavigateSearch = enum { next, previous };
 
@@ -436,6 +474,11 @@ pub fn fromName(name: []const u8, args: ?std.json.Value) ?Action {
         .start_search => .start_search,
         .end_search => .end_search,
         .navigate_search => .{ .navigate_search = argEnum(NavigateSearch, args, "direction", .next) },
+        .toggle_recording => .{ .toggle_recording = .{
+            .format = argEnum(?RecordFormat, args, "format", null),
+            .preset = .of(argString(args, "preset")),
+        } },
+        .stage_pane => .{ .stage_pane = .of(argString(args, "preset")) },
         .increase_font_size => .{ .increase_font_size = argNumber(args, "amount", 1) },
         .decrease_font_size => .{ .decrease_font_size = argNumber(args, "amount", 1) },
         .increase_pane_font_size => .{ .increase_pane_font_size = argNumber(args, "amount", 1) },
@@ -458,6 +501,13 @@ fn argValue(args: ?std.json.Value, key: []const u8) ?std.json.Value {
     };
 }
 
+fn argString(args: ?std.json.Value, key: []const u8) []const u8 {
+    return switch (argValue(args, key) orelse return "") {
+        .string => |text| text,
+        else => "",
+    };
+}
+
 fn argNumber(args: ?std.json.Value, key: []const u8, default: f32) f32 {
     return switch (argValue(args, key) orelse return default) {
         .integer => |i| @floatFromInt(i),
@@ -466,9 +516,14 @@ fn argNumber(args: ?std.json.Value, key: []const u8, default: f32) f32 {
     };
 }
 
+/// `T` an enum, or an optional one for an arg that may be left out.
 fn argEnum(comptime T: type, args: ?std.json.Value, key: []const u8, default: T) T {
+    const E = switch (@typeInfo(T)) {
+        .optional => |o| o.child,
+        else => T,
+    };
     return switch (argValue(args, key) orelse return default) {
-        .string => |s| std.meta.stringToEnum(T, s) orelse default,
+        .string => |s| std.meta.stringToEnum(E, s) orelse default,
         else => default,
     };
 }
@@ -955,7 +1010,20 @@ test Keymap {
         .{ .key = "ctrl+shift+f", .action = "resize_split", .args = "{\"direction\":\"up\",\"amount\":5}" },
         .{ .key = "nope+x", .action = "new_tab" },
         .{ .key = "ctrl+shift+c", .action = "increase_font_size", .args = "not json" },
+        .{ .key = "ctrl+alt+r", .action = "toggle_recording" },
+        .{ .key = "ctrl+alt+g", .action = "toggle_recording", .args = "{\"format\":\"gif\"}" },
+        // No such format: the configured one.
+        .{ .key = "ctrl+alt+v", .action = "toggle_recording", .args = "{\"format\":\"webm\"}" },
+        .{ .key = "ctrl+alt+d", .action = "toggle_recording", .args = "{\"preset\":\"demo\"}" },
+        .{ .key = "ctrl+alt+s", .action = "stage_pane", .args = "{\"preset\":\"demo\"}" },
+        .{ .key = "ctrl+alt+u", .action = "stage_pane" },
     });
+    try std.testing.expectEqual(Action{ .toggle_recording = .{} }, km.find('R', .{ .ctrl = true, .alt = true }).?.action);
+    try std.testing.expectEqual(Action{ .toggle_recording = .{ .format = .gif } }, km.find('G', .{ .ctrl = true, .alt = true }).?.action);
+    try std.testing.expectEqual(Action{ .toggle_recording = .{} }, km.find('V', .{ .ctrl = true, .alt = true }).?.action);
+    try std.testing.expectEqualStrings("demo", km.find('D', .{ .ctrl = true, .alt = true }).?.action.toggle_recording.preset.slice());
+    try std.testing.expectEqualStrings("demo", km.find('S', .{ .ctrl = true, .alt = true }).?.action.stage_pane.slice());
+    try std.testing.expectEqual(0, km.find('U', .{ .ctrl = true, .alt = true }).?.action.stage_pane.len);
     try std.testing.expectEqual(Action{ .new_split = .right }, km.find('D', .{ .ctrl = true, .shift = true }).?.action);
     const dev = km.find('T', .{ .ctrl = true, .shift = true }).?.action;
     try std.testing.expectEqualStrings("dev", dev.invoke.name);

@@ -37,6 +37,7 @@ const Painter = Renderer.Painter;
 const Web = @import("Web.zig");
 const PaneStrip = @import("ui/widgets/PaneStrip.zig");
 const TabStrip = @import("ui/widgets/TabStrip.zig");
+const Recorder = @import("record/Recorder.zig");
 
 const log = std.log.scoped(.window);
 
@@ -50,6 +51,7 @@ const WM_APP_TITLE_CHANGED = messages.WM_APP_TITLE_CHANGED;
 const WM_APP_CLIPBOARD_WRITE = messages.WM_APP_CLIPBOARD_WRITE;
 const WM_APP_DAEMON = messages.WM_APP_DAEMON;
 const WM_APP_RELINKED = messages.WM_APP_RELINKED;
+const WM_APP_RECORD_DONE = messages.WM_APP_RECORD_DONE;
 const WM_APP_DEBUG_LOSE_DEVICE = messages.WM_APP_DEBUG_LOSE_DEVICE;
 const WM_APP_DEBUG_FAIL_OVERLAY_RESIZE = messages.WM_APP_DEBUG_FAIL_OVERLAY_RESIZE;
 
@@ -70,6 +72,10 @@ const repeat_timer_id = 7;
 /// Tries again to make a lost GPU device (`recoverDevice`).
 const device_timer_id = 8;
 const find_timer_id = 9;
+/// Draws again when a recording's next frame is due (`armRecord`): a
+/// change drawn too soon after its last one isn't in the file yet.
+const record_timer_id = 10;
+const record_limit_timer_id = 11;
 
 /// How long `recoverDevice` waits between tries: soon at first, while
 /// the GPU may still be resetting, then less often.
@@ -148,6 +154,10 @@ tracking_mouse: bool = false,
 tracking_nc_mouse: bool = false,
 /// The idle timer (`armIdle`) is set.
 idle_armed: bool = false,
+/// The recording's timer (`armRecord`) is set.
+record_armed: bool = false,
+/// A frame is being drawn (`render`).
+rendering: bool = false,
 
 /// The frame stats, shown in the sidebar while `stats_shown`: from the
 /// start with `-Dstats`, else once the palette's command turns them on.
@@ -535,6 +545,9 @@ fn render(self: *Window) void {
     const r = &(self.renderer orelse return);
     // Drawn once the device is made again; it's still dirty.
     if (r.lost) return;
+    const outer = self.rendering;
+    self.rendering = true;
+    defer self.rendering = outer;
     self.renderFallible(r) catch |err| {
         log.err("render failed: {}", .{err});
         self.checkDevice();
@@ -645,6 +658,19 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
     if (preview_placed) |pp| try self.buildPanes(&self.preview_panes, pp.panes.items, null, false, &t);
     self.placeBrowsers();
     self.armIdle();
+    // A recording takes this frame if its pane is shown and its time
+    // between frames has passed; else the timer draws one when it has.
+    var record: ?Renderer.Frame.Record = null;
+    if (app.recording) |rec| if (tab != null) for (app.placed().panes.items, self.frame_panes.items) |p, drawn| {
+        if (p.session.id != rec.session or rec.stopped) continue;
+        const at = Recorder.now();
+        if (rec.due(at)) {
+            var alone = drawn;
+            alone.frame = drawn.viewport.inset(-1, -1);
+            record = .{ .pane = alone, .region = drawn.viewport, .sink = rec, .at = at };
+        } else self.armRecord(rec.wait(at));
+        break;
+    };
     // Where each float's panes start: they're placed after the tab's.
     var floats: [App.max_floats]usize = undefined;
     var nfloats: usize = 0;
@@ -660,7 +686,10 @@ fn renderFallible(self: *Window, r: *Renderer) !void {
         .background = self.ui.theme.ground,
         .box = self.paneBox(&shadows),
         .preview = if (preview) |pt| .{ .panes = self.preview_panes.items, .region = app.tabArea(pt) } else null,
+        .record = record,
     }, Overlay{ .ui = &self.ui, .tree = app.view() });
+    // A frame the recording had no room for is asked for again.
+    if (record) |taken| if (taken.sink.retry) self.armRecord(taken.sink.wait(Recorder.now()));
     // More frames may come for what's drawn, the preview's panes too.
     for (app.placed().panes.items) |p| p.session.drawn();
     if (preview_placed) |pp| for (pp.panes.items) |p| p.session.drawn();
@@ -694,9 +723,12 @@ fn buildPanes(self: *Window, into: *std.ArrayList(Renderer.Pane), panes: []const
         s.applyFrames();
         if (stats) t.* = self.stats.lap(.update, t.*);
         const grid = self.grids.get(p.size_pt);
+        // A recorded pane's cursor doesn't blink: each blink would be a
+        // frame, for as long as nothing else happens.
+        const steady = if (self.app.recording) |rec| rec.session == s.id else false;
         try term.cells.build(self.alloc, &term.screen, grid, .{
             .focused = s == focus,
-            .blink_visible = blink_visible,
+            .blink_visible = blink_visible or steady,
         }, .{
             .cursor_color = self.config.@"cursor-color",
             .cursor_text = self.config.@"cursor-text",
@@ -751,6 +783,67 @@ fn placeBrowsers(self: *Window) void {
             .layer = if (p.tab.float != null) .float else .ground,
         });
     }
+}
+
+/// Draw again in `ms`, for a recording, unless that's already set.
+fn armRecord(self: *Window, ms: u32) void {
+    const hwnd = self.hwnd orelse return;
+    if (self.record_armed) return;
+    // USER_TIMER_MINIMUM is 10 ms.
+    self.record_armed = win32.SetTimer(hwnd, record_timer_id, @max(10, ms), null) != 0;
+}
+
+/// Start recording terminal pane `s`, shown, to a new file in the
+/// configured directory: the picture is its viewport, as it is now.
+/// Null if it can't be, which is logged.
+fn startRecording(self: *Window, s: *Session, format: binding.RecordFormat) ?*Recorder {
+    const hwnd = self.hwnd orelse return null;
+    const r = &(self.renderer orelse return null);
+    const config = self.config;
+    const box = for (self.app.placed().panes.items) |p| {
+        if (p.session == s) break Renderer.pixelBox(p.rect, r.width, r.height) orelse return null;
+    } else return null;
+    const file = Recorder.openFile(self.alloc, config.@"record-dir", format) catch return null;
+    defer self.alloc.free(file.path);
+    const bg = s.background();
+    const rec = Recorder.create(.{
+        .alloc = self.alloc,
+        .format = format,
+        .file = file.handle,
+        .path = file.path,
+        .session = s.id,
+        .width = box.right - box.left,
+        .height = box.bottom - box.top,
+        .background = .{ bg.b, bg.g, bg.r, 255 },
+        .opts = .{
+            .fps = config.@"record-fps",
+            .idle_ms = config.@"record-idle" *| 1000,
+            .limit_ms = config.@"record-limit" *| 1000,
+        },
+        .hwnd = hwnd,
+        .now = Recorder.now(),
+        .freq = Recorder.frequency(),
+    }) catch |err| {
+        log.warn("recording failed to start: {}", .{err});
+        _ = win32.CloseHandle(file.handle);
+        _ = win32.DeleteFileW(file.path);
+        return null;
+    };
+    log.info("recording pane {d} to {f}", .{ s.id, std.unicode.fmtUtf16Le(file.path) });
+    return rec;
+}
+
+/// Stop recording into `rec`, after a last frame of its pane as it is
+/// now, if it's shown: a change drawn since the last frame taken, too
+/// soon after it, is in no frame yet. Not from inside a draw (the view
+/// finding its pane gone), where there's no pane to take.
+fn finishRecording(self: *Window, rec: *Recorder) void {
+    if (!self.rendering and !rec.stopped) {
+        rec.last = true;
+        self.app.markDirty();
+        self.render();
+    }
+    rec.stop(Recorder.now());
 }
 
 /// `browser.idle`, in ms.
@@ -988,6 +1081,9 @@ const shell_vtable: App.Shell.VTable = .{
     .clipboardHasText = shellClipboardHasText,
     .clipboardGet = shellClipboardGet,
     .clipboardSet = shellClipboardSet,
+    .clipboardSetFile = shellClipboardSetFile,
+    .startRecording = shellStartRecording,
+    .finishRecording = shellFinishRecording,
     .frameInterval = shellFrameInterval,
     .fontSize = shellFontSize,
     .setFontSize = shellSetFontSize,
@@ -1018,6 +1114,7 @@ fn timerId(timer: App.Timer) usize {
         .tip => tip_timer_id,
         .repeat => repeat_timer_id,
         .find => find_timer_id,
+        .record_limit => record_limit_timer_id,
     };
 }
 
@@ -1111,6 +1208,18 @@ fn shellClipboardGet(ctx: *anyopaque, alloc: Allocator) anyerror!?[]u8 {
 
 fn shellClipboardSet(ctx: *anyopaque, text: []const u8) anyerror!void {
     return clipboard.set(fromCtx(ctx).hwnd.?, text);
+}
+
+fn shellClipboardSetFile(ctx: *anyopaque, path: [:0]const u16) anyerror!void {
+    return clipboard.setFile(fromCtx(ctx).hwnd orelse return error.NoWindow, path);
+}
+
+fn shellStartRecording(ctx: *anyopaque, s: *Session, format: binding.RecordFormat) ?*Recorder {
+    return fromCtx(ctx).startRecording(s, format);
+}
+
+fn shellFinishRecording(ctx: *anyopaque, rec: *Recorder) void {
+    fromCtx(ctx).finishRecording(rec);
 }
 
 /// The least time between a pane's frames to ask squish for, in
@@ -1398,6 +1507,12 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
                 tip_timer_id => _ = app.update(.{ .tick = .tip }),
                 repeat_timer_id => _ = app.update(.{ .tick = .repeat }),
                 find_timer_id => _ = app.update(.{ .tick = .find }),
+                record_limit_timer_id => _ = app.update(.{ .tick = .record_limit }),
+                record_timer_id => {
+                    _ = win32.KillTimer(hwnd, record_timer_id);
+                    self.record_armed = false;
+                    if (app.recording != null) app.markDirty();
+                },
                 idle_timer_id => {
                     self.web.closeIdle(win32.GetTickCount64(), self.idleMs());
                     self.armIdle();
@@ -1446,6 +1561,11 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
 
         WM_APP_RELINKED => {
             _ = app.update(.{ .session = .{ .id = @intCast(wparam), .what = .relinked } });
+            return 0;
+        },
+
+        WM_APP_RECORD_DONE => {
+            _ = app.update(.record_done);
             return 0;
         },
 
@@ -1558,6 +1678,7 @@ fn handle(hwnd: win32.HWND, msg: u32, wparam: win32.WPARAM, lparam: win32.LPARAM
             self.hwnd = null;
             // Its timers went with it.
             self.idle_armed = false;
+            self.record_armed = false;
             win32.PostQuitMessage(0);
             return 0;
         },

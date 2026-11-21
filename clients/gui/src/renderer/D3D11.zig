@@ -47,6 +47,7 @@ const font = @import("../font/font.zig");
 const cells = @import("cells.zig");
 const image = @import("image.zig");
 pub const Painter = @import("Painter.zig");
+const Recorder = @import("../record/Recorder.zig");
 
 const log = std.log.scoped(.d3d11);
 
@@ -148,6 +149,8 @@ float_chain: ?LayerChain = null,
 /// A copy of part of the last frame, for the UI to draw scaled (a pane
 /// being dragged). Kept between frames at its last size.
 capture: ?Capture = null,
+/// Where a recorded pane's pixels are read from (`Frame.record`).
+readback: ?Readback = null,
 /// Decodes `decodeImage`'s pictures; made with the first.
 wic_factory: ?*wic.IImagingFactory = null,
 
@@ -248,8 +251,32 @@ pub const Frame = struct {
     /// before the frame proper is drawn: `paintOver` gets the copy (a
     /// hidden tab's preview).
     preview: ?Preview = null,
+    /// A pane drawn first and alone, square and without border or
+    /// shadow, and part of it read back for a recording. Set only on
+    /// the frames the recorder wants (`Recorder.due`): the others cost
+    /// nothing.
+    record: ?Record = null,
 
     pub const Preview = struct { panes: []const Pane, region: Painter.Rect };
+
+    pub const Record = struct {
+        /// Its `frame` covers `region` and more, so no edge of its box
+        /// is in the picture.
+        pane: Pane,
+        /// The pane's viewport: the grid and its padding, no title strip.
+        region: Painter.Rect,
+        sink: *Recorder,
+        /// The frame's time, on the recorder's clock.
+        at: i64,
+    };
+};
+
+/// A copy of part of a frame that the CPU can read, kept between frames
+/// at its last size.
+const Readback = struct {
+    texture: *d3d11.ITexture2D,
+    width: u32,
+    height: u32,
 };
 
 /// A pane's box: a rounded rectangle in its terminal's background, with
@@ -533,6 +560,8 @@ fn releaseDevice(self: *D3D11) void {
     self.lucide = null;
     if (self.capture) |c| c.deinit();
     self.capture = null;
+    if (self.readback) |r| com.release(r.texture);
+    self.readback = null;
     (D2d{ .factory = self.d2d_factory, .device = self.d2d_device, .context = self.d2d_context, .brush = self.brush }).deinit();
     com.release(self.image_placement);
     com.release(self.box);
@@ -663,7 +692,8 @@ pub fn resize(self: *D3D11, width: u32, height: u32) Error!void {
 /// the frame, that part is copied once `paint` is done, and `paintOver`
 /// draws over the frame with the copy; with `Frame.preview`, its panes
 /// are drawn first and alone, its region copied, and the target cleared
-/// again, and `paintOver` gets that copy. While there's an overlay chain,
+/// again, and `paintOver` gets that copy; before that, `Frame.record`'s
+/// pane the same way, for its recorder. While there's an overlay chain,
 /// `paint`'s `.ground` goes into the swap chain and its `.over` and
 /// `paintOver` into the overlay, which is drawn while `hasOver()` says
 /// it has something; otherwise `paint` draws `.all`. The floats
@@ -682,7 +712,8 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
     // grid no pane is drawn at any more loses its copies after.
     for (self.gpu_fonts.values()) |*g| g.seen = false;
     const preview_panes: []const Pane = if (f.preview) |pv| pv.panes else &.{};
-    for ([_][]const Pane{ f.panes, preview_panes }) |panes| for (panes) |pane| {
+    const record_panes: []const Pane = if (f.record) |*rec| @as(*const [1]Pane, &rec.pane) else &.{};
+    for ([_][]const Pane{ f.panes, preview_panes, record_panes }) |panes| for (panes) |pane| {
         const gop = self.gpu_fonts.getOrPut(self.alloc, pane.fonts.id) catch return error.HResult;
         if (!gop.found_existing) gop.value_ptr.* = .{};
         const g = gop.value_ptr;
@@ -693,6 +724,19 @@ pub fn draw(self: *D3D11, alloc: std.mem.Allocator, f: Frame, ui: anytype) error
         try g.lcd_atlas.upload(self.device, ctx, pane.fonts.lcd_atlas);
     };
     defer self.dropUnseenFonts();
+
+    // The recorded pane alone, with nothing of the window over it or
+    // around it, read back, and cleared away. A recording that misses a
+    // frame goes on.
+    if (f.record) |rec| {
+        ctx.clearState();
+        ctx.omSetRenderTargets(&.{rtv});
+        ctx.clearRenderTargetView(rtv, &f.background);
+        var alone = f;
+        alone.box = .{ .radius = 0, .border_width = 0, .border = .{ 0, 0, 0, 0 }, .shadows = &.{} };
+        try self.drawPanes(alloc, alone, record_panes);
+        self.readRegion(rec) catch |err| log.warn("reading the recorded pane back failed: {}", .{err});
+    }
 
     // The preview's panes alone, copied, and cleared away: the frame
     // proper is drawn over them from scratch.
@@ -980,11 +1024,11 @@ fn paintOver(self: *D3D11, ui: anytype, img: ?Painter.Image) Error!void {
 /// Direct2D's EndDraw has flushed its drawing to the context, so the
 /// copy, queued after it, sees it.
 fn captureRegion(self: *D3D11, region: Painter.Rect) Error!?Painter.Image {
-    const x0: u32 = @intFromFloat(std.math.clamp(@round(region.x), 0, @as(f32, @floatFromInt(self.width))));
-    const y0: u32 = @intFromFloat(std.math.clamp(@round(region.y), 0, @as(f32, @floatFromInt(self.height))));
-    const x1: u32 = @intFromFloat(std.math.clamp(@round(region.right()), 0, @as(f32, @floatFromInt(self.width))));
-    const y1: u32 = @intFromFloat(std.math.clamp(@round(region.bottom()), 0, @as(f32, @floatFromInt(self.height))));
-    if (x1 <= x0 or y1 <= y0) return null;
+    const box = pixelBox(region, self.width, self.height) orelse return null;
+    const x0 = box.left;
+    const y0 = box.top;
+    const x1 = box.right;
+    const y1 = box.bottom;
     const w = x1 - x0;
     const h = y1 - y0;
     if (self.capture) |c| if (c.width != w or c.height != h) {
@@ -1002,6 +1046,55 @@ fn captureRegion(self: *D3D11, region: Painter.Rect) Error!?Painter.Image {
     defer com.releaseOpt(&back_buffer);
     self.context.copySubresourceRegion(c.texture.resource(), 0, 0, back_buffer.?.resource(), &.{ .left = x0, .top = y0, .right = x1, .bottom = y1 });
     return .{ .bitmap = c.bitmap, .w = @floatFromInt(w), .h = @floatFromInt(h), .generation = self.device_generation };
+}
+
+/// The whole pixels of `region` in a `width` x `height` target, or null
+/// if none of it is there.
+pub fn pixelBox(region: Painter.Rect, width: u32, height: u32) ?d3d11.BOX {
+    const x0: u32 = @intFromFloat(std.math.clamp(@round(region.x), 0, @as(f32, @floatFromInt(width))));
+    const y0: u32 = @intFromFloat(std.math.clamp(@round(region.y), 0, @as(f32, @floatFromInt(height))));
+    const x1: u32 = @intFromFloat(std.math.clamp(@round(region.right()), 0, @as(f32, @floatFromInt(width))));
+    const y1: u32 = @intFromFloat(std.math.clamp(@round(region.bottom()), 0, @as(f32, @floatFromInt(height))));
+    if (x1 <= x0 or y1 <= y0) return null;
+    return .{ .left = x0, .top = y0, .right = x1, .bottom = y1 };
+}
+
+/// Copy `rec.region` of the frame drawn so far to where the CPU can
+/// read it, and hand it to the recorder. Mapping waits for the GPU to
+/// have drawn it: the cost of a recorded frame.
+fn readRegion(self: *D3D11, rec: Frame.Record) Error!void {
+    const box = pixelBox(rec.region, self.width, self.height) orelse return;
+    const w = box.right - box.left;
+    const h = box.bottom - box.top;
+    if (self.readback) |r| if (r.width != w or r.height != h) {
+        com.release(r.texture);
+        self.readback = null;
+    };
+    if (self.readback == null) {
+        var texture: ?*d3d11.ITexture2D = null;
+        try com.check(self.device.createTexture2D(&.{
+            .Width = w,
+            .Height = h,
+            .Format = buffer_format,
+            .Usage = d3d11.USAGE_STAGING,
+            .BindFlags = 0,
+            .CPUAccessFlags = d3d11.CPU_ACCESS_READ,
+        }, &texture), "ID3D11Device::CreateTexture2D(readback)");
+        self.readback = .{ .texture = texture.?, .width = w, .height = h };
+    }
+    const staging = self.readback.?.texture.resource();
+
+    var back_buffer: ?*d3d11.ITexture2D = null;
+    try com.check(
+        self.swap_chain.getBuffer(0, &d3d11.ITexture2D.iid, @ptrCast(&back_buffer)),
+        "IDXGISwapChain::GetBuffer",
+    );
+    defer com.releaseOpt(&back_buffer);
+    self.context.copySubresourceRegion(staging, 0, 0, back_buffer.?.resource(), &box);
+    var mapped: d3d11.MAPPED_SUBRESOURCE = undefined;
+    try com.check(self.context.map(staging, d3d11.MAP_READ, &mapped), "Map(readback)");
+    defer self.context.unmap(staging);
+    rec.sink.push(@ptrCast(mapped.pData.?), mapped.RowPitch, w, h, rec.at);
 }
 
 /// Decode the PNG (or JPEG) in `stream`, read from its start, into an

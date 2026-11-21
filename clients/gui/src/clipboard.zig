@@ -46,6 +46,47 @@ pub fn set(hwnd: win32.HWND, text: []const u8) !void {
     owned = false;
 }
 
+/// Replace the clipboard's contents with the file at `path`, by
+/// reference: as a file (CF_HDROP, what Explorer's Copy puts there, which
+/// pastes into Explorer or a chat as the file) and as text (the path,
+/// which a terminal pastes). The target reads the file when it pastes,
+/// so it should stay where it is. UI thread only, as `set`.
+pub fn setFile(hwnd: win32.HWND, path: [:0]const u16) !void {
+    // The path with its NUL, as the text and as a list of one.
+    const units = path[0 .. path.len + 1];
+    const text = try global(std.mem.sliceAsBytes(units), &.{});
+    var text_owned = true;
+    defer if (text_owned) {
+        _ = win32.GlobalFree(text);
+    };
+    const drop = try global(std.mem.asBytes(&win32.DROPFILES{}), std.mem.sliceAsBytes(units));
+    var drop_owned = true;
+    defer if (drop_owned) {
+        _ = win32.GlobalFree(drop);
+    };
+
+    if (win32.OpenClipboard(hwnd) == 0) return win32.lastError("OpenClipboard");
+    defer _ = win32.CloseClipboard();
+    if (win32.EmptyClipboard() == 0) return win32.lastError("EmptyClipboard");
+    if (win32.SetClipboardData(win32.CF_HDROP, drop) == null) return win32.lastError("SetClipboardData");
+    drop_owned = false;
+    if (win32.SetClipboardData(win32.CF_UNICODETEXT, text) == null) return win32.lastError("SetClipboardData");
+    text_owned = false;
+}
+
+/// Movable memory holding `a` then `b` then two zero bytes, as the
+/// clipboard takes it.
+fn global(a: []const u8, b: []const u8) !win32.HANDLE {
+    const mem = win32.GlobalAlloc(win32.GMEM_MOVEABLE, a.len + b.len + 2) orelse return win32.lastError("GlobalAlloc");
+    errdefer _ = win32.GlobalFree(mem);
+    const ptr: [*]u8 = @ptrCast(win32.GlobalLock(mem) orelse return win32.lastError("GlobalLock"));
+    defer _ = win32.GlobalUnlock(mem);
+    @memcpy(ptr[0..a.len], a);
+    @memcpy(ptr[a.len..][0..b.len], b);
+    ptr[a.len + b.len ..][0..2].* = .{ 0, 0 };
+    return mem;
+}
+
 /// Empty the clipboard. Like `set`, this sends WM_DESTROYCLIPBOARD to
 /// the previous owner, so only call it from the UI thread.
 pub fn clear(hwnd: win32.HWND) !void {

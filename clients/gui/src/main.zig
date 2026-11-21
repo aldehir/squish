@@ -201,4 +201,5 @@ test {
     _ = @import("font/font.zig");
     _ = @import("input.zig");
     _ = @import("binding.zig");
+    _ = @import("record/Recorder.zig");
 }

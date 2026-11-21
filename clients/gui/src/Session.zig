@@ -1022,6 +1022,16 @@ pub fn background(self: *const Session) ghostty_vt.color.RGB {
     };
 }
 
+/// Whether the screen is the grid the pane was last fitted to: after a
+/// resize, the daemon's frames at the new size have come. A browser
+/// always is.
+pub fn settled(self: *const Session) bool {
+    return switch (self.content) {
+        .terminal => |*t| t.screen.cols == t.cols and t.screen.rows == t.rows,
+        .browser => true,
+    };
+}
+
 /// Whether the screen's cursor shows and blinks.
 pub fn cursorBlinks(self: *const Session) bool {
     return switch (self.content) {
