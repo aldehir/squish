@@ -199,7 +199,9 @@ which are for the top level only:
                              reset_pane_font_size, points on the window's for
                              the focused pane, or for a wheel binding the one
                              under the pointer, ctrl+shift+wheel's), or else
-                             an action of this file by name. A wheel binding
+                             an action of this file by name (for a host's
+                             pane, the action of that name in the host's
+                             init.lua, in its daemon). A wheel binding
                              takes the wheel from the program under it:
                              unbind "ctrl+wheel_up" and the rest for a program
                              that zooms on ctrl+wheel. A later bind of the key
@@ -207,8 +209,8 @@ which are for the top level only:
                              it. A key runs an action or starts a sequence,
                              never both: the later binding hides the earlier
                              (bind "ctrl+b>c" and ctrl+b alone no longer
-                             reaches the program; bind "ctrl+b>ctrl+b" to a
-                             function that writes it). The window keeps the
+                             reaches the program; bind "ctrl+b>ctrl+b" to an
+                             action that writes it). The window keeps the
                              keys of a sequence; Escape ends one, as does a key
                              that's not in it, or a reload. A sequence written
                              "repeat:ctrl+b>h" keeps its earlier keys pressed
@@ -218,7 +220,9 @@ which are for the top level only:
                              then tapping shift+h); a key that's no repeat ends
                              that and does what it does alone.
   squish.bind(key, fn)       key runs fn(ctx, args) in the daemon; a function
-                             binding always consumes its key
+                             binding always consumes its key, and runs with
+                             no pane for a host's (bind an action by name
+                             to reach those)
   squish.unbind(key)         key does nothing, even if the window binds it;
                              exactly that key: unbinding "ctrl+b" leaves
                              "ctrl+b>c" bound

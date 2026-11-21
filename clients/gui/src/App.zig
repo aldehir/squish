@@ -3950,19 +3950,23 @@ fn setPaneFont(self: *App, s: *Session, delta: f32) bool {
     return true;
 }
 
-/// Ask the local daemon to run one of init.lua's actions or functions,
-/// for the focused pane if it's one of the daemon's own (a host's pane
+/// Ask a daemon to run one of init.lua's actions or functions for the
+/// focused pane. An action goes by name to the daemon the pane is on, so
+/// a host's own init.lua runs it for a host's pane; a function is the
+/// local init.lua's, which runs it with no pane for a host's (the pane
 /// isn't known there).
 fn invokeInDaemon(self: *App, action: binding.Action) void {
-    const conn = self.daemon orelse return;
-    if (conn.isLost()) return;
+    var conn = self.daemon orelse return;
     var pane: Daemon.PaneRef = .none;
     if (self.hasTabs()) {
         const t = self.activeTab();
-        if (t.conn == conn) if (self.focusedSession()) |s| if (s.daemonPane()) |p| {
+        const own = t.conn orelse conn;
+        if (own == conn or action == .invoke) if (self.focusedSession()) |s| if (s.daemonPane()) |p| {
+            conn = own;
             pane = p;
         };
     }
+    if (conn.isLost()) return;
     switch (action) {
         .lua => |id| conn.invoke(id, pane) catch |err| log.err("running binding {d} failed: {}", .{ id, err }),
         .invoke => |inv| conn.invokeAction(inv.name, inv.args, pane) catch |err| log.err("running action {s} failed: {}", .{ inv.name, err }),

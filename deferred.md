@@ -672,10 +672,12 @@ run Lua at a time, so a blocking call lets the others run.
 
 - **`ctx.client_id`** isn't filled in: connections have no ids, so an
   action can't tell which window pressed its key.
-- **A key's action runs for the local daemon only.** A function binding
+- **A key's function runs for the local daemon only.** A function binding
   pressed while a host's pane is focused runs with no pane, since the
-  local `init.lua` doesn't know the host's panes; the host's `init.lua`
-  governs only what runs there.
+  local `init.lua` doesn't know the host's panes. A key bound to an
+  action by name runs it in the host's daemon, from the host's
+  `init.lua`, which nothing copies there: a host without the action
+  logs the failure and the key does nothing.
 - **Bound keys can't fall through** to the program: a function binding
   or an action binding always consumes its key, since the key has left
   the window by the time Lua runs.
