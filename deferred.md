@@ -676,11 +676,14 @@ size have come. The palette lists both for each preset.
 - **An MP4's frame rate comes out constant**, `record.fps`: the frames
   go in with their own times, but the encoder fills between them, so
   an idle stretch costs a little where a GIF's costs nothing, and
-  `record.fps` barely changes its size. Its bitrate is from the
-  picture's size (a bit a second a pixel, 250 kbps to 8 Mbps), with no
-  setting, so a long scroll softens before it sharpens again at rest;
-  a quality-based rate control (the encoder's `ICodecAPI`) would spend
-  by need. Its picture is cropped a pixel to even sizes.
+  `record.fps` barely changes its size. Its picture is cropped a pixel
+  to even sizes.
+- **An MP4 is encoded by quality** (`record.quality`, 60), which the
+  software encoder and this machine's GPU take; an encoder that
+  doesn't know the mode isn't told apart, and spends a budget from
+  the picture's size instead (a bit a second a pixel). `record.bitrate`
+  sets a fixed budget in its place. Neither is per recording: the
+  action takes no quality.
 - **No WebM**: Windows has no encoder for it.
 - **Browser panes** aren't recorded: the window doesn't draw their
   pages. `Windows.Graphics.Capture` would.

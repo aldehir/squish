@@ -22,6 +22,7 @@
 //!   ssh = { terminfo = true },
 //!   browser = { idle = 600 },              -- seconds; 0 keeps hidden browsers open
 //!   record = { format = "gif", fps = 15,   -- toggle_recording's file ("gif" or "mp4"), and its most frames a second (1 to 60)
+//!              quality = 60,               -- an MP4's, 1 to 100; or bitrate = 800 (kbps) for a fixed budget instead
 //!              idle = 3, limit = 600,      -- seconds: a longer pause is cut to idle; it stops itself at limit (0: never)
 //!              dir = "D:\\clips",          -- where files go; unset, squish under the user's Videos
 //!              presets = { demo = { cols = 100, rows = 30, font_size = 14 } } },  -- stage_pane's sizes, by name
@@ -138,6 +139,13 @@ palette: Palette = .{},
 /// The most frames a second a recording takes. From 1 to 60. A
 /// terminal reads well at few: a GIF's size follows it.
 @"record-fps": u32 = 15,
+/// How good an MP4's frames look, from 1 to 100: its size follows what
+/// the screen does, and a scroll is as sharp as a screen at rest.
+@"record-quality": u32 = 60,
+/// An MP4's bitrate in kbps, from 50 to 50000, in place of a quality:
+/// its size follows its length, and a scroll softens to fit. Null goes
+/// by `record-quality`.
+@"record-bitrate": ?u32 = null,
 /// Seconds: a pause in a recording longer than this is cut to it. 0
 /// keeps real time.
 @"record-idle": u32 = 3,
@@ -575,6 +583,14 @@ fn setJson(self: *Config, alloc: Allocator, section: anytype, name: []const u8, 
             self.@"record-format" = try enumOf(binding.RecordFormat, value);
         } else if (eql(u8, name, "fps")) {
             self.@"record-fps" = std.math.clamp(try unsignedOf(value), 1, 60);
+        } else if (eql(u8, name, "quality")) {
+            const quality = try unsignedOf(value);
+            if (quality < 1 or quality > 100) return error.InvalidValue;
+            self.@"record-quality" = quality;
+        } else if (eql(u8, name, "bitrate")) {
+            const kbps = try unsignedOf(value);
+            if (kbps < 50 or kbps > 50_000) return error.InvalidValue;
+            self.@"record-bitrate" = kbps;
         } else if (eql(u8, name, "idle")) {
             self.@"record-idle" = try unsignedOf(value);
         } else if (eql(u8, name, "limit")) {
@@ -903,10 +919,19 @@ test "padding, word chars, theme, clipboard, and bad values keep defaults" {
     try std.testing.expectEqual(0, wrong.@"record-presets".items.len);
     try std.testing.expectEqualStrings("record.presets: invalid value: InvalidValue", wrong.errors.items[0]);
     var mp4 = try testConfig(
-        \\{"record": {"format": "mp4"}}
+        \\{"record": {"format": "mp4", "quality": 80, "bitrate": 800}}
     );
     defer mp4.deinit();
     try std.testing.expectEqual(.mp4, mp4.@"record-format");
+    try std.testing.expectEqual(80, mp4.@"record-quality");
+    try std.testing.expectEqual(800, mp4.@"record-bitrate".?);
+    var rates = try testConfig(
+        \\{"record": {"quality": 0, "bitrate": 10}}
+    );
+    defer rates.deinit();
+    try std.testing.expectEqual(60, rates.@"record-quality");
+    try std.testing.expectEqual(null, rates.@"record-bitrate");
+    try std.testing.expectEqual(2, rates.errors.items.len);
     // Windows has no encoder for it.
     var webm = try testConfig(
         \\{"record": {"format": "webm", "fps": 0}}

@@ -56,6 +56,13 @@ pub const MFVideoInterlace_Progressive = 2;
 pub const MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS = guid(0xa634a91c, 0x822b, 0x41b9, .{ 0xa4, 0x94, 0x4d, 0xe4, 0x64, 0x36, 0x12, 0xb0 });
 pub const MF_SINK_WRITER_DISABLE_THROTTLING = guid(0x08b845d8, 0x2b74, 0x4afe, .{ 0x9d, 0x53, 0xbe, 0x16, 0xd2, 0xd5, 0xae, 0x4f });
 
+/// For the encoder, in the attributes given with a stream's input type
+/// (codecapi.h): how it spends bits, and for the quality mode, how
+/// good, 1 to 100.
+pub const CODECAPI_AVEncCommonRateControlMode = guid(0x1c0608e9, 0x370c, 0x4710, .{ 0x8a, 0x58, 0xcb, 0x61, 0x81, 0xc4, 0x24, 0x23 });
+pub const CODECAPI_AVEncCommonQuality = guid(0xfcbf57a3, 0x7ea5, 0x4b0c, .{ 0x96, 0x44, 0x69, 0xb4, 0x0c, 0x39, 0xc3, 0x91 });
+pub const eAVEncCommonRateControlMode_Quality = 3;
+
 /// Two numbers as the attributes above hold them (MFSetAttributeSize,
 /// MFSetAttributeRatio).
 pub fn pair(high: u32, low: u32) u64 {
@@ -135,8 +142,9 @@ pub const ISinkWriter = extern struct {
 
     /// The format the stream's samples come in: the writer finds what
     /// turns one into the other.
-    pub fn setInputMediaType(self: *ISinkWriter, stream: u32, input: *IMediaType) HRESULT {
-        return com.call(self, 4, fn (u32, *IMediaType, ?*IAttributes) HRESULT, .{ stream, input, null });
+    /// `encoding` holds settings for the encoder, if any.
+    pub fn setInputMediaType(self: *ISinkWriter, stream: u32, input: *IMediaType, encoding: ?*IAttributes) HRESULT {
+        return com.call(self, 4, fn (u32, *IMediaType, ?*IAttributes) HRESULT, .{ stream, input, encoding });
     }
 
     pub fn beginWriting(self: *ISinkWriter) HRESULT {

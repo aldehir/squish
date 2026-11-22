@@ -822,6 +822,8 @@ fn startRecording(self: *Window, s: *Session, format: binding.RecordFormat) ?*Re
             .fps = config.@"record-fps",
             .idle_ms = config.@"record-idle" *| 1000,
             .limit_ms = config.@"record-limit" *| 1000,
+            .quality = config.@"record-quality",
+            .bitrate = (config.@"record-bitrate" orelse 0) * 1000,
         },
         .hwnd = hwnd,
         .now = Recorder.now(),

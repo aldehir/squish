@@ -17,10 +17,9 @@ const log = std.log.scoped(.record);
 /// CoInitializeEx's COINIT_MULTITHREADED.
 const multithreaded = 0;
 
-/// The file's budget is a bit a second for each pixel of the picture,
-/// whatever the frame rate, within these: the encoder spends next to
-/// nothing on a screen at rest and all of it on one scrolling, where a
-/// terminal's text stays sharp at rest down to about half this and
+/// Unless it's told one, the file's budget is a bit a second for each
+/// pixel of the picture, whatever the frame rate, within these: a
+/// terminal's text stays sharp at rest down to about half this, and
 /// smears below.
 const min_bitrate = 250_000;
 const max_bitrate = 8_000_000;
@@ -41,6 +40,17 @@ pub fn shutdown() void {
     win32.CoUninitialize();
 }
 
+/// How the encoder spends bits.
+pub const Rate = union(enum) {
+    /// As many as each frame needs to look this good, 1 to 100: next to
+    /// none for a screen at rest, and a scroll stays as sharp as the
+    /// rest.
+    quality: u32,
+    /// This many a second on average, however much moves: a scroll
+    /// softens to fit, and sharpens again at rest.
+    bitrate: u32,
+};
+
 pub const Writer = struct {
     sink: *mf.ISinkWriter,
     stream: u32,
@@ -52,17 +62,17 @@ pub const Writer = struct {
 
     /// Start the file at `path`, replacing what's there, for pictures
     /// `width` by `height` (both even: H.264 halves them for color) at
-    /// about `fps` frames a second. The GPU's encoder if it takes the
+    /// about `fps` frames a second, spending bits as `rate` says. The GPU's encoder if it takes the
     /// format, else the software one.
-    pub fn init(path: [:0]const u16, width: u32, height: u32, fps: u32) com.Error!Writer {
+    pub fn init(path: [:0]const u16, width: u32, height: u32, fps: u32, rate: Rate) com.Error!Writer {
         std.debug.assert(width % 2 == 0 and height % 2 == 0);
-        return open(path, width, height, fps, true) catch {
+        return open(path, width, height, fps, rate, true) catch {
             log.info("no hardware encoder for {d} x {d}: trying software", .{ width, height });
-            return open(path, width, height, fps, false);
+            return open(path, width, height, fps, rate, false);
         };
     }
 
-    fn open(path: [:0]const u16, width: u32, height: u32, fps: u32, hardware: bool) com.Error!Writer {
+    fn open(path: [:0]const u16, width: u32, height: u32, fps: u32, rate: Rate, hardware: bool) com.Error!Writer {
         var attrs: ?*mf.IAttributes = null;
         try com.check(mf.MFCreateAttributes(&attrs, 2), "MFCreateAttributes");
         defer com.releaseOpt(&attrs);
@@ -72,7 +82,12 @@ pub const Writer = struct {
         try com.check(mf.MFCreateSinkWriterFromURL(path, null, attrs, &sink), "MFCreateSinkWriterFromURL");
         errdefer com.releaseOpt(&sink);
 
-        const bitrate: u32 = @intCast(std.math.clamp(@as(u64, width) * height, min_bitrate, max_bitrate));
+        // By quality, the budget is what an encoder that doesn't know
+        // the mode falls back on.
+        const bitrate: u32 = switch (rate) {
+            .quality => @intCast(std.math.clamp(@as(u64, width) * height, min_bitrate, max_bitrate)),
+            .bitrate => |b| b,
+        };
         var target: ?*mf.IMediaType = null;
         try com.check(mf.MFCreateMediaType(&target), "MFCreateMediaType");
         defer com.releaseOpt(&target);
@@ -87,7 +102,18 @@ pub const Writer = struct {
         try describe(input.?.attributes(), &mf.MFVideoFormat_RGB32, width, height, fps);
         // Our rows come from the top.
         try com.check(input.?.attributes().setUINT32(&mf.MF_MT_DEFAULT_STRIDE, width * 4), "SetUINT32(stride)");
-        try com.check(sink.?.setInputMediaType(stream, input.?), "IMFSinkWriter::SetInputMediaType");
+        // The encoder's own settings go with its input.
+        var encoding: ?*mf.IAttributes = null;
+        defer com.releaseOpt(&encoding);
+        switch (rate) {
+            .quality => |q| {
+                try com.check(mf.MFCreateAttributes(&encoding, 2), "MFCreateAttributes");
+                try com.check(encoding.?.setUINT32(&mf.CODECAPI_AVEncCommonRateControlMode, mf.eAVEncCommonRateControlMode_Quality), "SetUINT32(rate control)");
+                try com.check(encoding.?.setUINT32(&mf.CODECAPI_AVEncCommonQuality, std.math.clamp(q, 1, 100)), "SetUINT32(quality)");
+            },
+            .bitrate => {},
+        }
+        try com.check(sink.?.setInputMediaType(stream, input.?, encoding), "IMFSinkWriter::SetInputMediaType");
         try com.check(sink.?.beginWriting(), "IMFSinkWriter::BeginWriting");
         return .{ .sink = sink.?, .stream = stream, .width = width, .height = height };
     }

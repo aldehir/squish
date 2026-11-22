@@ -90,6 +90,10 @@ pub const Options = struct {
     idle_ms: u32 = 3000,
     /// The window stops the recording after this long; 0 never.
     limit_ms: u32 = 600_000,
+    /// An MP4's: how good each frame looks, 1 to 100; or, if not 0,
+    /// the bits a second it averages instead.
+    quality: u32 = 60,
+    bitrate: u32 = 0,
 };
 
 pub const State = enum { running, finishing, done, failed };
@@ -417,7 +421,13 @@ pub fn run(self: *Recorder) void {
         if (!media) {
             log.warn("Windows has no Media Foundation here (an N edition needs the Media Feature Pack): no MP4", .{});
             failed = true;
-        } else if (mp4.Writer.init(self.path, self.width, self.height, std.math.clamp(self.opts.fps, 1, 60))) |w| {
+        } else if (mp4.Writer.init(
+            self.path,
+            self.width,
+            self.height,
+            std.math.clamp(self.opts.fps, 1, 60),
+            if (self.opts.bitrate > 0) .{ .bitrate = self.opts.bitrate } else .{ .quality = self.opts.quality },
+        )) |w| {
             self.encoder = .{ .mp4 = w };
         } else |err| {
             log.warn("no H.264 encoder took {d} x {d}: {}", .{ self.width, self.height, err });
