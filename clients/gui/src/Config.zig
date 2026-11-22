@@ -21,7 +21,7 @@
 //!   clipboard = { read = "ask", write = "allow" },
 //!   ssh = { terminfo = true },
 //!   browser = { idle = 600 },              -- seconds; 0 keeps hidden browsers open
-//!   record = { format = "gif", fps = 30,   -- toggle_recording's file ("gif" or "mp4"), and its most frames a second (1 to 60)
+//!   record = { format = "gif", fps = 15,   -- toggle_recording's file ("gif" or "mp4"), and its most frames a second (1 to 60)
 //!              idle = 3, limit = 600,      -- seconds: a longer pause is cut to idle; it stops itself at limit (0: never)
 //!              dir = "D:\\clips",          -- where files go; unset, squish under the user's Videos
 //!              presets = { demo = { cols = 100, rows = 30, font_size = 14 } } },  -- stage_pane's sizes, by name
@@ -135,8 +135,9 @@ palette: Palette = .{},
 
 /// What `toggle_recording` makes when it names no format.
 @"record-format": binding.RecordFormat = .gif,
-/// The most frames a second a recording takes. From 1 to 60.
-@"record-fps": u32 = 30,
+/// The most frames a second a recording takes. From 1 to 60. A
+/// terminal reads well at few: a GIF's size follows it.
+@"record-fps": u32 = 15,
 /// Seconds: a pause in a recording longer than this is cut to it. 0
 /// keeps real time.
 @"record-idle": u32 = 3,

@@ -328,7 +328,7 @@ one without applying it.
                    tabs = false },   -- true: fullscreen keeps the title bar's tabs (chrome.tabs = "top")
     browser = { idle = 600 },        -- seconds a hidden browser pane stays open (0: always)
     record = { format = "gif",       -- what toggle_recording makes when it names no format: "gif", or "mp4" (H.264, Windows' encoder)
-               fps = 30,             -- the most frames a second, 1 to 60; an idle pane adds none
+               fps = 15,             -- the most frames a second, 1 to 60; an idle pane adds none, and a GIF's size follows it
                idle = 3,             -- seconds: a pause longer than this is cut to it (0: real time)
                limit = 600,          -- seconds: a recording stops by itself (0: never)
                dir = "D:\\clips",    -- where squish-<date>-<time>.gif or .mp4 goes, made if missing (unset: Videos\squish)

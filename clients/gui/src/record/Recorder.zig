@@ -84,7 +84,7 @@ file: ?win32.HANDLE,
 
 pub const Options = struct {
     /// The most captures a second.
-    fps: u32 = 30,
+    fps: u32 = 15,
     /// A gap between frames longer than this is cut to it; 0 keeps real
     /// time.
     idle_ms: u32 = 3000,
@@ -606,7 +606,7 @@ fn fill(buf: []u8, color: [4]u8) void {
 test "the same pixels twice is one frame, and a frame shows until the next" {
     var stub: Stub = .{ .alloc = std.testing.allocator };
     defer stub.deinit();
-    const r = try testRecorder(&stub, 2, 2, .{});
+    const r = try testRecorder(&stub, 2, 2, .{ .fps = 30 });
     defer r.deinit();
     var px: [16]u8 = undefined;
     fill(&px, .{ 1, 2, 3, 255 });

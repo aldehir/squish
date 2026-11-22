@@ -17,9 +17,13 @@ const log = std.log.scoped(.record);
 /// CoInitializeEx's COINIT_MULTITHREADED.
 const multithreaded = 0;
 
-/// Bits a second, whatever the picture's size.
-const min_bitrate = 1_000_000;
-const max_bitrate = 12_000_000;
+/// The file's budget is a bit a second for each pixel of the picture,
+/// whatever the frame rate, within these: the encoder spends next to
+/// nothing on a screen at rest and all of it on one scrolling, where a
+/// terminal's text stays sharp at rest down to about half this and
+/// smears below.
+const min_bitrate = 250_000;
+const max_bitrate = 8_000_000;
 
 /// Media Foundation, for the calling thread. False if Windows has none
 /// (an N edition without the Media Feature Pack).
@@ -68,7 +72,7 @@ pub const Writer = struct {
         try com.check(mf.MFCreateSinkWriterFromURL(path, null, attrs, &sink), "MFCreateSinkWriterFromURL");
         errdefer com.releaseOpt(&sink);
 
-        const bitrate: u32 = @intCast(std.math.clamp(@as(u64, width) * height * fps / 8, min_bitrate, max_bitrate));
+        const bitrate: u32 = @intCast(std.math.clamp(@as(u64, width) * height, min_bitrate, max_bitrate));
         var target: ?*mf.IMediaType = null;
         try com.check(mf.MFCreateMediaType(&target), "MFCreateMediaType");
         defer com.releaseOpt(&target);
