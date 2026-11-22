@@ -4820,7 +4820,7 @@ fn utf16Into(buf: []u16, utf8: []const u8) usize {
     return std.unicode.utf8ToUtf16Le(buf, utf8[0..end]) catch 0;
 }
 
-/// Open the file picker (ctrl+i): the palette's file step over the
+/// Open the file picker (ctrl+shift+i): the palette's file step over the
 /// focused pane's shell's directory, at its cursor. False without a
 /// terminal pane of squish's focused.
 fn pickFile(self: *App) bool {
@@ -7240,7 +7240,7 @@ test "ctrl+shift+p opens the command palette, which takes the keys until an entr
     try std.testing.expect(shell.stats_shown);
 }
 
-test "ctrl+i opens the file step at the pane's cursor, and Escape closes it" {
+test "ctrl+shift+i opens the file step at the pane's cursor, and Escape closes it" {
     var shell: TestShell = .{};
     var t: TestApp = .{ .hosts = undefined, .shown = undefined, .ui = undefined, .frame = undefined };
     try t.init(&shell);
@@ -7250,7 +7250,7 @@ test "ctrl+i opens the file step at the pane's cursor, and Escape closes it" {
     const app = &t.app;
     const panes = try t.twoPanes();
     // A pane squish doesn't run has no directory to search: nothing opens.
-    shell.held = .{ .ctrl = true };
+    shell.held = .{ .ctrl = true, .shift = true };
     try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'I', .lparam = 0 } }));
     shell.held = .{};
     try std.testing.expect(app.mode == .terminal);
@@ -7258,7 +7258,7 @@ test "ctrl+i opens the file step at the pane's cursor, and Escape closes it" {
     const b = panes[1];
     b.transport = .{ .daemon = .{ .conn = &t.daemon, .pane = .{ .ws = 1, .tab = 1, .n = 2 } } };
     b.term().?.screen.cursor.viewport = .{ .x = 3, .y = 2, .wide_tail = false };
-    shell.held = .{ .ctrl = true };
+    shell.held = .{ .ctrl = true, .shift = true };
     try std.testing.expectEqual(Result.handled, app.update(.{ .key = .{ .msg = win32.WM_KEYDOWN, .wparam = 'I', .lparam = 0 } }));
     shell.held = .{};
     try std.testing.expect(app.mode == .palette);

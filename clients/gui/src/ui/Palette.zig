@@ -34,7 +34,7 @@ pub const Step = enum {
     host,
     /// "Float tab…": the tabs that can float over the one shown.
     float_tab,
-    /// The file picker (ctrl+i): paths under the focused pane's shell's
+    /// The file picker (ctrl+shift+i): paths under the focused pane's shell's
     /// directory, ranked by the daemon, at the pane's cursor.
     file,
 };

@@ -66,7 +66,7 @@ report one, each with its title and status; a press shows the pane.
   Its own commands (show the stats, reload the
   config, connect to a host) aren't window actions, so init.lua can't
   bind keys to them.
-- **The file picker** (ctrl+i, `pane.find`, the palette's file step)
+- **The file picker** (ctrl+shift+i, `pane.find`, the palette's file step)
   takes fzf's plain fuzzy terms, not its operators (`'exact`, `^prefix`,
   `!not`); picks one path (Tab on a file does nothing; a multi-select
   that inserts several is a follow-up); shows no preview; inserts no
@@ -74,9 +74,7 @@ report one, each with its title and status; a press shows the pane.
   own host (a shell on a further ssh hop gets the no-directory state).
   The scan reads `.gitignore` only where fd is installed; the walk
   fallback skips dot-names and a short deny list. The box's anchor is
-  taken when it opens; a prompt redrawn under it doesn't move it. The
-  binding takes ctrl+i from programs that use the kitty keyboard
-  protocol (the legacy encoding sent it as Tab anyway). The palette's
+  taken when it opens; a prompt redrawn under it doesn't move it. The palette's
   own keys (arrows and fzf's ctrl+n/p, ctrl+j/k to move; Enter, Tab,
   Backspace, ctrl+r, Esc) are fixed in `App.paletteKey`; a
   `palette_keys` table in init.lua, as copy mode has, would make them

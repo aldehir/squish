@@ -247,9 +247,9 @@ pub const defaults = [_]Binding{
     .{ .trigger = .{ .vk = win32.VK_OEM_PLUS, .mods = ctrl_alt_shift }, .action = .equalize_splits, .performable = true },
     .{ .trigger = .{ .vk = win32.VK_F1 + 10 }, .action = .toggle_fullscreen },
     .{ .trigger = .{ .vk = 'P', .mods = ctrl_shift }, .action = .toggle_command_palette },
-    // A distinct key from Tab on Windows, though the legacy encoding
-    // sent both as 0x09.
-    .{ .trigger = .{ .vk = 'I', .mods = ctrl }, .action = .pick_file },
+    // Not ctrl+i: programs that use the kitty keyboard protocol tell it
+    // from Tab.
+    .{ .trigger = .{ .vk = 'I', .mods = ctrl_shift }, .action = .pick_file },
     .{ .trigger = .{ .vk = 'F', .mods = ctrl_shift }, .action = .start_search, .performable = true },
     // Windows Terminal's mark mode key.
     .{ .trigger = .{ .vk = 'M', .mods = ctrl_shift }, .action = .copy_mode, .performable = true },
